@@ -1,0 +1,79 @@
+# PP1 Stitch Studio
+
+**Brother SKiTCH PP1 専用・ブラウザで動く刺しゅうデータ作成ツール**
+
+PNG / JPG の画像から刺しゅうデータ (PES / DST) を生成します。すべての処理はブラウザ内で完結し、サーバーへのアップロードはありません。生成した PES を Artspira アプリでインポートすれば、Bluetooth で PP1 へ転送して縫えます。
+
+## 背景
+
+PP1 の純正アプリ Artspira は、画像 (PNG など) からの刺しゅうデータ変換の精度が低く、変換結果の修正も困難です。本ツールは Artistic Digitizer のような専用デジタイザの考え方を参考に、**変換パラメータをすべて自分でコントロールできる**ことを目指しています。
+
+- Artspira は PES / DST ファイルのインポートに対応しています ([Brother 公式 FAQ](https://help.brother-usa.com/app/answers/detail/a_id/185209/~/file-formats-to-use-with-skitch))
+- インポート → 編集 → PP1 へ Bluetooth 転送のワークフローは公式にサポートされています ([参考記事](https://hoopingstation.com/blogs/articles/artspira-brother-skitch-pp1-the-calm-repeatable-workflow-for-picking-designs-importing-pes-dst-and-nailing-placement-with-ar-preview))
+
+## 使い方
+
+### 起動
+
+```bash
+npm install
+npm run dev      # http://localhost:5173
+```
+
+### ワークフロー
+
+1. **画像を読み込む** — PNG (透明背景推奨) / JPG をドロップ。「サンプルデザインで試す」でも動作確認できます
+2. **パラメータを調整** — プレビューを見ながらリアルタイムに変換結果を確認
+3. **糸色を確認** — Brother 標準糸の色番号に自動マッピング。不要な色はチェックを外して除外
+4. **PES をダウンロード** — スマホに送り、Artspira の「インポート」から読み込んで PP1 へ転送
+
+### パラメータの目安
+
+| 項目 | 既定値 | 説明 |
+| --- | --- | --- |
+| サイズ | 90mm | 長辺の仕上がり寸法。PP1 の枠は 100×100mm |
+| 色数 | 6 | 糸の本数。少ないほど縫製が速く仕上がりが安定 |
+| 行間隔 | 0.4mm | タタミ縫いの密度。薄い生地は 0.45〜0.5mm に |
+| 最大ステッチ長 | 3mm | 長いほど速いが表面が粗くなる |
+| 縫い角度 | 45° | タタミ縫いの方向 |
+| 最小領域 | 2mm² | これより小さいゴミ領域を除去。ノイズの多い画像は大きく |
+
+## 変換パイプライン
+
+```
+画像 → ①減色 → ②輪郭抽出 → ③ステッチ生成 → ④PES/DST 書き出し
+```
+
+1. **減色** (`src/digitize/quantize.ts`) — 透明部と画像端の均一色を背景として除去し、k-means で指定色数に減色。モードフィルタと小領域マージでノイズを除去
+2. **輪郭抽出** (`src/digitize/contour.ts`) — 色ごとに領域の輪郭ループ (外周+穴) を抽出し、Douglas-Peucker で簡略化
+3. **ステッチ生成** (`src/digitize/fill.ts`, `outline.ts`) — 走査線方式のタタミ縫い (行ごとに針落ちを半ピッチずらしたレンガ配置)。穴をまたぐ移動は自動で渡り糸に変換。輪郭はランニングステッチ
+4. **書き出し** (`src/embroidery/pes.ts`, `dst.ts`) — PES v1 (CEmbOne/CSewSeg + PEC ブロック) と Tajima DST。[pyembroidery](https://github.com/EmbroidePy/pyembroidery) のリファレンス実装を移植し、pyembroidery での読み戻し検証済み
+
+## 開発
+
+```bash
+npm run dev      # 開発サーバー
+npm test         # ユニットテスト (vitest)
+npm run build    # 型チェック + プロダクションビルド
+```
+
+E2E スモークテスト (要 Python + pyembroidery):
+
+```bash
+npx tsx scripts/smoke.ts        # /tmp/smoke.pes, /tmp/smoke.dst を生成
+python3 scripts/validate.py     # pyembroidery で読み戻し検証
+```
+
+## 既知の制限とロードマップ
+
+- [ ] **サテンステッチ** — 細い帯状領域の自動検出とサテン柱生成 (文字・縁取りの品質向上)
+- [ ] **下打ち (アンダーレイ)** — 生地の安定化。現状は密度調整で代用
+- [ ] **引き縮み補正 (pull compensation)** — 領域の縫い方向への拡張
+- [ ] **SVG 入力** — ベクターデータからの直接変換 (ラスタライズなし)
+- [ ] **手動編集** — 領域の統合・分割、色ごとの角度指定、縫い順の入れ替え
+- [ ] **渡り糸の最適化** — 領域間の移動距離最小化 (現状は面積順)
+
+## ライセンス・参考
+
+- PES/PEC/DST フォーマットの実装は [pyembroidery](https://github.com/EmbroidePy/pyembroidery) (MIT) を参考にしています
+- 糸色は Brother 標準の PEC 64色パレットを使用

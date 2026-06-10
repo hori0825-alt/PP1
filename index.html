@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PP1 Stitch Studio — SKiTCH PP1 刺しゅうデータ作成</title>
+  </head>
+  <body>
+    <header>
+      <h1>PP1 Stitch Studio</h1>
+      <p>Brother SKiTCH PP1 専用 — 画像から刺しゅうデータ (PES/DST) を作成し、Artspira でインポートして PP1 へ転送</p>
+    </header>
+    <main>
+      <aside id="controls">
+        <section>
+          <h2>1. 画像</h2>
+          <div id="dropzone" tabindex="0">
+            <p>PNG / JPG をドロップ<br />またはクリックして選択</p>
+            <input type="file" id="fileInput" accept="image/*" hidden />
+          </div>
+          <button id="sampleBtn" type="button">サンプルデザインで試す</button>
+          <canvas id="srcPreview" width="160" height="160" hidden></canvas>
+        </section>
+
+        <section>
+          <h2>2. 変換設定</h2>
+          <label>サイズ (長辺 mm / 最大100)
+            <input type="number" id="sizeMm" min="10" max="100" step="1" value="90" />
+          </label>
+          <label>色数 (糸の本数)
+            <input type="number" id="maxColors" min="1" max="12" step="1" value="6" />
+          </label>
+          <label>縫い密度: 行間隔 (mm)
+            <input type="number" id="rowSpacing" min="0.2" max="1.0" step="0.05" value="0.4" />
+          </label>
+          <label>最大ステッチ長 (mm)
+            <input type="number" id="stitchLen" min="1" max="7" step="0.5" value="3" />
+          </label>
+          <label>縫い角度 (度)
+            <input type="number" id="angle" min="0" max="180" step="5" value="45" />
+          </label>
+          <label>最小領域 (mm²) — 小さいゴミを除去
+            <input type="number" id="minRegion" min="0" max="20" step="0.5" value="2" />
+          </label>
+          <label class="check"><input type="checkbox" id="fillOn" checked /> 塗りつぶし (タタミ縫い)</label>
+          <label class="check"><input type="checkbox" id="outlineOn" checked /> 輪郭線 (ランニングステッチ)</label>
+          <label class="check"><input type="checkbox" id="autoBg" checked /> 背景を自動除去</label>
+        </section>
+
+        <section>
+          <h2>3. 糸色 (Brother)</h2>
+          <ul id="threadList"></ul>
+        </section>
+
+        <section>
+          <h2>4. 書き出し</h2>
+          <button id="exportPes" type="button" disabled>PES をダウンロード</button>
+          <button id="exportDst" type="button" disabled>DST をダウンロード</button>
+          <p class="hint">Artspira アプリの「インポート」から PES を読み込み、Bluetooth で PP1 へ転送してください。</p>
+        </section>
+      </aside>
+
+      <section id="preview">
+        <div id="stats"></div>
+        <canvas id="stitchCanvas" width="640" height="640"></canvas>
+        <label class="check"><input type="checkbox" id="showJumps" /> 渡り糸 (ジャンプ) を表示</label>
+        <p id="warning" class="warning" hidden></p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
