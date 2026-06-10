@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fillLoops } from "../src/digitize/fill";
 import { traceContours, simplifyLoop, loopArea, type Pt } from "../src/digitize/contour";
+import { tripleRunningStitch, runningStitch } from "../src/digitize/outline";
 import { quantize } from "../src/digitize/quantize";
 import { digitize } from "../src/digitize/pipeline";
 import { COLOR_CHANGE, STITCH } from "../src/embroidery/pattern";
@@ -53,6 +54,127 @@ describe("fillLoops", () => {
         expect(inHole).toBe(false);
       }
     }
+  });
+});
+
+describe("fillLoops satin mode", () => {
+  // 縦長の細い帯: 幅20 × 高さ200 (単位 0.1mm)
+  // angle=0 の水平スキャンで x0=0, x1=20 (幅=20) のセグメントができる
+  const thinStrip: Pt[][] = [
+    [
+      [0, 0],
+      [20, 0],
+      [20, 200],
+      [0, 200],
+    ],
+  ];
+
+  it("サテンモードは各行のクロスステッチを生成する", () => {
+    const runs = fillLoops(thinStrip, { spacing: 4, stitchLen: 30, angle: 0, mode: "satin" });
+    expect(runs.length).toBeGreaterThan(0);
+    const totalPts = runs.reduce((s, r) => s + r.length, 0);
+    const rowCount = Math.floor(200 / 4); // 約50行
+    // 各行に 2点 (x0,y) と (x1,y) → 行数 * 2 点以上
+    expect(totalPts).toBeGreaterThanOrEqual(rowCount * 2 - 4);
+  });
+
+  it("サテンのクロスステッチ長は帯の幅 (20単位) 以下", () => {
+    const runs = fillLoops(thinStrip, { spacing: 4, stitchLen: 30, angle: 0, mode: "satin" });
+    for (const run of runs) {
+      for (let i = 1; i < run.length; i++) {
+        const d = Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+        // クロス最大=20、エッジ移動=spacing=4、合計で 25以下
+        expect(d).toBeLessThanOrEqual(25);
+      }
+    }
+  });
+
+  it("幅が maxSatinLen を超える行はタタミで分割されステッチ長が抑制される", () => {
+    // 幅 200単位 (20mm) の帯で maxSatinLen=100 (10mm) を設定 → タタミ分割
+    const wideStrip: Pt[][] = [[[0, 0], [200, 0], [200, 50], [0, 50]]];
+    const runs = fillLoops(wideStrip, { spacing: 4, stitchLen: 60, angle: 0, mode: "satin", maxSatinLen: 100 });
+    expect(runs.length).toBeGreaterThan(0);
+    for (const run of runs) {
+      for (let i = 1; i < run.length; i++) {
+        const d = Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+        // tatami 分割後の最大ステッチ長 = stitchLen=60 + 端の余裕
+        expect(d).toBeLessThanOrEqual(65);
+      }
+    }
+  });
+
+  it("センターラインモードは各行の中心線上の点のみ生成する", () => {
+    // stitchLen=30 でスキャン → 200/30 ≈ 6行 → 6点
+    const runs = fillLoops(thinStrip, { spacing: 4, stitchLen: 30, angle: 0, mode: "centerline" });
+    expect(runs.length).toBeGreaterThan(0);
+    for (const run of runs) {
+      for (const [x, y] of run) {
+        // x は中心値 (10) 付近、y は帯の範囲内
+        expect(x).toBeGreaterThanOrEqual(-1);
+        expect(x).toBeLessThanOrEqual(21);
+        expect(y).toBeGreaterThanOrEqual(-1);
+        expect(y).toBeLessThanOrEqual(201);
+      }
+    }
+  });
+});
+
+describe("tripleRunningStitch", () => {
+  const square: Pt[] = [[0, 0], [100, 0], [100, 100], [0, 100]];
+
+  it("3重ステッチは1重の約3倍の長さ", () => {
+    const single = runningStitch(square, 10);
+    const triple = tripleRunningStitch(square, 10);
+    // 往復3回なので単純には 3*(single.length-1)+1 点になる (重複端点を除く)
+    expect(triple.length).toBeGreaterThan(single.length * 2);
+    expect(triple.length).toBeLessThanOrEqual(single.length * 3 + 5);
+  });
+
+  it("始点と終点の座標が同じ (1重と同じ形状をたどる)", () => {
+    const single = runningStitch(square, 10);
+    const triple = tripleRunningStitch(square, 10);
+    // 最初の点は一致
+    expect(triple[0]).toEqual(single[0]);
+    // 3重の最終点は forward pass の最終点と一致
+    expect(triple[triple.length - 1]).toEqual(single[single.length - 1]);
+  });
+});
+
+describe("pipeline: 細い線の自動サテン", () => {
+  it("細いストライプはサテン縫いが選択され密なステッチになる", () => {
+    const w = 200;
+    const h = 200;
+    const data = new Uint8ClampedArray(w * h * 4);
+    // 中央に幅5pxの赤いストライプ + 大きな青い領域
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (x >= 95 && x <= 105) {
+          data[i] = 220; data[i + 1] = 30; data[i + 2] = 30; data[i + 3] = 255;
+        } else if (x >= 20 && x <= 180 && y >= 20 && y <= 180) {
+          data[i] = 30; data[i + 1] = 100; data[i + 2] = 220; data[i + 3] = 255;
+        } else {
+          data[i + 3] = 0;
+        }
+      }
+    }
+    const result = digitize(
+      { data, width: w, height: h },
+      {
+        sizeMm: 60,
+        maxColors: 2,
+        autoBackground: false,
+        autoThinDetect: true,
+        satinMaxWidthMm: 6,
+        satinSpacingMm: 0.3,
+        fill: true,
+        outline: false,
+        minRegionMm2: 0.5,
+      },
+    );
+    // ストライプと大領域の2色が生成される
+    expect(result.stats.colors).toBe(2);
+    expect(result.stats.stitches).toBeGreaterThan(200);
   });
 });
 

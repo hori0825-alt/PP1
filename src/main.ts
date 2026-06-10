@@ -123,6 +123,13 @@ function readOptions() {
     fill: $<HTMLInputElement>("fillOn").checked,
     outline: $<HTMLInputElement>("outlineOn").checked,
     autoBackground: $<HTMLInputElement>("autoBg").checked,
+    // 細い線の設定
+    autoThinDetect: $<HTMLInputElement>("autoThin").checked,
+    satinMaxWidthMm: clamp(Number($<HTMLInputElement>("satinMaxWidth").value) || 6, 0, 20),
+    satinSpacingMm: clamp(Number($<HTMLInputElement>("satinSpacing").value) || 0.25, 0.1, 0.6),
+    centerlineMaxWidthMm: clamp(Number($<HTMLInputElement>("centerlineMax").value) || 0, 0, 5),
+    outlineStitchMm: clamp(Number($<HTMLInputElement>("outlineStitch").value) || 2, 0.5, 5),
+    tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
     enabledColors: enabledColors.length > 0 ? enabledColors : undefined,
   };
 }
@@ -137,7 +144,11 @@ function scheduleUpdate(): void {
   timer = setTimeout(update, 250);
 }
 
-for (const id of ["sizeMm", "maxColors", "rowSpacing", "stitchLen", "angle", "minRegion", "fillOn", "outlineOn", "autoBg"]) {
+for (const id of [
+  "sizeMm", "maxColors", "rowSpacing", "stitchLen", "angle", "minRegion",
+  "fillOn", "outlineOn", "autoBg",
+  "autoThin", "satinMaxWidth", "satinSpacing", "centerlineMax", "outlineStitch", "tripleOutline",
+]) {
   $(id).addEventListener("input", () => {
     if (id === "maxColors" || id === "autoBg" || id === "minRegion") enabledColors = [];
     scheduleUpdate();

@@ -199,6 +199,13 @@ button:disabled {
   margin: 6px 0 0;
 }
 
+.hint-inline {
+  font-size: 10px;
+  color: var(--muted);
+  display: block;
+  margin-top: 1px;
+}
+
 .warning {
   color: #ffb74d;
   font-size: 12px;

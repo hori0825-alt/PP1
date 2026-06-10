@@ -48,6 +48,24 @@
         </section>
 
         <section>
+          <h2>2b. 細い線の設定</h2>
+          <label class="check"><input type="checkbox" id="autoThin" checked /> 細い領域を自動検出してサテン縫いに切り替え</label>
+          <label>サテン適用幅の上限 (mm) <span class="hint-inline">この推定幅以下の領域がサテン縫いになる</span>
+            <input type="number" id="satinMaxWidth" min="1" max="15" step="0.5" value="6" />
+          </label>
+          <label>サテン行間隔 (mm) <span class="hint-inline">小さいほど密でなめらか</span>
+            <input type="number" id="satinSpacing" min="0.1" max="0.6" step="0.05" value="0.25" />
+          </label>
+          <label>センターライン閾値 (mm) <span class="hint-inline">この幅以下は中心線のみ縫う / 0で無効</span>
+            <input type="number" id="centerlineMax" min="0" max="4" step="0.5" value="1.5" />
+          </label>
+          <label>輪郭ステッチ長 (mm)
+            <input type="number" id="outlineStitch" min="0.5" max="5" step="0.25" value="2" />
+          </label>
+          <label class="check"><input type="checkbox" id="tripleOutline" /> 輪郭を3重ランニングで太く</label>
+        </section>
+
+        <section>
           <h2>3. 糸色 (Brother)</h2>
           <ul id="threadList"></ul>
         </section>

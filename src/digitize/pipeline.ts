@@ -6,8 +6,8 @@ import { COLOR_CHANGE, END, JUMP, Pattern, STITCH } from "../embroidery/pattern"
 import { nearestPecThread } from "../embroidery/pecThreads";
 import { quantize, type QuantizeResult, type RasterImage } from "./quantize";
 import { loopArea, simplifyLoop, traceContours, type Pt } from "./contour";
-import { fillLoops } from "./fill";
-import { runningStitch } from "./outline";
+import { fillLoops, type FillOptions } from "./fill";
+import { runningStitch, tripleRunningStitch } from "./outline";
 
 export interface DigitizeOptions {
   /** 仕上がりサイズ: デザインの長辺 (mm)。PP1 の枠は 100x100mm */
@@ -22,10 +22,33 @@ export interface DigitizeOptions {
   angleDeg: number;
   /** 塗りつぶしを生成する */
   fill: boolean;
-  /** 輪郭線 (ランニングステッチ) を生成する */
+  /** 輪郭線を生成する */
   outline: boolean;
   /** 輪郭のステッチ長 (mm) */
   outlineStitchMm: number;
+  /**
+   * 3重ランニングステッチ: 往復3回で輪郭を縫い、より太く濃いラインにする
+   * false の場合は 1重ランニング
+   */
+  tripleOutline: boolean;
+  /**
+   * 細い領域の自動サテン縫い。
+   * true のとき: 推定幅 < satinMaxWidthMm の領域はサテン縫い、
+   *              推定幅 < centerlineMaxWidthMm の領域はセンターライン縫いを選択する。
+   */
+  autoThinDetect: boolean;
+  /**
+   * この推定幅 (mm) 以下の領域をサテン縫いに切り替える。
+   * 一般的な細線・文字の輪郭 は 3〜6mm、縁取りや帯状のデザインは 8mm 程度。
+   */
+  satinMaxWidthMm: number;
+  /** サテン縫いの行間隔 (mm)。タタミより密にするのが一般的 */
+  satinSpacingMm: number;
+  /**
+   * この推定幅 (mm) 以下の極細領域はセンターラインの 1重ランニングで縫う。
+   * 0 を指定するとセンターライン自動判定を無効にする。
+   */
+  centerlineMaxWidthMm: number;
   /** 透明背景のしきい値 (0-255) */
   alphaThreshold: number;
   /** 画像端の均一色を背景として自動除去 */
@@ -47,6 +70,11 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   fill: true,
   outline: true,
   outlineStitchMm: 2.0,
+  tripleOutline: false,
+  autoThinDetect: true,
+  satinMaxWidthMm: 6.0,
+  satinSpacingMm: 0.25,
+  centerlineMaxWidthMm: 1.5,
   alphaThreshold: 128,
   autoBackground: true,
   bgTolerance: 40,
@@ -71,12 +99,35 @@ export interface DigitizeResult {
   stats: DigitizeStats;
 }
 
+/**
+ * 領域の推定幅 (mm) を返す。
+ * 油圧直径 (4A/P) の半値を "幅の代理指標" として使用する。
+ * - 細い帯 (幅 w, 長さ L >> w): 油圧直径 ≈ 2w → 戻り値 ≈ w
+ * - 円 (直径 d): 油圧直径 = d → 戻り値 ≈ d/2
+ */
+function estimateRegionWidthMm(loops: Pt[][]): number {
+  let totalArea = 0;
+  let totalPerimeter = 0;
+  for (const loop of loops) {
+    let a = 0;
+    for (let i = 0; i < loop.length; i++) {
+      const [x0, y0] = loop[i];
+      const [x1, y1] = loop[(i + 1) % loop.length];
+      a += x0 * y1 - x1 * y0;
+      totalPerimeter += Math.hypot(x1 - x0, y1 - y0);
+    }
+    totalArea += Math.abs(a) / 2;
+  }
+  if (totalPerimeter < 1e-9) return Infinity;
+  // 油圧直径 (単位: 0.1mm) → mm に変換し 2 で割る
+  return (4 * totalArea) / totalPerimeter / 2 / 10;
+}
+
 export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {}): DigitizeResult {
   const o: DigitizeOptions = { ...DEFAULT_OPTIONS, ...options };
-  const sizeUnits = Math.min(o.sizeMm, 100) * 10; // 0.1mm 単位, 100mm 枠上限
+  const sizeUnits = Math.min(o.sizeMm, 100) * 10;
 
-  // ピクセル→単位の概算スケール (minRegion 判定用)
-  const approxScale = sizeUnits / Math.max(img.width, img.height); // units/px
+  const approxScale = sizeUnits / Math.max(img.width, img.height);
   const pxPerMm = 10 / approxScale;
   const minRegionPx = Math.max(1, Math.round(o.minRegionMm2 * pxPerMm * pxPerMm));
 
@@ -90,7 +141,6 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
 
   const pattern = new Pattern();
 
-  // 前景バウンディングボックス
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -116,12 +166,11 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
 
   const bw = maxX - minX + 1;
   const bh = maxY - minY + 1;
-  const scale = sizeUnits / Math.max(bw, bh); // units/px
+  const scale = sizeUnits / Math.max(bw, bh);
   const cx = (minX + maxX + 1) / 2;
   const cy = (minY + maxY + 1) / 2;
   const toUnits = ([x, y]: Pt): Pt => [(x - cx) * scale, (y - cy) * scale];
 
-  // 色順: 面積の大きい順 (palette は面積降順に並んでいる)
   const colorOrder: number[] = [];
   for (let c = 0; c < quant.palette.length; c++) {
     if (o.enabledColors && o.enabledColors[c] === false) continue;
@@ -137,7 +186,6 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     usedThreads.add(thread.pecIndex);
     pattern.threads.push(thread);
 
-    // 輪郭抽出 → 簡略化 → 単位変換
     const minLoopAreaPx = Math.max(2, minRegionPx * 0.5);
     const rawLoops = traceContours(quant.labels, quant.width, quant.height, c);
     const loops: Pt[][] = [];
@@ -152,22 +200,27 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       continue;
     }
 
+    // 細さに応じた縫い方選択
+    const widthMm = o.autoThinDetect ? estimateRegionWidthMm(loops) : Infinity;
+    const fillMode = chooseFillMode(widthMm, o);
+
     const runs: Pt[][] = [];
+
     if (o.fill) {
-      runs.push(
-        ...fillLoops(loops, {
-          spacing: o.rowSpacingMm * 10,
-          stitchLen: o.stitchLenMm * 10,
-          angle: (o.angleDeg * Math.PI) / 180,
-        }),
-      );
+      const fillOpts = buildFillOptions(fillMode, o);
+      runs.push(...fillLoops(loops, fillOpts));
     }
+
     if (o.outline) {
+      const stitchLen = o.outlineStitchMm * 10;
       for (const loop of loops) {
-        const run = runningStitch(loop, o.outlineStitchMm * 10);
+        const run = o.tripleOutline
+          ? tripleRunningStitch(loop, stitchLen)
+          : runningStitch(loop, stitchLen);
         if (run.length >= 2) runs.push(run);
       }
     }
+
     if (runs.length === 0) {
       pattern.threads.pop();
       usedThreads.delete(thread.pecIndex);
@@ -195,7 +248,6 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
 
   pattern.center();
 
-  // 座標を整数に丸める (機械単位)
   for (const s of pattern.stitches) {
     s.x = Math.round(s.x);
     s.y = Math.round(s.y);
@@ -213,4 +265,40 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   };
 
   return { pattern, quant, colorOrder, stats };
+}
+
+type FillMode = "tatami" | "satin" | "centerline";
+
+function chooseFillMode(widthMm: number, o: DigitizeOptions): FillMode {
+  if (!o.autoThinDetect) return "tatami";
+  if (o.centerlineMaxWidthMm > 0 && widthMm <= o.centerlineMaxWidthMm) return "centerline";
+  if (widthMm <= o.satinMaxWidthMm) return "satin";
+  return "tatami";
+}
+
+function buildFillOptions(mode: FillMode, o: DigitizeOptions): FillOptions {
+  const angle = (o.angleDeg * Math.PI) / 180;
+  if (mode === "satin") {
+    return {
+      spacing: o.satinSpacingMm * 10,
+      stitchLen: o.stitchLenMm * 10,
+      angle,
+      mode: "satin",
+      maxSatinLen: 120,
+    };
+  }
+  if (mode === "centerline") {
+    return {
+      spacing: o.outlineStitchMm * 10,
+      stitchLen: o.outlineStitchMm * 10,
+      angle,
+      mode: "centerline",
+    };
+  }
+  return {
+    spacing: o.rowSpacingMm * 10,
+    stitchLen: o.stitchLenMm * 10,
+    angle,
+    mode: "tatami",
+  };
 }
