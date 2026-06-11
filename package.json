@@ -1,7 +1,7 @@
 {
   "name": "pp1-stitch-studio",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "Brother SKiTCH PP1 向けブラウザ刺しゅうデータ作成ツール (PNG → PES/DST)",
   "scripts": {

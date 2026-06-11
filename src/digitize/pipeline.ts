@@ -271,6 +271,9 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     if (o.enabledColors && o.enabledColors[c] === false) continue;
     colorOrder.push(c);
   }
+  // 縫い順ランク: 自分より後に縫われる色の上は移動しても後で覆われる
+  const sewRank = new Map<number, number>();
+  colorOrder.forEach((ci, rank) => sewRank.set(ci, rank));
 
   const usedThreads = new Set<number>();
   let firstBlock = true;
@@ -331,6 +334,8 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       if (o.outline) {
         const stitchLen = o.outlineStitchMm * 10;
         for (const loop of regionLoops) {
+          // 5mm 未満の微小ループの輪郭線は省略 (針数と糸切りの削減)
+          if (loopPerimeter(loop) < 50) continue;
           const run = o.tripleOutline
             ? tripleRunningStitch(loop, stitchLen)
             : runningStitch(loop, stitchLen);
@@ -339,7 +344,19 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       }
     }
 
-    if (fillRuns.length === 0 && outlineRuns.length === 0) {
+    // ノイズ由来の極小 run (3針以下かつ全長2mm未満) は縫わない
+    const runLength = (run: Pt[]): number => {
+      let L = 0;
+      for (let i = 1; i < run.length; i++) {
+        L += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+      }
+      return L;
+    };
+    const significant = (run: Pt[]): boolean => run.length > 3 || runLength(run) > 20;
+    const fillRunsF = fillRuns.filter(significant);
+    const outlineRunsF = outlineRuns.filter(significant);
+
+    if (fillRunsF.length === 0 && outlineRunsF.length === 0) {
       pattern.threads.pop();
       usedThreads.delete(thread.pecIndex);
       continue;
@@ -360,28 +377,38 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     const walkPitch = Math.max(10, o.stitchLenMm * 10);
     const TINY_CONNECT = 15; // 1.5mm 以下の移動は色をまたいでも繋ぐ (線の途切れ対策)
 
-    const colorAt = (px: number, py: number): boolean => {
-      const xi = Math.round(px);
-      const yi = Math.round(py);
-      if (xi < 0 || yi < 0 || xi >= quant.width || yi >= quant.height) return false;
+    // つなぎ縫いの経路が「隠れる」か:
+    //  - 自分と同じ色の上 → 同色なので見えない
+    //  - 自分より後に縫う色の上 → その色の縫いで覆われる (塗りつぶしON時)
+    const myRank = sewRank.get(c) ?? 0;
+    const labelHidden = (lab: number): boolean => {
+      if (lab === c) return true;
+      if (!o.fill) return false;
+      const r = sewRank.get(lab);
+      return r !== undefined && r > myRank;
+    };
+    const hiddenAt = (px: number, py: number): boolean => {
+      // デザイン端の点は最寄りの画素にクランプして判定する
+      const xi = Math.min(quant.width - 1, Math.max(0, Math.round(px)));
+      const yi = Math.min(quant.height - 1, Math.max(0, Math.round(py)));
       const w = quant.width;
       const L = quant.labels;
-      if (L[yi * w + xi] === c) return true;
+      if (labelHidden(L[yi * w + xi])) return true;
       // 境界上の丸め誤差を許容して4近傍も見る
       return (
-        (xi > 0 && L[yi * w + xi - 1] === c) ||
-        (xi < w - 1 && L[yi * w + xi + 1] === c) ||
-        (yi > 0 && L[(yi - 1) * w + xi] === c) ||
-        (yi < quant.height - 1 && L[(yi + 1) * w + xi] === c)
+        (xi > 0 && labelHidden(L[yi * w + xi - 1])) ||
+        (xi < w - 1 && labelHidden(L[yi * w + xi + 1])) ||
+        (yi > 0 && labelHidden(L[(yi - 1) * w + xi])) ||
+        (yi < quant.height - 1 && labelHidden(L[(yi + 1) * w + xi]))
       );
     };
-    const sameColorPath = (ax: number, ay: number, bx: number, by: number): boolean => {
+    const hiddenPath = (ax: number, ay: number, bx: number, by: number): boolean => {
       const d = Math.hypot(bx - ax, by - ay);
       const n = Math.max(1, Math.ceil(d / 8));
       for (let i = 0; i <= n; i++) {
         const ux = ax + ((bx - ax) * i) / n;
         const uy = ay + ((by - ay) * i) / n;
-        if (!colorAt(ux / scale + cx, uy / scale + cy)) return false;
+        if (!hiddenAt(ux / scale + cx, uy / scale + cy)) return false;
       }
       return true;
     };
@@ -404,7 +431,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
         const d = Math.hypot(sx - last.x, sy - last.y);
         const hidden =
           d <= TINY_CONNECT ||
-          (d <= connectUnits && sameColorPath(last.x, last.y, sx, sy));
+          (d <= connectUnits && hiddenPath(last.x, last.y, sx, sy));
         if (o.reduceTrims && hidden) {
           // つなぎ縫い: 同色領域の内側を通るので見えない
           const n = Math.ceil(d / walkPitch);
@@ -423,8 +450,8 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       for (const [x, y] of run) pattern.add(STITCH, x, y);
     };
 
-    for (const run of orderRunsNearest(fillRuns, curPos())) emitRun(run);
-    for (const run of orderRunsNearest(outlineRuns, curPos())) emitRun(run);
+    for (const run of orderRunsNearest(fillRunsF, curPos())) emitRun(run);
+    for (const run of orderRunsNearest(outlineRunsF, curPos())) emitRun(run);
   }
 
   if (pattern.stitches.length > 0) {

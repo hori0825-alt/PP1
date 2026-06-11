@@ -1,4 +1,8 @@
-// 画像の減色処理: 背景除去 → k-means 減色 → ノイズ除去 (モードフィルタ + 小領域マージ)
+// 画像の減色処理:
+//   背景除去 → Oklab 空間での k-means 減色 → ノイズ除去
+// アンチエイリアス (輪郭のぼかし) の中間色が独立した糸色にならないよう、
+// クラスタ推定にはエッジ画素を使わない。距離は知覚色空間 Oklab で測り、
+// 見た目が近い色は1本の糸に統合する。
 
 export interface RasterImage {
   data: Uint8ClampedArray | Uint8Array;
@@ -49,18 +53,38 @@ export function quantize(img: RasterImage, opts: QuantizeOptions): QuantizeResul
   // 2. 画像端から繋がる均一背景の除去
   if (opts.autoBackground) removeBorderBackground(data, w, h, labels, opts.bgTolerance);
 
-  // 3. 前景ピクセル収集
+  // 3. 前景とエッジ (アンチエイリアス) 画素の判定
   const fgIdx: number[] = [];
   for (let i = 0; i < n; i++) if (labels[i] !== BG) fgIdx.push(i);
   if (fgIdx.length === 0) {
     return { labels, width: w, height: h, palette: [] };
   }
+  const edge = edgeMask(data, w, h, labels);
 
-  // 4. k-means 減色
-  const centers = kmeans(data, fgIdx, opts.maxColors);
+  // 4. Oklab 空間で k-means。クラスタ推定はフラット画素のみで行い、
+  //    アンチエイリアスの中間色が「糸色」として認識されるのを防ぐ
+  let flatIdx = fgIdx.filter((i) => !edge[i]);
+  if (flatIdx.length < Math.max(1000, fgIdx.length * 0.1)) flatIdx = fgIdx;
+  const centers = kmeansOklab(data, flatIdx, opts.maxColors);
+
+  // 全前景画素を最近傍クラスタへ割当 (同一RGBはキャッシュして高速化)
+  const cache = new Map<number, number>();
   for (const i of fgIdx) {
-    labels[i] = nearestCenter(data[i * 4], data[i * 4 + 1], data[i * 4 + 2], centers);
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const key = (r << 16) | (g << 8) | b;
+    let cIdx = cache.get(key);
+    if (cIdx === undefined) {
+      const lab = srgbToOklab(r, g, b);
+      cIdx = nearestLab(lab, centers);
+      cache.set(key, cIdx);
+    }
+    labels[i] = cIdx;
   }
+
+  // 4b. 微小クラスタ (前景の0.8%未満) は最寄りの色へ吸収
+  absorbTinyClusters(labels, fgIdx, centers);
 
   // 5. モードフィルタでごま塩ノイズを除去
   modeFilter(labels, w, h);
@@ -145,14 +169,41 @@ function removeBorderBackground(
   }
 }
 
-function nearestCenter(r: number, g: number, b: number, centers: number[][]): number {
+// ------------------------------------------------------------ Oklab 色空間
+
+export type Lab = [number, number, number];
+
+/** sRGB → Oklab (各成分を100倍したスケール。L: 0〜100) */
+export function srgbToOklab(r: number, g: number, b: number): Lab {
+  const lin = (v: number): number => {
+    v /= 255;
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const lr = lin(r);
+  const lg = lin(g);
+  const lb = lin(b);
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+  return [
+    (0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s) * 100,
+    (1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s) * 100,
+    (0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s) * 100,
+  ];
+}
+
+function labDist2(a: Lab, b: Lab): number {
+  const d0 = a[0] - b[0];
+  const d1 = a[1] - b[1];
+  const d2 = a[2] - b[2];
+  return d0 * d0 + d1 * d1 + d2 * d2;
+}
+
+function nearestLab(p: Lab, centers: Lab[]): number {
   let best = 0;
   let bestD = Infinity;
   for (let c = 0; c < centers.length; c++) {
-    const dr = r - centers[c][0];
-    const dg = g - centers[c][1];
-    const db = b - centers[c][2];
-    const d = dr * dr + dg * dg + db * db;
+    const d = labDist2(p, centers[c]);
     if (d < bestD) {
       bestD = d;
       best = c;
@@ -161,31 +212,79 @@ function nearestCenter(r: number, g: number, b: number, centers: number[][]): nu
   return best;
 }
 
-function kmeans(
+/**
+ * 遷移画素 (アンチエイリアスの中間色) マスク。
+ * 「両側に大きく異なる色があり、自分はその中間」の画素だけを
+ * マークする。細い線の芯は両側どちらかと同じ色 (極値) なので
+ * マークされず、クラスタ推定から消えない。
+ */
+function edgeMask(
   data: Uint8ClampedArray | Uint8Array,
-  fgIdx: number[],
+  w: number,
+  h: number,
+  labels: Int32Array,
+): Uint8Array {
+  const edge = new Uint8Array(w * h);
+  const t2 = 55 * 55;
+  const m2 = 19 * 19; // 中間とみなす最小距離 (両側から t/3 程度離れている)
+  const diff2 = (i: number, j: number): number => {
+    const dr = data[i * 4] - data[j * 4];
+    const dg = data[i * 4 + 1] - data[j * 4 + 1];
+    const db = data[i * 4 + 2] - data[j * 4 + 2];
+    return dr * dr + dg * dg + db * db;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (labels[i] === BG) continue;
+      // 横方向・縦方向の両隣ペアで「中間色」かを判定
+      const pairs: [number, number][] = [];
+      if (x > 0 && x < w - 1) pairs.push([i - 1, i + 1]);
+      if (y > 0 && y < h - 1) pairs.push([i - w, i + w]);
+      for (const [a, b] of pairs) {
+        const aBg = labels[a] === BG;
+        const bBg = labels[b] === BG;
+        if (aBg && bBg) continue;
+        if (aBg || bBg) {
+          // 背景との境界: 内側の隣と色が違えばハロー (にじみ) 画素
+          const inner = aBg ? b : a;
+          if (diff2(i, inner) > m2) {
+            edge[i] = 1;
+          }
+          continue;
+        }
+        if (diff2(a, b) > t2 && diff2(i, a) > m2 && diff2(i, b) > m2) {
+          edge[i] = 1; // 異なる2色の中間に乗っている
+        }
+      }
+    }
+  }
+  return edge;
+}
+
+/** Oklab 空間での k-means (決定的: 最遠点初期化 + Lloyd 反復) */
+function kmeansOklab(
+  data: Uint8ClampedArray | Uint8Array,
+  idx: number[],
   k: number,
-): number[][] {
+): Lab[] {
   // サンプリング (最大5万点)
-  const stride = Math.max(1, Math.floor(fgIdx.length / 50000));
-  const samples: number[][] = [];
-  for (let s = 0; s < fgIdx.length; s += stride) {
-    const i = fgIdx[s] * 4;
-    samples.push([data[i], data[i + 1], data[i + 2]]);
+  const stride = Math.max(1, Math.floor(idx.length / 50000));
+  const samples: Lab[] = [];
+  for (let s = 0; s < idx.length; s += stride) {
+    const i = idx[s] * 4;
+    samples.push(srgbToOklab(data[i], data[i + 1], data[i + 2]));
   }
 
-  // k-means++ 初期化 (決定的: 乱数の代わりに最遠点選択)
-  const centers: number[][] = [samples[0].slice()];
+  // 最遠点初期化
+  const centers: Lab[] = [samples[0].slice() as Lab];
   const minD = new Float64Array(samples.length).fill(Infinity);
   while (centers.length < Math.min(k, samples.length)) {
     const c = centers[centers.length - 1];
     let far = 0;
     let farD = -1;
     for (let s = 0; s < samples.length; s++) {
-      const dr = samples[s][0] - c[0];
-      const dg = samples[s][1] - c[1];
-      const db = samples[s][2] - c[2];
-      const d = dr * dr + dg * dg + db * db;
+      const d = labDist2(samples[s], c);
       if (d < minD[s]) minD[s] = d;
       if (minD[s] > farD) {
         farD = minD[s];
@@ -193,14 +292,14 @@ function kmeans(
       }
     }
     if (farD <= 0) break; // 色数がサンプルの種類より多い
-    centers.push(samples[far].slice());
+    centers.push(samples[far].slice() as Lab);
   }
 
   // Lloyd 反復
   for (let iter = 0; iter < 12; iter++) {
     const sum = centers.map(() => [0, 0, 0, 0]);
     for (const s of samples) {
-      const c = nearestCenter(s[0], s[1], s[2], centers);
+      const c = nearestLab(s, centers);
       sum[c][0] += s[0];
       sum[c][1] += s[1];
       sum[c][2] += s[2];
@@ -209,30 +308,67 @@ function kmeans(
     let moved = false;
     for (let c = 0; c < centers.length; c++) {
       if (sum[c][3] === 0) continue;
-      const nr = sum[c][0] / sum[c][3];
-      const ng = sum[c][1] / sum[c][3];
-      const nb = sum[c][2] / sum[c][3];
-      if (Math.abs(nr - centers[c][0]) > 0.5 || Math.abs(ng - centers[c][1]) > 0.5 || Math.abs(nb - centers[c][2]) > 0.5) {
-        moved = true;
-      }
-      centers[c] = [nr, ng, nb];
+      const next: Lab = [sum[c][0] / sum[c][3], sum[c][1] / sum[c][3], sum[c][2] / sum[c][3]];
+      if (labDist2(next, centers[c]) > 0.01) moved = true;
+      centers[c] = next;
     }
     if (!moved) break;
   }
 
-  // 近すぎるクラスタを統合 (糸の色として区別する意味がない)
-  const mergeTol2 = 24 * 24;
-  const merged: number[][] = [];
+  // 知覚的に近いクラスタを統合 (糸の色として区別する意味がない)。
+  // Oklab×100 で距離 6 はかなり似た色 (微妙な色味違い程度)
+  const mergeTol2 = 6 * 6;
+  const merged: Lab[] = [];
   for (const c of centers) {
-    const dup = merged.find((m) => {
-      const dr = m[0] - c[0];
-      const dg = m[1] - c[1];
-      const db = m[2] - c[2];
-      return dr * dr + dg * dg + db * db < mergeTol2;
-    });
+    const dup = merged.find((m) => labDist2(m, c) < mergeTol2);
     if (!dup) merged.push(c);
   }
   return merged;
+}
+
+/**
+ * 微小クラスタの吸収。
+ * - 前景の0.8%未満で、かつ知覚的に近い色 (アンチエイリアス残渣や
+ *   微妙なトーン違い) がある場合のみ最寄りの色へ統合する
+ * - 黒い線画のように面積は小さくても見た目が明確に異なる色は残す
+ * - 32px 未満の極小クラスタは無条件で吸収 (ノイズ)
+ */
+function absorbTinyClusters(labels: Int32Array, fgIdx: number[], centers: Lab[]): void {
+  const counts = new Array<number>(centers.length).fill(0);
+  for (const i of fgIdx) counts[labels[i]]++;
+  const minCount = Math.max(64, Math.round(fgIdx.length * 0.008));
+  const similarTol2 = 14 * 14; // これより近い色があれば「同じ糸でよい」
+
+  // 大きい順に処理し、残す/吸収するを決める
+  const order = centers
+    .map((_, c) => c)
+    .filter((c) => counts[c] > 0)
+    .sort((a, b) => counts[b] - counts[a]);
+  const keep: number[] = [];
+  const remap = new Int32Array(centers.length);
+  for (let c = 0; c < centers.length; c++) remap[c] = c;
+
+  for (const c of order) {
+    if (keep.length === 0 || counts[c] >= minCount) {
+      keep.push(c);
+      continue;
+    }
+    let best = keep[0];
+    let bestD = Infinity;
+    for (const kc of keep) {
+      const d = labDist2(centers[c], centers[kc]);
+      if (d < bestD) {
+        bestD = d;
+        best = kc;
+      }
+    }
+    if (bestD < similarTol2 || counts[c] < 32) {
+      remap[c] = best; // 似た色がある or 極小ノイズ → 吸収
+    } else {
+      keep.push(c); // 小さくても独立した色 (線画など) は残す
+    }
+  }
+  for (const i of fgIdx) labels[i] = remap[labels[i]];
 }
 
 function modeFilter(labels: Int32Array, w: number, h: number): void {
