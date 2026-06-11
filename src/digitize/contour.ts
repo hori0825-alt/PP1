@@ -137,6 +137,54 @@ function douglasPeucker(pts: Pt[], eps: number): Pt[] {
   return left.slice(0, -1).concat(right);
 }
 
+/**
+ * 角を保持する Chaikin 平滑化 (閉ループ用)。
+ * ピクセル境界由来のガタガタを滑らかにしつつ、本物の角は残す。
+ * 「角」とみなすのは曲がり角度が cornerDeg 以上で、かつ両側の辺が
+ * minEdgeLen より長い頂点のみ。短い辺の 90° 連続 (ピクセル階段) は
+ * ジャギーなので角扱いせず平滑化する。
+ * iterations: 0=なし 1=弱 2=標準 3=強
+ */
+export function smoothLoop(
+  loop: Pt[],
+  iterations: number,
+  cornerDeg = 55,
+  minEdgeLen = 3,
+): Pt[] {
+  if (iterations <= 0 || loop.length < 4) return loop;
+  const cornerCos = Math.cos((cornerDeg * Math.PI) / 180);
+  let pts = loop;
+  for (let it = 0; it < iterations; it++) {
+    // 反復のたびに辺が分割されて短くなるため、角判定の最小辺長も縮める
+    const minE = minEdgeLen * Math.pow(0.6, it);
+    const n = pts.length;
+    const out: Pt[] = [];
+    for (let i = 0; i < n; i++) {
+      const [px, py] = pts[(i + n - 1) % n];
+      const [cx, cy] = pts[i];
+      const [nx, ny] = pts[(i + 1) % n];
+      const d1x = cx - px;
+      const d1y = cy - py;
+      const d2x = nx - cx;
+      const d2y = ny - cy;
+      const l1 = Math.hypot(d1x, d1y) || 1e-9;
+      const l2 = Math.hypot(d2x, d2y) || 1e-9;
+      const cos = (d1x * d2x + d1y * d2y) / (l1 * l2);
+      if (cos < cornerCos && l1 >= minE && l2 >= minE) {
+        // 本物の角は保持
+        out.push([cx, cy]);
+      } else {
+        // 角を 1/4 ずつ切り落として滑らかにする
+        out.push([cx - d1x * 0.25, cy - d1y * 0.25]);
+        out.push([cx + d2x * 0.25, cy + d2y * 0.25]);
+      }
+    }
+    pts = out;
+    if (pts.length > 4000) break; // 暴走防止
+  }
+  return pts;
+}
+
 /** 符号付き面積 (ピクセル座標、y軸下向き) */
 export function loopArea(loop: Pt[]): number {
   let a = 0;

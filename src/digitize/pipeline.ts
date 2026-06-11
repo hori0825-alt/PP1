@@ -2,10 +2,10 @@
 // 1. 減色 (quantize)  2. 輪郭抽出 (contour)  3. 領域単位の縫いモード判定
 // 4. ステッチ生成 (fill/outline)  5. パターン組み立て
 
-import { COLOR_CHANGE, END, JUMP, Pattern, STITCH } from "../embroidery/pattern";
+import { COLOR_CHANGE, END, JUMP, Pattern, STITCH, TRIM } from "../embroidery/pattern";
 import { nearestPecThread } from "../embroidery/pecThreads";
 import { quantize, type QuantizeResult, type RasterImage } from "./quantize";
-import { loopArea, simplifyLoop, traceContours, type Pt } from "./contour";
+import { loopArea, simplifyLoop, smoothLoop, traceContours, type Pt } from "./contour";
 import { fillLoops, type FillOptions } from "./fill";
 import { runningStitch, tripleRunningStitch } from "./outline";
 
@@ -48,6 +48,15 @@ export interface DigitizeOptions {
   bgTolerance: number;
   /** これより小さい領域は無視 (mm^2)。細長い線状領域は対象外 */
   minRegionMm2: number;
+  /**
+   * 糸切りを減らす。同色内の移動が maxConnectMm 以下なら糸を切らず
+   * つなぎ縫い (渡り縫い) で接続する
+   */
+  reduceTrims: boolean;
+  /** 同色内でつなぎ縫いにする最大移動距離 (mm)。これを超えると糸切り+ジャンプ */
+  maxConnectMm: number;
+  /** アウトラインの平滑化強度 (0=なし 1=弱 2=標準 3=強) */
+  outlineSmoothing: number;
   /** パレット番号ごとの有効フラグ (省略時は全色) */
   enabledColors?: boolean[];
   /**
@@ -75,11 +84,18 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   autoBackground: true,
   bgTolerance: 40,
   minRegionMm2: 1,
+  reduceTrims: true,
+  maxConnectMm: 7,
+  outlineSmoothing: 2,
 };
 
 export interface DigitizeStats {
   stitches: number;
   jumps: number;
+  /** 糸切り回数 (色替えによる糸切りは含まない) */
+  trims: number;
+  /** 色替え回数 */
+  colorChanges: number;
   colors: number;
   widthMm: number;
   heightMm: number;
@@ -149,7 +165,16 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       pattern,
       quant,
       colorOrder: [],
-      stats: { stitches: 0, jumps: 0, colors: 0, widthMm: 0, heightMm: 0, estMinutes: 0 },
+      stats: {
+        stitches: 0,
+        jumps: 0,
+        trims: 0,
+        colorChanges: 0,
+        colors: 0,
+        widthMm: 0,
+        heightMm: 0,
+        estMinutes: 0,
+      },
       view: emptyView,
       excludedMask: null,
     };
@@ -188,8 +213,10 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     const loops: Pt[][] = [];
     for (const raw of rawLoops) {
       if (Math.abs(loopArea(raw)) < minLoopAreaPx) continue;
+      // 簡略化 (DP) → 角保持つき平滑化でピクセル境界のガタガタを除去
       const simplified = simplifyLoop(raw, 0.75);
-      if (simplified.length >= 3) loops.push(simplified.map(toUnits));
+      const smoothed = smoothLoop(simplified, o.outlineSmoothing);
+      if (smoothed.length >= 3) loops.push(smoothed.map(toUnits));
     }
     if (loops.length === 0) {
       pattern.threads.pop();
@@ -197,9 +224,11 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       continue;
     }
 
-    // 外周+穴を「領域」にまとめ、領域ごとに縫いモードを決める
+    // 外周+穴を「領域」にまとめ、領域ごとに縫いモードを決める。
+    // 面 (fill) を先に、輪郭線 (outline) を後に縫う (輪郭が面に埋もれないように)
     const regions = groupRegions(loops);
-    const runs: Pt[][] = [];
+    const fillRuns: Pt[][] = [];
+    const outlineRuns: Pt[][] = [];
     const userAngle = (o.angleDeg * Math.PI) / 180;
 
     for (const region of regions) {
@@ -214,7 +243,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
           // 線全体を連続したランニングステッチにする
           for (const hole of region.holes) {
             const run = runningStitch(hole, o.outlineStitchMm * 10);
-            if (run.length >= 2) runs.push(run);
+            if (run.length >= 2) fillRuns.push(run);
           }
         } else {
           // 細い線は領域の長軸に対して直交する向きでスキャンすると
@@ -223,7 +252,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
             mode === "satin" || mode === "centerline"
               ? majorAxisAngle(region.outer) - Math.PI / 2
               : userAngle;
-          runs.push(...fillLoops(regionLoops, buildFillOptions(mode, o, angle)));
+          fillRuns.push(...fillLoops(regionLoops, buildFillOptions(mode, o, angle)));
         }
       }
 
@@ -235,12 +264,12 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
           const run = o.tripleOutline
             ? tripleRunningStitch(loop, stitchLen)
             : runningStitch(loop, stitchLen);
-          if (run.length >= 2) runs.push(run);
+          if (run.length >= 2) outlineRuns.push(run);
         }
       }
     }
 
-    if (runs.length === 0) {
+    if (fillRuns.length === 0 && outlineRuns.length === 0) {
       pattern.threads.pop();
       usedThreads.delete(thread.pecIndex);
       continue;
@@ -248,14 +277,50 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
 
     if (!firstBlock) {
       const last = pattern.stitches[pattern.stitches.length - 1];
+      pattern.add(TRIM, last.x, last.y); // 色替え前は糸切り
       pattern.add(COLOR_CHANGE, last.x, last.y);
     }
     firstBlock = false;
 
-    for (const run of runs) {
-      pattern.add(JUMP, run[0][0], run[0][1]);
+    // 同色内は nearest-neighbor で縫い順を決め、近い run はつなぎ縫いで連結する
+    const connectUnits = o.maxConnectMm * 10;
+    const walkPitch = Math.max(10, o.stitchLenMm * 10);
+    const curPos = (): Pt | null => {
+      for (let i = pattern.stitches.length - 1; i >= 0; i--) {
+        const s = pattern.stitches[i];
+        if (s.cmd === STITCH || s.cmd === JUMP) return [s.x, s.y];
+      }
+      return null;
+    };
+
+    const emitRun = (run: Pt[]) => {
+      const [sx, sy] = run[0];
+      const last = pattern.stitches[pattern.stitches.length - 1];
+      if (!last || last.cmd === COLOR_CHANGE) {
+        // パターン先頭・色替え直後は位置決めジャンプ (色替え時に機械が糸を切る)
+        pattern.add(JUMP, sx, sy);
+      } else {
+        const d = Math.hypot(sx - last.x, sy - last.y);
+        if (o.reduceTrims && d <= connectUnits) {
+          // つなぎ縫い: 糸を切らず最大ステッチ長以下の針目で移動する
+          const n = Math.ceil(d / walkPitch);
+          for (let i = 1; i < n; i++) {
+            pattern.add(
+              STITCH,
+              last.x + ((sx - last.x) * i) / n,
+              last.y + ((sy - last.y) * i) / n,
+            );
+          }
+        } else if (d > 1) {
+          pattern.add(TRIM, last.x, last.y);
+          pattern.add(JUMP, sx, sy);
+        }
+      }
       for (const [x, y] of run) pattern.add(STITCH, x, y);
-    }
+    };
+
+    for (const run of orderRunsNearest(fillRuns, curPos())) emitRun(run);
+    for (const run of orderRunsNearest(outlineRuns, curPos())) emitRun(run);
   }
 
   if (pattern.stitches.length > 0) {
@@ -277,6 +342,8 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   const stats: DigitizeStats = {
     stitches,
     jumps: pattern.countJumps(),
+    trims: pattern.countTrims(),
+    colorChanges: pattern.countColorChanges(),
     colors: pattern.threads.length,
     widthMm: (b.maxX - b.minX) / 10,
     heightMm: (b.maxY - b.minY) / 10,
@@ -292,6 +359,48 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   };
 
   return { pattern, quant, colorOrder, stats, view, excludedMask };
+}
+
+// ------------------------------------------------------------ 縫い順最適化
+
+/**
+ * run 群を nearest-neighbor で並べ替える。
+ * 各 run は始点・終点のどちらからでも縫えるものとして、現在位置に
+ * 近い方の端点を選び、必要なら run を反転する (移動距離の最小化)。
+ */
+export function orderRunsNearest(runs: Pt[][], start: Pt | null): Pt[][] {
+  const remaining = runs.slice();
+  const ordered: Pt[][] = [];
+  let cur = start;
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestRev = false;
+    let bestD = Infinity;
+    if (cur) {
+      for (let i = 0; i < remaining.length; i++) {
+        const run = remaining[i];
+        const [sx, sy] = run[0];
+        const [ex, ey] = run[run.length - 1];
+        const ds = Math.hypot(sx - cur[0], sy - cur[1]);
+        const de = Math.hypot(ex - cur[0], ey - cur[1]);
+        if (ds < bestD) {
+          bestD = ds;
+          bestIdx = i;
+          bestRev = false;
+        }
+        if (de < bestD) {
+          bestD = de;
+          bestIdx = i;
+          bestRev = true;
+        }
+      }
+    }
+    const run = remaining.splice(bestIdx, 1)[0];
+    if (bestRev) run.reverse();
+    ordered.push(run);
+    cur = run[run.length - 1];
+  }
+  return ordered;
 }
 
 // ---------------------------------------------------------------- 抜き指定

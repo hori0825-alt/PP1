@@ -9,6 +9,7 @@ import {
   Pattern,
   STITCH,
   Stitch,
+  TRIM,
   getColorBlocks,
   getCommandBlocks,
 } from "./pattern";
@@ -296,6 +297,9 @@ function pecEncode(pattern: Pattern, f: BinWriter): void {
   let colorTwo = true;
   let jumping = true;
   let init = true;
+  // 糸切りは TRIM コマンドで明示されたときだけ行う。
+  // それ以外の JUMP は糸を切らない移動 (渡り糸) として書き出す
+  let pendingTrim = false;
   let xx = 0;
   let yy = 0;
   for (const stitch of pattern.stitches) {
@@ -312,11 +316,15 @@ function pecEncode(pattern: Pattern, f: BinWriter): void {
         }
         jumping = false;
       }
+      pendingTrim = false;
       writeValue(f, dx, false);
       writeValue(f, dy, false);
+    } else if (cmd === TRIM) {
+      pendingTrim = true;
+      continue; // 位置情報のみ (dx,dy=0)。次の JUMP で糸切りフラグを立てる
     } else if (cmd === JUMP) {
       jumping = true;
-      const flag = init ? JUMP_CODE : TRIM_CODE;
+      const flag = init ? JUMP_CODE : pendingTrim ? TRIM_CODE : JUMP_CODE;
       writeValue(f, dx, true, flag);
       writeValue(f, dy, true, flag);
     } else if (cmd === COLOR_CHANGE) {
@@ -325,6 +333,7 @@ function pecEncode(pattern: Pattern, f: BinWriter): void {
         writeValue(f, 0, false);
         jumping = false;
       }
+      pendingTrim = false; // 色替えで機械が糸処理するため
       f.u8(0xfe);
       f.u8(0xb0);
       f.u8(colorTwo ? 0x02 : 0x01);

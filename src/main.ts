@@ -1,6 +1,6 @@
 import "./style.css";
 import { digitize, type DigitizeResult } from "./digitize/pipeline";
-import { COLOR_CHANGE, JUMP, STITCH } from "./embroidery/pattern";
+import { COLOR_CHANGE, JUMP, STITCH, TRIM } from "./embroidery/pattern";
 import { writePes } from "./embroidery/pes";
 import { writeDst } from "./embroidery/dst";
 
@@ -141,6 +141,10 @@ function readOptions() {
     centerlineMaxWidthMm: clamp(Number($<HTMLInputElement>("centerlineMax").value) || 0, 0, 5),
     outlineStitchMm: clamp(Number($<HTMLInputElement>("outlineStitch").value) || 2, 0.5, 5),
     tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
+    // 縫いの連続性
+    reduceTrims: $<HTMLInputElement>("reduceTrims").checked,
+    maxConnectMm: clamp(Number($<HTMLInputElement>("maxConnect").value) || 7, 1, 20),
+    outlineSmoothing: clamp(Math.round(Number($<HTMLInputElement>("smoothing").value) || 0), 0, 3),
     enabledColors: enabledColors.length > 0 ? enabledColors : undefined,
     excludePoints: excludePoints.length > 0 ? excludePoints : undefined,
   };
@@ -160,6 +164,7 @@ for (const id of [
   "sizeMm", "maxColors", "rowSpacing", "stitchLen", "angle", "minRegion",
   "fillOn", "outlineOn", "autoBg",
   "autoThin", "satinMaxWidth", "satinSpacing", "centerlineMax", "outlineStitch", "tripleOutline",
+  "reduceTrims", "maxConnect", "smoothing",
 ]) {
   $(id).addEventListener("input", () => {
     if (id === "maxColors" || id === "autoBg" || id === "minRegion") enabledColors = [];
@@ -184,8 +189,10 @@ function update(): void {
 
   const { stats } = result;
   statsEl.innerHTML =
-    `<span>ステッチ数 <b>${stats.stitches.toLocaleString()}</b></span>` +
-    `<span>色数 <b>${stats.colors}</b></span>` +
+    `<span>総針数 <b>${stats.stitches.toLocaleString()}</b></span>` +
+    `<span>糸切り <b>${stats.trims}</b>回</span>` +
+    `<span>ジャンプ <b>${stats.jumps}</b>回</span>` +
+    `<span>色替え <b>${stats.colorChanges}</b>回</span>` +
     `<span>サイズ <b>${stats.widthMm.toFixed(1)} × ${stats.heightMm.toFixed(1)} mm</b></span>` +
     `<span>推定時間 <b>約${stats.estMinutes}分</b></span>` +
     `<span>処理 <b>${ms}ms</b></span>`;
@@ -305,8 +312,37 @@ function render(): void {
         ctx.restore();
       }
       prev = { x: s.x, y: s.y };
+    } else if (s.cmd === TRIM) {
+      if (showJumps) {
+        // 糸切り位置: 赤い✕
+        ctx.save();
+        ctx.strokeStyle = "#e0312f";
+        ctx.lineWidth = 2;
+        const r = 5;
+        ctx.beginPath();
+        ctx.moveTo(px - r, py - r);
+        ctx.lineTo(px + r, py + r);
+        ctx.moveTo(px + r, py - r);
+        ctx.lineTo(px - r, py + r);
+        ctx.stroke();
+        ctx.restore();
+      }
     } else if (s.cmd === COLOR_CHANGE) {
       colorIdx++;
+      if (showJumps) {
+        // 色替え位置: 青い◆
+        ctx.save();
+        ctx.fillStyle = "#3a7bd5";
+        const r = 6;
+        ctx.beginPath();
+        ctx.moveTo(px, py - r);
+        ctx.lineTo(px + r, py);
+        ctx.lineTo(px, py + r);
+        ctx.lineTo(px - r, py);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
     }
   }
 

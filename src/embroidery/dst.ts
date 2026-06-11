@@ -1,6 +1,6 @@
 // Tajima DST ライタ。単位 0.1mm。DST は Y軸上向きなので書き出し時に反転する。
 
-import { COLOR_CHANGE, END, JUMP, Pattern, STITCH } from "./pattern";
+import { COLOR_CHANGE, END, JUMP, Pattern, STITCH, TRIM } from "./pattern";
 import { BinWriter } from "./binWriter";
 
 const MAX_DELTA = 121;
@@ -157,6 +157,11 @@ export function writeDst(pattern: Pattern): Uint8Array {
       emitMove(s.x, sy, false);
       endX = x;
       endY = y;
+    } else if (s.cmd === TRIM) {
+      // Tajima 慣例: 3連続の微小ジャンプ = 糸切り (正味移動ゼロ)
+      records.push(encodeDstRecord(2, 2, true, false));
+      records.push(encodeDstRecord(-4, -4, true, false));
+      records.push(encodeDstRecord(2, 2, true, false));
     } else if (s.cmd === JUMP) {
       emitMove(s.x, sy, true);
     } else if (s.cmd === COLOR_CHANGE) {

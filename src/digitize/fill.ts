@@ -91,13 +91,15 @@ export function fillLoops(loops: Pt[][], o: FillOptions): Pt[][] {
       const chain = [seg];
       let cur = seg;
       for (let nr = r + 1; nr < rows.length; nr++) {
+        // 次の行で最も重なりの大きいセグメントへ繋ぐ (蛇行パスの連続性を最大化)
         let next: Segment | null = null;
+        let bestOverlap = 0.5;
         for (const cand of rows[nr]) {
           if (cand.visited) continue;
           const overlap = Math.min(cur.x1, cand.x1) - Math.max(cur.x0, cand.x0);
-          if (overlap > 0.5) {
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
             next = cand;
-            break;
           }
         }
         if (!next) break;

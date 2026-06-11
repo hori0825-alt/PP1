@@ -4,6 +4,8 @@
 export const STITCH = 0;
 export const JUMP = 1;
 export const COLOR_CHANGE = 2;
+/** 糸切り。直後の JUMP の前に糸をカットする指示 (位置は現在位置) */
+export const TRIM = 3;
 export const END = 4;
 
 export interface Thread {
@@ -79,6 +81,18 @@ export class Pattern {
   countJumps(): number {
     let n = 0;
     for (const s of this.stitches) if (s.cmd === JUMP) n++;
+    return n;
+  }
+
+  countTrims(): number {
+    let n = 0;
+    for (const s of this.stitches) if (s.cmd === TRIM) n++;
+    return n;
+  }
+
+  countColorChanges(): number {
+    let n = 0;
+    for (const s of this.stitches) if (s.cmd === COLOR_CHANGE) n++;
     return n;
   }
 }
