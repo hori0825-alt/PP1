@@ -4,10 +4,17 @@ import { COLOR_CHANGE, JUMP, STITCH } from "./embroidery/pattern";
 import { writePes } from "./embroidery/pes";
 import { writeDst } from "./embroidery/dst";
 
+// ビルド時に vite.config.ts の define で package.json の version が注入される
+declare const __APP_VERSION__: string;
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+
 const HOOP_MM = 100; // PP1 の刺しゅう範囲 100x100mm
 const PROCESS_MAX_PX = 1000; // 処理解像度の上限 (長辺)。細い線の認識のため高めにする
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+$("version").textContent = `v${APP_VERSION}`;
+console.info(`PP1 Stitch Studio v${APP_VERSION}`);
 
 const dropzone = $("dropzone");
 const fileInput = $<HTMLInputElement>("fileInput");
@@ -354,6 +361,35 @@ function maskComponent(mask: Uint8Array, w: number, h: number, sx: number, sy: n
   return comp;
 }
 
+/**
+ * クリック位置の近傍から縫い領域 (または抜き済み領域) を探す。
+ * 細い線や領域の境界をクリックしたときに 1px のずれで外れないように
+ * リング状に半径を広げて走査する。
+ */
+function findClickTarget(
+  ix: number,
+  iy: number,
+): { x: number; y: number; excluded: boolean } | null {
+  if (!result) return null;
+  const { width: w, height: h, labels } = result.quant;
+  const mask = result.excludedMask;
+  const maxR = Math.max(4, Math.round(Math.max(w, h) * 0.012));
+  for (let r = 0; r <= maxR; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // リングのみ走査
+        const x = ix + dx;
+        const y = iy + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const idx = y * w + x;
+        if (mask && mask[idx]) return { x, y, excluded: true };
+        if (labels[idx] >= 0) return { x, y, excluded: false };
+      }
+    }
+  }
+  return null;
+}
+
 stitchCanvas.addEventListener("click", (e) => {
   if (!result || !sourceImage) return;
   const rect = stitchCanvas.getBoundingClientRect();
@@ -368,18 +404,17 @@ stitchCanvas.addEventListener("click", (e) => {
   const v = result.view;
   const ix = Math.round((ux - v.offsetX) / v.scale + v.cx);
   const iy = Math.round((uy - v.offsetY) / v.scale + v.cy);
-  const { width: qw, height: qh, labels } = result.quant;
-  if (ix < 0 || iy < 0 || ix >= qw || iy >= qh) return;
-  const idx = iy * qw + ix;
 
-  if (result.excludedMask && result.excludedMask[idx]) {
+  const target = findClickTarget(ix, iy);
+  if (!target) return; // 背景クリックは無視
+
+  const { width: qw, height: qh } = result.quant;
+  if (target.excluded) {
     // すでに抜き指定された領域をクリック → 解除
-    const comp = maskComponent(result.excludedMask, qw, qh, ix, iy);
+    const comp = maskComponent(result.excludedMask!, qw, qh, target.x, target.y);
     excludePoints = excludePoints.filter(([qx, qy]) => !comp.has(qy * qw + qx));
-  } else if (labels[idx] >= 0) {
-    excludePoints.push([ix, iy]);
   } else {
-    return; // 背景クリックは無視
+    excludePoints.push([target.x, target.y]);
   }
   update();
 });
