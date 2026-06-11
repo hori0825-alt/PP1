@@ -236,31 +236,42 @@ function kmeans(
 }
 
 function modeFilter(labels: Int32Array, w: number, h: number): void {
+  // 超多数決 (3x3 中 7 以上) の場合のみ反転する。
+  // 単純多数決だと幅 1〜2px の細い線 (線画の輪郭など) が消えてしまうため、
+  // ごま塩ノイズ (孤立 1〜2px) だけを除去し、線は保護する。
   const src = labels.slice();
-  const counts = new Map<number, number>();
+  let maxLabel = 0;
+  for (let i = 0; i < src.length; i++) if (src[i] > maxLabel) maxLabel = src[i];
+  const counts = new Int32Array(maxLabel + 2); // [0]=BG, [l+1]=ラベルl
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (src[i] === BG) continue;
-      counts.clear();
+      let best = src[i];
+      let bestC = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = x + dx;
           const ny = y + dy;
           if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
           const l = src[ny * w + nx];
-          counts.set(l, (counts.get(l) ?? 0) + 1);
+          const c = ++counts[l + 1];
+          if (c > bestC) {
+            bestC = c;
+            best = l;
+          }
         }
       }
-      let best = src[i];
-      let bestC = 0;
-      for (const [l, c] of counts) {
-        if (c > bestC) {
-          bestC = c;
-          best = l;
+      // カウンタをリセット (touched セルのみ)
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          counts[src[ny * w + nx] + 1] = 0;
         }
       }
-      labels[i] = best;
+      if (best !== src[i] && bestC >= 7) labels[i] = best;
     }
   }
 }
@@ -300,6 +311,12 @@ function mergeSmallRegions(labels: Int32Array, w: number, h: number, minPx: numb
         }
       }
       if (region.length >= minPx) continue;
+      // 細長い領域 (線画の輪郭・髪の毛の線など) は面積が小さくても残す。
+      // コンパクトネス = 境界長^2 / 面積。塊は ~16、線は線長に比例して大きくなる
+      let boundary = 0;
+      for (const c of neighborCount.values()) boundary += c;
+      const compactness = (boundary * boundary) / region.length;
+      if (region.length >= 12 && compactness > 90) continue;
       // 最も接している隣接ラベルにマージ
       let best = BG;
       let bestC = 0;

@@ -1,6 +1,6 @@
 // 画像 → 刺しゅうデータの変換パイプライン全体。
-// 1. 減色 (quantize)  2. 輪郭抽出 (contour)  3. ステッチ生成 (fill/outline)
-// 4. パターン組み立て (色ごとにジャンプ・色替えを挿入)
+// 1. 減色 (quantize)  2. 輪郭抽出 (contour)  3. 領域単位の縫いモード判定
+// 4. ステッチ生成 (fill/outline)  5. パターン組み立て
 
 import { COLOR_CHANGE, END, JUMP, Pattern, STITCH } from "../embroidery/pattern";
 import { nearestPecThread } from "../embroidery/pecThreads";
@@ -26,28 +26,19 @@ export interface DigitizeOptions {
   outline: boolean;
   /** 輪郭のステッチ長 (mm) */
   outlineStitchMm: number;
-  /**
-   * 3重ランニングステッチ: 往復3回で輪郭を縫い、より太く濃いラインにする
-   * false の場合は 1重ランニング
-   */
+  /** 3重ランニングステッチ: 往復3回で輪郭を太く濃いラインにする */
   tripleOutline: boolean;
   /**
-   * 細い領域の自動サテン縫い。
-   * true のとき: 推定幅 < satinMaxWidthMm の領域はサテン縫い、
-   *              推定幅 < centerlineMaxWidthMm の領域はセンターライン縫いを選択する。
+   * 細い領域の自動判定。領域 (外周+穴のまとまり) ごとに推定幅を計算し、
+   * 幅 <= satinMaxWidthMm ならサテン縫い、
+   * 幅 <= centerlineMaxWidthMm ならセンターライン縫いを選択する。
    */
   autoThinDetect: boolean;
-  /**
-   * この推定幅 (mm) 以下の領域をサテン縫いに切り替える。
-   * 一般的な細線・文字の輪郭 は 3〜6mm、縁取りや帯状のデザインは 8mm 程度。
-   */
+  /** この推定幅 (mm) 以下の領域をサテン縫いに切り替える */
   satinMaxWidthMm: number;
-  /** サテン縫いの行間隔 (mm)。タタミより密にするのが一般的 */
+  /** サテン縫いの行間隔 (mm) */
   satinSpacingMm: number;
-  /**
-   * この推定幅 (mm) 以下の極細領域はセンターラインの 1重ランニングで縫う。
-   * 0 を指定するとセンターライン自動判定を無効にする。
-   */
+  /** この推定幅 (mm) 以下の極細領域はセンターラインで縫う。0 で無効 */
   centerlineMaxWidthMm: number;
   /** 透明背景のしきい値 (0-255) */
   alphaThreshold: number;
@@ -55,10 +46,15 @@ export interface DigitizeOptions {
   autoBackground: boolean;
   /** 背景色の許容差 */
   bgTolerance: number;
-  /** これより小さい領域は無視 (mm^2) */
+  /** これより小さい領域は無視 (mm^2)。細長い線状領域は対象外 */
   minRegionMm2: number;
   /** パレット番号ごとの有効フラグ (省略時は全色) */
   enabledColors?: boolean[];
+  /**
+   * 縫わない (抜き) 領域の指定。処理画像のピクセル座標で、
+   * 各点が属する連結領域を縫い対象から除外する。
+   */
+  excludePoints?: [number, number][];
 }
 
 export const DEFAULT_OPTIONS: DigitizeOptions = {
@@ -78,7 +74,7 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   alphaThreshold: 128,
   autoBackground: true,
   bgTolerance: 40,
-  minRegionMm2: 2,
+  minRegionMm2: 1,
 };
 
 export interface DigitizeStats {
@@ -91,36 +87,27 @@ export interface DigitizeStats {
   estMinutes: number;
 }
 
+/**
+ * 処理画像ピクセル座標 ⇔ パターン座標 (0.1mm) の変換。
+ * パターン座標 = (px - cx) * scale + offset
+ */
+export interface ViewTransform {
+  scale: number;
+  cx: number;
+  cy: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 export interface DigitizeResult {
   pattern: Pattern;
   quant: QuantizeResult;
   /** 縫う順のパレット番号 */
   colorOrder: number[];
   stats: DigitizeStats;
-}
-
-/**
- * 領域の推定幅 (mm) を返す。
- * 油圧直径 (4A/P) の半値を "幅の代理指標" として使用する。
- * - 細い帯 (幅 w, 長さ L >> w): 油圧直径 ≈ 2w → 戻り値 ≈ w
- * - 円 (直径 d): 油圧直径 = d → 戻り値 ≈ d/2
- */
-function estimateRegionWidthMm(loops: Pt[][]): number {
-  let totalArea = 0;
-  let totalPerimeter = 0;
-  for (const loop of loops) {
-    let a = 0;
-    for (let i = 0; i < loop.length; i++) {
-      const [x0, y0] = loop[i];
-      const [x1, y1] = loop[(i + 1) % loop.length];
-      a += x0 * y1 - x1 * y0;
-      totalPerimeter += Math.hypot(x1 - x0, y1 - y0);
-    }
-    totalArea += Math.abs(a) / 2;
-  }
-  if (totalPerimeter < 1e-9) return Infinity;
-  // 油圧直径 (単位: 0.1mm) → mm に変換し 2 で割る
-  return (4 * totalArea) / totalPerimeter / 2 / 10;
+  view: ViewTransform;
+  /** 抜き指定された領域のマスク (1=除外)。指定がなければ null */
+  excludedMask: Uint8Array | null;
 }
 
 export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {}): DigitizeResult {
@@ -140,7 +127,9 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   });
 
   const pattern = new Pattern();
+  const emptyView: ViewTransform = { scale: 1, cx: 0, cy: 0, offsetX: 0, offsetY: 0 };
 
+  // 前景バウンディングボックス (抜き指定の前に計算し、抜きでサイズが変わらないようにする)
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -161,7 +150,15 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       quant,
       colorOrder: [],
       stats: { stitches: 0, jumps: 0, colors: 0, widthMm: 0, heightMm: 0, estMinutes: 0 },
+      view: emptyView,
+      excludedMask: null,
     };
+  }
+
+  // クリックで指定された抜き領域を背景化
+  let excludedMask: Uint8Array | null = null;
+  if (o.excludePoints && o.excludePoints.length > 0) {
+    excludedMask = excludeRegions(quant, o.excludePoints);
   }
 
   const bw = maxX - minX + 1;
@@ -186,7 +183,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     usedThreads.add(thread.pecIndex);
     pattern.threads.push(thread);
 
-    const minLoopAreaPx = Math.max(2, minRegionPx * 0.5);
+    const minLoopAreaPx = 2;
     const rawLoops = traceContours(quant.labels, quant.width, quant.height, c);
     const loops: Pt[][] = [];
     for (const raw of rawLoops) {
@@ -200,24 +197,46 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       continue;
     }
 
-    // 細さに応じた縫い方選択
-    const widthMm = o.autoThinDetect ? estimateRegionWidthMm(loops) : Infinity;
-    const fillMode = chooseFillMode(widthMm, o);
-
+    // 外周+穴を「領域」にまとめ、領域ごとに縫いモードを決める
+    const regions = groupRegions(loops);
     const runs: Pt[][] = [];
+    const userAngle = (o.angleDeg * Math.PI) / 180;
 
-    if (o.fill) {
-      const fillOpts = buildFillOptions(fillMode, o);
-      runs.push(...fillLoops(loops, fillOpts));
-    }
+    for (const region of regions) {
+      const regionLoops = [region.outer, ...region.holes];
+      const widthMm = o.autoThinDetect ? regionWidthMm(region) : Infinity;
+      const mode = chooseFillMode(widthMm, o);
 
-    if (o.outline) {
-      const stitchLen = o.outlineStitchMm * 10;
-      for (const loop of loops) {
-        const run = o.tripleOutline
-          ? tripleRunningStitch(loop, stitchLen)
-          : runningStitch(loop, stitchLen);
-        if (run.length >= 2) runs.push(run);
+      if (o.fill) {
+        if (mode === "centerline" && region.holes.length > 0) {
+          // 閉じたストローク (輪っか状の細い線) はスキャン方式だと
+          // スキャン方向と平行な部分が途切れるため、内側輪郭をなぞって
+          // 線全体を連続したランニングステッチにする
+          for (const hole of region.holes) {
+            const run = runningStitch(hole, o.outlineStitchMm * 10);
+            if (run.length >= 2) runs.push(run);
+          }
+        } else {
+          // 細い線は領域の長軸に対して直交する向きでスキャンすると
+          // クロスステッチが線幅方向に揃いきれいに仕上がる
+          const angle =
+            mode === "satin" || mode === "centerline"
+              ? majorAxisAngle(region.outer) - Math.PI / 2
+              : userAngle;
+          runs.push(...fillLoops(regionLoops, buildFillOptions(mode, o, angle)));
+        }
+      }
+
+      // 輪郭線はタタミ領域のみ (細い線でランニングを重ねると線が濁る)。
+      // 塗りつぶし無効時は従来どおり全領域に輪郭線を生成する
+      if (o.outline && (mode === "tatami" || !o.fill)) {
+        const stitchLen = o.outlineStitchMm * 10;
+        for (const loop of regionLoops) {
+          const run = o.tripleOutline
+            ? tripleRunningStitch(loop, stitchLen)
+            : runningStitch(loop, stitchLen);
+          if (run.length >= 2) runs.push(run);
+        }
       }
     }
 
@@ -246,7 +265,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     pattern.add(END, 0, 0);
   }
 
-  pattern.center();
+  const centerOffset = pattern.center();
 
   for (const s of pattern.stitches) {
     s.x = Math.round(s.x);
@@ -264,8 +283,162 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     estMinutes: Math.round((stitches / 400) * 10) / 10,
   };
 
-  return { pattern, quant, colorOrder, stats };
+  const view: ViewTransform = {
+    scale,
+    cx,
+    cy,
+    offsetX: centerOffset.dx,
+    offsetY: centerOffset.dy,
+  };
+
+  return { pattern, quant, colorOrder, stats, view, excludedMask };
 }
+
+// ---------------------------------------------------------------- 抜き指定
+
+/** 各指定点が属する連結領域を背景化し、除外マスクを返す */
+function excludeRegions(quant: QuantizeResult, points: [number, number][]): Uint8Array {
+  const { labels, width: w, height: h } = quant;
+  const mask = new Uint8Array(w * h);
+  for (const [px, py] of points) {
+    const x = Math.round(px);
+    const y = Math.round(py);
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    const start = y * w + x;
+    const lab = labels[start];
+    if (lab < 0) continue;
+    labels[start] = -1;
+    mask[start] = 1;
+    const queue = [start];
+    while (queue.length > 0) {
+      const i = queue.pop()!;
+      const ix = i % w;
+      const iy = (i / w) | 0;
+      const neighbors = [
+        ix > 0 ? i - 1 : -1,
+        ix < w - 1 ? i + 1 : -1,
+        iy > 0 ? i - w : -1,
+        iy < h - 1 ? i + w : -1,
+      ];
+      for (const ni of neighbors) {
+        if (ni >= 0 && labels[ni] === lab) {
+          labels[ni] = -1;
+          mask[ni] = 1;
+          queue.push(ni);
+        }
+      }
+    }
+  }
+  return mask;
+}
+
+// ------------------------------------------------------------ 領域グループ
+
+interface Region {
+  outer: Pt[];
+  holes: Pt[][];
+}
+
+/**
+ * ループ群を「外周 + その穴」の領域にまとめる。
+ * 輪郭抽出の向き (内部が左) により、外周は符号付き面積が正、穴は負になる。
+ */
+function groupRegions(loops: Pt[][]): Region[] {
+  const outers: { loop: Pt[]; area: number }[] = [];
+  const holeLoops: { loop: Pt[]; area: number }[] = [];
+  for (const loop of loops) {
+    const a = loopArea(loop);
+    if (a >= 0) outers.push({ loop, area: a });
+    else holeLoops.push({ loop, area: a });
+  }
+  const regions: Region[] = outers.map((e) => ({ outer: e.loop, holes: [] }));
+  for (const h of holeLoops) {
+    let bestIdx = -1;
+    let bestArea = Infinity;
+    for (let i = 0; i < outers.length; i++) {
+      if (outers[i].area < -h.area) continue;
+      if (outers[i].area >= bestArea) continue;
+      if (pointInPolygon(h.loop[0], outers[i].loop)) {
+        bestArea = outers[i].area;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) regions[bestIdx].holes.push(h.loop);
+  }
+  return regions;
+}
+
+function pointInPolygon([x, y]: Pt, loop: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0; i < loop.length; i++) {
+    const [x0, y0] = loop[i];
+    const [x1, y1] = loop[(i + 1) % loop.length];
+    if ((y0 <= y && y < y1) || (y1 <= y && y < y0)) {
+      const xi = x0 + ((y - y0) / (y1 - y0)) * (x1 - x0);
+      if (xi > x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function loopPerimeter(loop: Pt[]): number {
+  let p = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const [x0, y0] = loop[i];
+    const [x1, y1] = loop[(i + 1) % loop.length];
+    p += Math.hypot(x1 - x0, y1 - y0);
+  }
+  return p;
+}
+
+/**
+ * 領域の推定幅 (mm)。油圧直径 (4A/P) の半値を使う。
+ * - 細い帯 (幅 w): ≈ w
+ * - 円 (直径 d): ≈ d/2
+ */
+function regionWidthMm(r: Region): number {
+  let area = loopArea(r.outer);
+  let perim = loopPerimeter(r.outer);
+  for (const h of r.holes) {
+    area += loopArea(h); // 穴は負
+    perim += loopPerimeter(h);
+  }
+  if (perim < 1e-9 || area <= 0) return 0;
+  return (4 * area) / perim / 2 / 10;
+}
+
+/** 辺の長さで重み付けした PCA による領域の長軸方向 (ラジアン) */
+function majorAxisAngle(loop: Pt[]): number {
+  let w = 0;
+  let mx = 0;
+  let my = 0;
+  const mids: [number, number, number][] = [];
+  for (let i = 0; i < loop.length; i++) {
+    const [x0, y0] = loop[i];
+    const [x1, y1] = loop[(i + 1) % loop.length];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const ex = (x0 + x1) / 2;
+    const ey = (y0 + y1) / 2;
+    mids.push([ex, ey, len]);
+    mx += ex * len;
+    my += ey * len;
+    w += len;
+  }
+  if (w < 1e-9) return 0;
+  mx /= w;
+  my /= w;
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (const [ex, ey, len] of mids) {
+    sxx += (ex - mx) * (ex - mx) * len;
+    syy += (ey - my) * (ey - my) * len;
+    sxy += (ex - mx) * (ey - my) * len;
+  }
+  return 0.5 * Math.atan2(2 * sxy, sxx - syy);
+}
+
+// ------------------------------------------------------------ モード選択
 
 type FillMode = "tatami" | "satin" | "centerline";
 
@@ -276,8 +449,7 @@ function chooseFillMode(widthMm: number, o: DigitizeOptions): FillMode {
   return "tatami";
 }
 
-function buildFillOptions(mode: FillMode, o: DigitizeOptions): FillOptions {
-  const angle = (o.angleDeg * Math.PI) / 180;
+function buildFillOptions(mode: FillMode, o: DigitizeOptions, angle: number): FillOptions {
   if (mode === "satin") {
     return {
       spacing: o.satinSpacingMm * 10,

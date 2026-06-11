@@ -81,7 +81,11 @@
       <section id="preview">
         <div id="stats"></div>
         <canvas id="stitchCanvas" width="640" height="640"></canvas>
-        <label class="check"><input type="checkbox" id="showJumps" /> 渡り糸 (ジャンプ) を表示</label>
+        <div class="preview-tools">
+          <label class="check"><input type="checkbox" id="showJumps" /> 渡り糸 (ジャンプ) を表示</label>
+          <button id="clearExclude" type="button" class="ghost small">抜き指定をすべてクリア</button>
+        </div>
+        <p class="hint">プレビューの塗り領域をクリックすると、その部分を「縫わない (抜き)」にできます。×印をもう一度クリックすると解除されます。</p>
         <p id="warning" class="warning" hidden></p>
       </section>
     </main>

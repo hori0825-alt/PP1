@@ -128,11 +128,31 @@ button:disabled {
   cursor: not-allowed;
 }
 
-#sampleBtn {
+#sampleBtn,
+button.ghost {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text);
   font-weight: 400;
+}
+
+button.small {
+  width: auto;
+  padding: 5px 10px;
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
+.preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  align-self: stretch;
+  justify-content: space-between;
+}
+
+#stitchCanvas {
+  cursor: crosshair;
 }
 
 #threadList {

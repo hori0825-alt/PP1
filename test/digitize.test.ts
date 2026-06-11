@@ -140,6 +140,145 @@ describe("tripleRunningStitch", () => {
   });
 });
 
+describe("quantize: 細い線の保持", () => {
+  it("細長い線は最小領域より小さくても除去されない", () => {
+    // 透明背景に幅2pxの黒い水平線 (面積162px < minRegionPx 500)
+    const w = 100;
+    const h = 100;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 49; y <= 50; y++) {
+      for (let x = 10; x <= 90; x++) {
+        const i = (y * w + x) * 4;
+        data[i + 3] = 255; // 黒 (0,0,0)
+      }
+    }
+    const q = quantize(
+      { data, width: w, height: h },
+      { maxColors: 4, alphaThreshold: 128, autoBackground: false, bgTolerance: 40, minRegionPx: 500 },
+    );
+    expect(q.palette.length).toBe(1);
+    expect(q.labels[50 * w + 50]).toBe(0); // 線上のピクセルが前景のまま
+  });
+
+  it("孤立した小さい塊は除去される", () => {
+    const w = 100;
+    const h = 100;
+    const data = new Uint8ClampedArray(w * h * 4);
+    // 大きな正方形 + 5x5 の孤立ノイズ
+    for (let y = 10; y <= 60; y++) {
+      for (let x = 10; x <= 60; x++) {
+        const i = (y * w + x) * 4;
+        data[i + 3] = 255;
+      }
+    }
+    for (let y = 80; y <= 84; y++) {
+      for (let x = 80; x <= 84; x++) {
+        const i = (y * w + x) * 4;
+        data[i + 3] = 255;
+      }
+    }
+    const q = quantize(
+      { data, width: w, height: h },
+      { maxColors: 4, alphaThreshold: 128, autoBackground: false, bgTolerance: 40, minRegionPx: 100 },
+    );
+    expect(q.labels[82 * w + 82]).toBe(-1); // ノイズは背景化
+    expect(q.labels[30 * w + 30]).toBe(0); // 本体は残る
+  });
+});
+
+describe("pipeline: 抜き指定 (excludePoints)", () => {
+  it("指定した領域が縫われず、他の領域は縫われる", () => {
+    const w = 100;
+    const h = 100;
+    const data = new Uint8ClampedArray(w * h * 4);
+    const paint = (x0: number, x1: number, y0: number, y1: number) => {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const i = (y * w + x) * 4;
+          data[i] = 220;
+          data[i + 1] = 30;
+          data[i + 2] = 30;
+          data[i + 3] = 255;
+        }
+      }
+    };
+    paint(10, 40, 10, 40); // 領域A (抜き対象)
+    paint(60, 90, 60, 90); // 領域B
+    const result = digitize(
+      { data, width: w, height: h },
+      {
+        sizeMm: 50,
+        maxColors: 2,
+        autoBackground: false,
+        autoThinDetect: false,
+        outline: false,
+        minRegionMm2: 0.5,
+        excludePoints: [[25, 25]],
+      },
+    );
+    expect(result.excludedMask).not.toBeNull();
+    expect(result.excludedMask![25 * w + 25]).toBe(1);
+    expect(result.stats.stitches).toBeGreaterThan(50);
+
+    // 全ステッチを画像ピクセル座標へ逆変換し、領域B側にあることを確認
+    const v = result.view;
+    for (const s of result.pattern.stitches) {
+      if (s.cmd !== STITCH) continue;
+      const ix = (s.x - v.offsetX) / v.scale + v.cx;
+      const iy = (s.y - v.offsetY) / v.scale + v.cy;
+      expect(ix).toBeGreaterThan(50);
+      expect(iy).toBeGreaterThan(50);
+    }
+  });
+});
+
+describe("pipeline: 領域単位の縫いモード判定", () => {
+  it("同色の「塊 + 細い線」で線の部分にもステッチが生成される", () => {
+    const w = 200;
+    const h = 200;
+    const data = new Uint8ClampedArray(w * h * 4);
+    const paintPx = (x: number, y: number) => {
+      const i = (y * w + x) * 4;
+      data[i] = 40;
+      data[i + 1] = 30;
+      data[i + 2] = 30;
+      data[i + 3] = 255;
+    };
+    // 塊: 半径30の円 (60,60)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = x - 60;
+        const dy = y - 60;
+        if (dx * dx + dy * dy < 30 * 30) paintPx(x, y);
+      }
+    }
+    // 細い線: 幅3px の縦線 x=120..122, y=20..180
+    for (let y = 20; y <= 180; y++) for (let x = 120; x <= 122; x++) paintPx(x, y);
+
+    const result = digitize(
+      { data, width: w, height: h },
+      {
+        sizeMm: 60,
+        maxColors: 2,
+        autoBackground: false,
+        autoThinDetect: true,
+        centerlineMaxWidthMm: 1.5,
+        outline: false,
+        minRegionMm2: 1,
+      },
+    );
+    // 線の近傍 (画像座標 x=118..125) にステッチが存在する
+    const v = result.view;
+    let nearLine = 0;
+    for (const s of result.pattern.stitches) {
+      if (s.cmd !== STITCH) continue;
+      const ix = (s.x - v.offsetX) / v.scale + v.cx;
+      if (ix >= 117 && ix <= 126) nearLine++;
+    }
+    expect(nearLine).toBeGreaterThan(10);
+  });
+});
+
 describe("pipeline: 細い線の自動サテン", () => {
   it("細いストライプはサテン縫いが選択され密なステッチになる", () => {
     const w = 200;

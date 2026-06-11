@@ -61,10 +61,13 @@ export class Pattern {
     }
   }
 
-  /** デザイン中心を原点 (0,0) に移動する */
-  center(): void {
+  /** デザイン中心を原点 (0,0) に移動し、適用した移動量を返す */
+  center(): { dx: number; dy: number } {
     const b = this.bounds();
-    this.translate(-(b.minX + b.maxX) / 2, -(b.minY + b.maxY) / 2);
+    const dx = -(b.minX + b.maxX) / 2;
+    const dy = -(b.minY + b.maxY) / 2;
+    this.translate(dx, dy);
+    return { dx, dy };
   }
 
   countStitches(): number {

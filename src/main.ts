@@ -5,7 +5,7 @@ import { writePes } from "./embroidery/pes";
 import { writeDst } from "./embroidery/dst";
 
 const HOOP_MM = 100; // PP1 の刺しゅう範囲 100x100mm
-const PROCESS_MAX_PX = 600; // 処理解像度の上限 (長辺)
+const PROCESS_MAX_PX = 1000; // 処理解像度の上限 (長辺)。細い線の認識のため高めにする
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -23,6 +23,8 @@ let sourceImage: ImageData | null = null;
 let designName = "PP1";
 let result: DigitizeResult | null = null;
 let enabledColors: boolean[] = [];
+/** クリックで指定した「縫わない (抜き)」点 (処理画像のピクセル座標) */
+let excludePoints: [number, number][] = [];
 
 // ------------------------------------------------------------ 画像読み込み
 
@@ -37,6 +39,7 @@ function loadImageFile(file: File): void {
       .replace(/[^A-Za-z0-9_-]/g, "")
       .slice(0, 8) || "PP1";
     enabledColors = [];
+    excludePoints = [];
     update();
   };
   img.onerror = () => URL.revokeObjectURL(url);
@@ -107,6 +110,7 @@ $("sampleBtn").addEventListener("click", () => {
   setSourceImage(off);
   designName = "SAMPLE";
   enabledColors = [];
+  excludePoints = [];
   update();
 });
 
@@ -131,6 +135,7 @@ function readOptions() {
     outlineStitchMm: clamp(Number($<HTMLInputElement>("outlineStitch").value) || 2, 0.5, 5),
     tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
     enabledColors: enabledColors.length > 0 ? enabledColors : undefined,
+    excludePoints: excludePoints.length > 0 ? excludePoints : undefined,
   };
 }
 
@@ -297,7 +302,93 @@ function render(): void {
       colorIdx++;
     }
   }
+
+  // 抜き指定マーカー (×)
+  const v = result.view;
+  ctx.strokeStyle = "#d04040";
+  ctx.lineWidth = 2;
+  for (const [ex, ey] of excludePoints) {
+    const ux = (ex - v.cx) * v.scale + v.offsetX;
+    const uy = (ey - v.cy) * v.scale + v.offsetY;
+    const px = origin + ux * pxPerUnit;
+    const py = origin + uy * pxPerUnit;
+    const r = 6;
+    ctx.beginPath();
+    ctx.moveTo(px - r, py - r);
+    ctx.lineTo(px + r, py + r);
+    ctx.moveTo(px + r, py - r);
+    ctx.lineTo(px - r, py + r);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px, py, r + 3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
+
+// ------------------------------------------------------ クリックで抜き指定
+
+/** 除外マスク上の連結成分 (クリック解除用) */
+function maskComponent(mask: Uint8Array, w: number, h: number, sx: number, sy: number): Set<number> {
+  const comp = new Set<number>();
+  const start = sy * w + sx;
+  if (!mask[start]) return comp;
+  comp.add(start);
+  const queue = [start];
+  while (queue.length > 0) {
+    const i = queue.pop()!;
+    const ix = i % w;
+    const iy = (i / w) | 0;
+    const neighbors = [
+      ix > 0 ? i - 1 : -1,
+      ix < w - 1 ? i + 1 : -1,
+      iy > 0 ? i - w : -1,
+      iy < h - 1 ? i + w : -1,
+    ];
+    for (const ni of neighbors) {
+      if (ni >= 0 && mask[ni] && !comp.has(ni)) {
+        comp.add(ni);
+        queue.push(ni);
+      }
+    }
+  }
+  return comp;
+}
+
+stitchCanvas.addEventListener("click", (e) => {
+  if (!result || !sourceImage) return;
+  const rect = stitchCanvas.getBoundingClientRect();
+  const canvasX = (e.clientX - rect.left) * (stitchCanvas.width / rect.width);
+  const canvasY = (e.clientY - rect.top) * (stitchCanvas.height / rect.height);
+  const W = stitchCanvas.width;
+  const pxPerUnit = W / (HOOP_MM * 10 * 1.08);
+  const origin = W / 2;
+  // キャンバス座標 → パターン座標 (0.1mm) → 処理画像ピクセル座標
+  const ux = (canvasX - origin) / pxPerUnit;
+  const uy = (canvasY - origin) / pxPerUnit;
+  const v = result.view;
+  const ix = Math.round((ux - v.offsetX) / v.scale + v.cx);
+  const iy = Math.round((uy - v.offsetY) / v.scale + v.cy);
+  const { width: qw, height: qh, labels } = result.quant;
+  if (ix < 0 || iy < 0 || ix >= qw || iy >= qh) return;
+  const idx = iy * qw + ix;
+
+  if (result.excludedMask && result.excludedMask[idx]) {
+    // すでに抜き指定された領域をクリック → 解除
+    const comp = maskComponent(result.excludedMask, qw, qh, ix, iy);
+    excludePoints = excludePoints.filter(([qx, qy]) => !comp.has(qy * qw + qx));
+  } else if (labels[idx] >= 0) {
+    excludePoints.push([ix, iy]);
+  } else {
+    return; // 背景クリックは無視
+  }
+  update();
+});
+
+$("clearExclude").addEventListener("click", () => {
+  if (excludePoints.length === 0) return;
+  excludePoints = [];
+  update();
+});
 
 // ------------------------------------------------------------ 書き出し
 
