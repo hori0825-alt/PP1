@@ -225,6 +225,10 @@ button.small {
   color: var(--text);
 }
 
+#stats b.over {
+  color: #ff6b5e;
+}
+
 .hint {
   font-size: 11px;
   color: var(--muted);

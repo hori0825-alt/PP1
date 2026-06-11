@@ -126,6 +126,69 @@ export interface DigitizeResult {
   excludedMask: Uint8Array | null;
 }
 
+export interface LimitedDigitizeResult extends DigitizeResult {
+  /** 針数上限による自動調整後のパラメータ (調整なしなら null) */
+  autoAdjusted: {
+    rowSpacingMm: number;
+    satinSpacingMm: number;
+    stitchLenMm: number;
+  } | null;
+  /** 密度を上限まで下げても針数上限を満たせなかった場合 true */
+  overLimit: boolean;
+}
+
+// 自動調整の上限値 (これ以上密度を下げると刺しゅうとして成立しない)
+const MAX_ROW_SPACING_MM = 1.2;
+const MAX_SATIN_SPACING_MM = 0.6;
+const MAX_STITCH_LEN_MM = 6.0;
+
+/**
+ * 針数上限つきの変換。maxStitches を超える場合は縫い密度
+ * (タタミ行間隔 → サテン行間隔 → 最大ステッチ長) を段階的に
+ * 緩めて再生成し、上限以下に収める。maxStitches=0 で無制限。
+ */
+export function digitizeWithLimit(
+  img: RasterImage,
+  options: Partial<DigitizeOptions> = {},
+  maxStitches = 0,
+): LimitedDigitizeResult {
+  let o: DigitizeOptions = { ...DEFAULT_OPTIONS, ...options };
+  let res = digitize(img, o);
+  if (maxStitches <= 0 || res.stats.stitches <= maxStitches) {
+    return { ...res, autoAdjusted: null, overLimit: false };
+  }
+
+  let adjusted = false;
+  for (let iter = 0; iter < 6 && res.stats.stitches > maxStitches; iter++) {
+    // 超過率ぶん行間隔を広げる (輪郭など密度に依らない針数があるため少し多めに)
+    const ratio = (res.stats.stitches / maxStitches) * 1.05;
+    const nextRow = Math.min(MAX_ROW_SPACING_MM, o.rowSpacingMm * ratio);
+    const nextSatin = Math.min(MAX_SATIN_SPACING_MM, o.satinSpacingMm * ratio);
+    let nextStitchLen = o.stitchLenMm;
+    const rowCapped = nextRow === o.rowSpacingMm && nextSatin === o.satinSpacingMm;
+    if (rowCapped) {
+      // 行間隔が上限に達していたらステッチ長を伸ばして針数を減らす
+      nextStitchLen = Math.min(MAX_STITCH_LEN_MM, o.stitchLenMm * 1.3);
+      if (nextStitchLen === o.stitchLenMm) break; // 全パラメータ上限 → 打ち切り
+    }
+    o = { ...o, rowSpacingMm: nextRow, satinSpacingMm: nextSatin, stitchLenMm: nextStitchLen };
+    adjusted = true;
+    res = digitize(img, o);
+  }
+
+  return {
+    ...res,
+    autoAdjusted: adjusted
+      ? {
+          rowSpacingMm: Math.round(o.rowSpacingMm * 100) / 100,
+          satinSpacingMm: Math.round(o.satinSpacingMm * 100) / 100,
+          stitchLenMm: Math.round(o.stitchLenMm * 100) / 100,
+        }
+      : null,
+    overLimit: res.stats.stitches > maxStitches,
+  };
+}
+
 export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {}): DigitizeResult {
   const o: DigitizeOptions = { ...DEFAULT_OPTIONS, ...options };
   const sizeUnits = Math.min(o.sizeMm, 100) * 10;

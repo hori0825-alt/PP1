@@ -1,5 +1,5 @@
 import "./style.css";
-import { digitize, type DigitizeResult } from "./digitize/pipeline";
+import { digitizeWithLimit, type LimitedDigitizeResult } from "./digitize/pipeline";
 import { COLOR_CHANGE, JUMP, STITCH, TRIM } from "./embroidery/pattern";
 import { writePes } from "./embroidery/pes";
 import { writeDst } from "./embroidery/dst";
@@ -28,7 +28,7 @@ const exportDstBtn = $<HTMLButtonElement>("exportDst");
 
 let sourceImage: ImageData | null = null;
 let designName = "PP1";
-let result: DigitizeResult | null = null;
+let result: LimitedDigitizeResult | null = null;
 let enabledColors: boolean[] = [];
 /** クリックで指定した「縫わない (抜き)」点 (処理画像のピクセル座標) */
 let excludePoints: [number, number][] = [];
@@ -164,7 +164,7 @@ for (const id of [
   "sizeMm", "maxColors", "rowSpacing", "stitchLen", "angle", "minRegion",
   "fillOn", "outlineOn", "autoBg",
   "autoThin", "satinMaxWidth", "satinSpacing", "centerlineMax", "outlineStitch", "tripleOutline",
-  "reduceTrims", "maxConnect", "smoothing",
+  "reduceTrims", "maxConnect", "smoothing", "maxStitches",
 ]) {
   $(id).addEventListener("input", () => {
     if (id === "maxColors" || id === "autoBg" || id === "minRegion") enabledColors = [];
@@ -176,8 +176,13 @@ $("showJumps").addEventListener("input", () => render());
 function update(): void {
   if (!sourceImage) return;
   const t0 = performance.now();
+  const maxStitches = clamp(
+    Math.round(Number($<HTMLInputElement>("maxStitches").value) || 0),
+    0,
+    50000,
+  );
   try {
-    result = digitize(sourceImage, readOptions());
+    result = digitizeWithLimit(sourceImage, readOptions(), maxStitches);
     result.pattern.name = designName;
   } catch (err) {
     console.error(err);
@@ -187,20 +192,32 @@ function update(): void {
   }
   const ms = Math.round(performance.now() - t0);
 
-  const { stats } = result;
+  const { stats, autoAdjusted, overLimit } = result;
+  const adjustNote = autoAdjusted
+    ? `<span>密度自動調整 <b>行間隔→${autoAdjusted.rowSpacingMm}mm` +
+      (autoAdjusted.stitchLenMm !== readOptions().stitchLenMm
+        ? ` / ステッチ長→${autoAdjusted.stitchLenMm}mm`
+        : "") +
+      `</b></span>`
+    : "";
   statsEl.innerHTML =
-    `<span>総針数 <b>${stats.stitches.toLocaleString()}</b></span>` +
+    `<span>総針数 <b${overLimit ? ' class="over"' : ""}>${stats.stitches.toLocaleString()}</b></span>` +
     `<span>糸切り <b>${stats.trims}</b>回</span>` +
     `<span>ジャンプ <b>${stats.jumps}</b>回</span>` +
     `<span>色替え <b>${stats.colorChanges}</b>回</span>` +
     `<span>サイズ <b>${stats.widthMm.toFixed(1)} × ${stats.heightMm.toFixed(1)} mm</b></span>` +
     `<span>推定時間 <b>約${stats.estMinutes}分</b></span>` +
-    `<span>処理 <b>${ms}ms</b></span>`;
+    `<span>処理 <b>${ms}ms</b></span>` +
+    adjustNote;
 
   const tooBig = stats.widthMm > HOOP_MM || stats.heightMm > HOOP_MM;
-  warningEl.hidden = !tooBig;
+  warningEl.hidden = !tooBig && !overLimit;
   if (tooBig) {
     warningEl.textContent = `デザインが PP1 の枠 (${HOOP_MM}×${HOOP_MM}mm) を超えています。サイズを小さくしてください。`;
+  } else if (overLimit) {
+    warningEl.textContent =
+      `密度を限界まで下げても最大針数 ${maxStitches.toLocaleString()} を超えています ` +
+      `(現在 ${stats.stitches.toLocaleString()}針)。サイズ・色数・輪郭線の設定を見直してください。`;
   }
 
   renderThreadList();

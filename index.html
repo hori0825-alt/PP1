@@ -42,6 +42,9 @@
           <label>最小領域 (mm²) — 小さいゴミを除去
             <input type="number" id="minRegion" min="0" max="20" step="0.5" value="2" />
           </label>
+          <label>最大針数 (0=無制限) <span class="hint-inline">超える場合は縫い密度を自動調整して収める</span>
+            <input type="number" id="maxStitches" min="0" max="50000" step="500" value="9000" />
+          </label>
           <label class="check"><input type="checkbox" id="fillOn" checked /> 塗りつぶし (タタミ縫い)</label>
           <label class="check"><input type="checkbox" id="outlineOn" checked /> 輪郭線 (ランニングステッチ)</label>
           <label class="check"><input type="checkbox" id="autoBg" checked /> 背景を自動除去</label>
