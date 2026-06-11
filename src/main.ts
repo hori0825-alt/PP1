@@ -427,23 +427,72 @@ $("clearExclude").addEventListener("click", () => {
 
 // ------------------------------------------------------------ 書き出し
 
-function download(data: Uint8Array, filename: string): void {
+// スマホ判定 (iPadOS は Mac を名乗るため maxTouchPoints で判別)
+const isMobile =
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+const exportStatusEl = $("exportStatus");
+
+function setExportStatus(msg: string): void {
+  exportStatusEl.textContent = msg;
+}
+
+/**
+ * ファイルの書き出し。
+ * - スマホ: 共有シート (Web Share API) でファイルを直接「ファイルに保存」や
+ *   Artspira へ渡す。リンク式ダウンロードはモバイルブラウザで動かない・
+ *   保存先が分からないことが多いため
+ * - PC / 非対応ブラウザ: 従来どおりダウンロード
+ */
+async function exportFile(data: Uint8Array, filename: string): Promise<void> {
   const blob = new Blob([data.buffer as ArrayBuffer], { type: "application/octet-stream" });
+
+  if (isMobile && typeof navigator.share === "function") {
+    try {
+      const file = new File([blob], filename, { type: "application/octet-stream" });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        setExportStatus(`${filename} を共有しました`);
+        return;
+      }
+    } catch (err) {
+      if ((err as DOMException)?.name === "AbortError") {
+        setExportStatus("共有をキャンセルしました");
+        return;
+      }
+      // 共有に失敗した場合は通常ダウンロードにフォールバック
+      console.warn("share failed, falling back to download:", err);
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  // download 属性非対応 (一部のアプリ内ブラウザ) は新しいタブで開く
+  if (!("download" in HTMLAnchorElement.prototype)) {
+    window.open(url, "_blank");
+    setExportStatus("新しいタブで開きました。共有メニューから保存してください");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return;
+  }
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  a.remove();
+  setExportStatus(`${filename} をダウンロードしました (端末のダウンロードフォルダを確認)`);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 exportPesBtn.addEventListener("click", () => {
   if (!result) return;
-  download(writePes(result.pattern), `${designName}.pes`);
+  void exportFile(writePes(result.pattern), `${designName}.pes`);
 });
 
 exportDstBtn.addEventListener("click", () => {
   if (!result) return;
-  download(writeDst(result.pattern), `${designName}.dst`);
+  void exportFile(writeDst(result.pattern), `${designName}.dst`);
 });
 
 render();

@@ -72,9 +72,13 @@
 
         <section>
           <h2>4. 書き出し</h2>
-          <button id="exportPes" type="button" disabled>PES をダウンロード</button>
-          <button id="exportDst" type="button" disabled>DST をダウンロード</button>
-          <p class="hint">Artspira アプリの「インポート」から PES を読み込み、Bluetooth で PP1 へ転送してください。</p>
+          <button id="exportPes" type="button" disabled>PES を保存</button>
+          <button id="exportDst" type="button" disabled>DST を保存</button>
+          <p id="exportStatus" class="hint"></p>
+          <p class="hint">
+            スマホでは共有メニューが開きます。「ファイルに保存」を選ぶか、Artspira に直接渡せます。
+            その後 Artspira の「インポート」から読み込み、Bluetooth で PP1 へ転送してください。
+          </p>
         </section>
       </aside>
 
