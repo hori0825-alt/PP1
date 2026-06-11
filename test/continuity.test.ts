@@ -55,14 +55,12 @@ describe("糸切り削減 (reduceTrims)", () => {
     }
   });
 
-  it("接続距離内の同色領域は糸切りせずつなぎ縫いで接続する", () => {
-    // しきい値は「runの終点から次のrunの始点までの実移動距離」で判定される
-    const img = makeImage(100, 100, [
-      { x: 10, y: 40, w: 30, h: 20 },
-      { x: 46, y: 40, w: 30, h: 20 },
-    ]);
+  it("同色領域の内側を通る移動はつなぎ縫いで接続する (塗り→輪郭線)", () => {
+    // 単一矩形の塗りと輪郭線: 塗り終点→輪郭始点の移動は同色の内側 → 糸切りなし
+    const img = makeImage(100, 100, [{ x: 10, y: 30, w: 80, h: 40 }]);
     const { pattern, stats } = digitize(img, {
       ...BASE_OPTS,
+      outline: true,
       angleDeg: 0,
       maxConnectMm: 30,
     });
@@ -74,6 +72,36 @@ describe("糸切り削減 (reduceTrims)", () => {
       if (s.cmd === STITCH) {
         if (prev) {
           expect(Math.hypot(s.x - prev.x, s.y - prev.y)).toBeLessThanOrEqual(32);
+        }
+        prev = { x: s.x, y: s.y };
+      } else {
+        prev = null;
+      }
+    }
+  });
+
+  it("背景を横切る移動はつなぎ縫いせず糸切りする (渡り糸が縫い込まれない)", () => {
+    // 同色2領域だが間は背景 → 縫うと見える糸になるため糸切り+ジャンプ
+    const img = makeImage(100, 100, [
+      { x: 10, y: 40, w: 30, h: 20 },
+      { x: 60, y: 40, w: 30, h: 20 },
+    ]);
+    const { pattern, stats } = digitize(img, {
+      ...BASE_OPTS,
+      angleDeg: 0,
+      maxConnectMm: 30,
+    });
+    expect(stats.trims).toBe(1);
+    expect(stats.jumps).toBe(2);
+    // 領域間に縫いステッチが存在しない (x が背景帯 [-60,60]units 付近を通る STITCH ペアがない)
+    let prev: { x: number; y: number } | null = null;
+    for (const s of pattern.stitches) {
+      if (s.cmd === STITCH) {
+        if (prev) {
+          const midX = (s.x + prev.x) / 2;
+          const crossesGap = Math.min(prev.x, s.x) < -90 && Math.max(prev.x, s.x) > 90;
+          expect(crossesGap).toBe(false);
+          void midX;
         }
         prev = { x: s.x, y: s.y };
       } else {

@@ -8,6 +8,16 @@ import { quantize, type QuantizeResult, type RasterImage } from "./quantize";
 import { loopArea, simplifyLoop, smoothLoop, traceContours, type Pt } from "./contour";
 import { fillLoops, type FillOptions } from "./fill";
 import { runningStitch, tripleRunningStitch } from "./outline";
+import {
+  distanceTransform,
+  resamplePath,
+  routeSkeleton,
+  skeletonGraph,
+  smoothPolyline,
+  stitchRoute,
+  thinMask,
+  type Px,
+} from "./skeleton";
 
 export interface DigitizeOptions {
   /** 仕上がりサイズ: デザインの長辺 (mm)。PP1 の枠は 100x100mm */
@@ -85,7 +95,7 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   bgTolerance: 40,
   minRegionMm2: 1,
   reduceTrims: true,
-  maxConnectMm: 7,
+  maxConnectMm: 50,
   outlineSmoothing: 2,
 };
 
@@ -271,57 +281,54 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     usedThreads.add(thread.pecIndex);
     pattern.threads.push(thread);
 
-    const minLoopAreaPx = 2;
-    const rawLoops = traceContours(quant.labels, quant.width, quant.height, c);
-    const loops: Pt[][] = [];
-    for (const raw of rawLoops) {
-      if (Math.abs(loopArea(raw)) < minLoopAreaPx) continue;
-      // 簡略化 (DP) → 角保持つき平滑化でピクセル境界のガタガタを除去
-      const simplified = simplifyLoop(raw, 0.75);
-      const smoothed = smoothLoop(simplified, o.outlineSmoothing);
-      if (smoothed.length >= 3) loops.push(smoothed.map(toUnits));
-    }
-    if (loops.length === 0) {
-      pattern.threads.pop();
-      usedThreads.delete(thread.pecIndex);
-      continue;
-    }
+    const mmPerPx = scale / 10;
+    const { compMap, comps } = labelColorComponents(quant.labels, quant.width, quant.height, c);
 
-    // 外周+穴を「領域」にまとめ、領域ごとに縫いモードを決める。
-    // 面 (fill) を先に、輪郭線 (outline) を後に縫う (輪郭が面に埋もれないように)
-    const regions = groupRegions(loops);
     const fillRuns: Pt[][] = [];
     const outlineRuns: Pt[][] = [];
     const userAngle = (o.angleDeg * Math.PI) / 180;
 
-    for (const region of regions) {
-      const regionLoops = [region.outer, ...region.holes];
-      const widthMm = o.autoThinDetect ? regionWidthMm(region) : Infinity;
-      const mode = chooseFillMode(widthMm, o);
-
-      if (o.fill) {
-        if (mode === "centerline" && region.holes.length > 0) {
-          // 閉じたストローク (輪っか状の細い線) はスキャン方式だと
-          // スキャン方向と平行な部分が途切れるため、内側輪郭をなぞって
-          // 線全体を連続したランニングステッチにする
-          for (const hole of region.holes) {
-            const run = runningStitch(hole, o.outlineStitchMm * 10);
-            if (run.length >= 2) fillRuns.push(run);
-          }
-        } else {
-          // 細い線は領域の長軸に対して直交する向きでスキャンすると
-          // クロスステッチが線幅方向に揃いきれいに仕上がる
-          const angle =
-            mode === "satin" || mode === "centerline"
-              ? majorAxisAngle(region.outer) - Math.PI / 2
-              : userAngle;
-          fillRuns.push(...fillLoops(regionLoops, buildFillOptions(mode, o, angle)));
+    // 細い線のコンポーネントはスケルトン (中心線) ルートで縫う。
+    // 連結した線ネットワークは「行き=アンダーパス、帰り=サテン/ランニング」の
+    // 一筆書きになり、コンポーネント内の糸切り・ジャンプはゼロになる
+    const thinComps = new Set<number>();
+    if (o.fill && o.autoThinDetect) {
+      for (const comp of comps) {
+        const hydraulicMm = ((2 * comp.area) / Math.max(1, comp.boundary)) * mmPerPx;
+        if (hydraulicMm > o.satinMaxWidthMm * 1.8) continue;
+        const run = skeletonRun(comp, compMap, quant.width, quant.height, o, mmPerPx, toUnits);
+        if (run) {
+          thinComps.add(comp.id);
+          fillRuns.push(run);
         }
       }
+    }
 
-      // 輪郭線はタタミ領域のみ (細い線でランニングを重ねると線が濁る)。
-      // 塗りつぶし無効時は従来どおり全領域に輪郭線を生成する
-      if (o.outline && (mode === "tatami" || !o.fill)) {
+    // 輪郭ループ (ピクセル空間で簡略化・平滑化してから領域にまとめる)
+    const rawLoops = traceContours(quant.labels, quant.width, quant.height, c);
+    const loopsPx: Pt[][] = [];
+    for (const raw of rawLoops) {
+      if (Math.abs(loopArea(raw)) < 2) continue;
+      const simplified = simplifyLoop(raw, 0.75);
+      const smoothed = smoothLoop(simplified, o.outlineSmoothing);
+      if (smoothed.length >= 3) loopsPx.push(smoothed);
+    }
+    const regions = groupRegions(loopsPx);
+
+    for (const region of regions) {
+      // スケルトンで処理済みの細い線コンポーネントはスキップ
+      const ip = regionInteriorPoint(region);
+      if (ip) {
+        const xi = Math.min(quant.width - 1, Math.max(0, Math.round(ip[0])));
+        const yi = Math.min(quant.height - 1, Math.max(0, Math.round(ip[1])));
+        const cid = compMap[yi * quant.width + xi];
+        if (cid >= 0 && thinComps.has(cid)) continue;
+      }
+      const regionLoops = [region.outer, ...region.holes].map((l) => l.map(toUnits));
+      if (o.fill) {
+        fillRuns.push(...fillLoops(regionLoops, buildFillOptions("tatami", o, userAngle)));
+      }
+      if (o.outline) {
         const stitchLen = o.outlineStitchMm * 10;
         for (const loop of regionLoops) {
           const run = o.tripleOutline
@@ -345,9 +352,40 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
     }
     firstBlock = false;
 
-    // 同色内は nearest-neighbor で縫い順を決め、近い run はつなぎ縫いで連結する
+    // 同色内は nearest-neighbor で縫い順を決め、
+    // 「同色領域の内側を通る」移動だけをつなぎ縫いで連結する。
+    // 他の色や背景を横切るつなぎ縫いは目に見える縫い込みになるため、
+    // その場合は糸切り+ジャンプにする
     const connectUnits = o.maxConnectMm * 10;
     const walkPitch = Math.max(10, o.stitchLenMm * 10);
+    const TINY_CONNECT = 15; // 1.5mm 以下の移動は色をまたいでも繋ぐ (線の途切れ対策)
+
+    const colorAt = (px: number, py: number): boolean => {
+      const xi = Math.round(px);
+      const yi = Math.round(py);
+      if (xi < 0 || yi < 0 || xi >= quant.width || yi >= quant.height) return false;
+      const w = quant.width;
+      const L = quant.labels;
+      if (L[yi * w + xi] === c) return true;
+      // 境界上の丸め誤差を許容して4近傍も見る
+      return (
+        (xi > 0 && L[yi * w + xi - 1] === c) ||
+        (xi < w - 1 && L[yi * w + xi + 1] === c) ||
+        (yi > 0 && L[(yi - 1) * w + xi] === c) ||
+        (yi < quant.height - 1 && L[(yi + 1) * w + xi] === c)
+      );
+    };
+    const sameColorPath = (ax: number, ay: number, bx: number, by: number): boolean => {
+      const d = Math.hypot(bx - ax, by - ay);
+      const n = Math.max(1, Math.ceil(d / 8));
+      for (let i = 0; i <= n; i++) {
+        const ux = ax + ((bx - ax) * i) / n;
+        const uy = ay + ((by - ay) * i) / n;
+        if (!colorAt(ux / scale + cx, uy / scale + cy)) return false;
+      }
+      return true;
+    };
+
     const curPos = (): Pt | null => {
       for (let i = pattern.stitches.length - 1; i >= 0; i--) {
         const s = pattern.stitches[i];
@@ -364,8 +402,11 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
         pattern.add(JUMP, sx, sy);
       } else {
         const d = Math.hypot(sx - last.x, sy - last.y);
-        if (o.reduceTrims && d <= connectUnits) {
-          // つなぎ縫い: 糸を切らず最大ステッチ長以下の針目で移動する
+        const hidden =
+          d <= TINY_CONNECT ||
+          (d <= connectUnits && sameColorPath(last.x, last.y, sx, sy));
+        if (o.reduceTrims && hidden) {
+          // つなぎ縫い: 同色領域の内側を通るので見えない
           const n = Math.ceil(d / walkPitch);
           for (let i = 1; i < n; i++) {
             pattern.add(
@@ -424,41 +465,228 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   return { pattern, quant, colorOrder, stats, view, excludedMask };
 }
 
+// ------------------------------------------------------ 色コンポーネント
+
+interface ColorComponent {
+  id: number;
+  area: number;
+  /** 境界画素数 (周長の近似) */
+  boundary: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** 指定色の8連結コンポーネントを抽出する */
+function labelColorComponents(
+  labels: Int32Array,
+  w: number,
+  h: number,
+  c: number,
+): { compMap: Int32Array; comps: ColorComponent[] } {
+  const compMap = new Int32Array(w * h).fill(-1);
+  const comps: ColorComponent[] = [];
+  for (let start = 0; start < w * h; start++) {
+    if (labels[start] !== c || compMap[start] >= 0) continue;
+    const id = comps.length;
+    const comp: ColorComponent = {
+      id,
+      area: 0,
+      boundary: 0,
+      x0: Infinity,
+      y0: Infinity,
+      x1: -Infinity,
+      y1: -Infinity,
+    };
+    compMap[start] = id;
+    const stack = [start];
+    while (stack.length > 0) {
+      const p = stack.pop()!;
+      const x = p % w;
+      const y = (p / w) | 0;
+      comp.area++;
+      if (x < comp.x0) comp.x0 = x;
+      if (x > comp.x1) comp.x1 = x;
+      if (y < comp.y0) comp.y0 = y;
+      if (y > comp.y1) comp.y1 = y;
+      let isBoundary = false;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          const inside = nx >= 0 && ny >= 0 && nx < w && ny < h;
+          const sameColor = inside && labels[ny * w + nx] === c;
+          if (sameColor) {
+            const ni = ny * w + nx;
+            if (compMap[ni] < 0) {
+              compMap[ni] = id;
+              stack.push(ni);
+            }
+          } else if (dx === 0 || dy === 0) {
+            isBoundary = true; // 4近傍に他色/背景がある = 境界画素
+          }
+        }
+      }
+      if (isBoundary) comp.boundary++;
+    }
+    comps.push(comp);
+  }
+  return { compMap, comps };
+}
+
+/**
+ * 細い線コンポーネントをスケルトンルートで縫う。
+ * 戻り値はパターン座標 (0.1mm) の連続した1本の run。
+ * 幅がサテン適用幅を超える・スケルトンが取れない場合は null (タタミで処理)。
+ */
+function skeletonRun(
+  comp: ColorComponent,
+  compMap: Int32Array,
+  w: number,
+  h: number,
+  o: DigitizeOptions,
+  mmPerPx: number,
+  toUnits: (p: Pt) => Pt,
+): Pt[] | null {
+  const x0 = Math.max(0, comp.x0 - 1);
+  const y0 = Math.max(0, comp.y0 - 1);
+  const bw = Math.min(w - 1, comp.x1 + 1) - x0 + 1;
+  const bh = Math.min(h - 1, comp.y1 + 1) - y0 + 1;
+  if (bw < 2 || bh < 2) return null;
+  const mask = new Uint8Array(bw * bh);
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      if (compMap[(y + y0) * w + (x + x0)] === comp.id) mask[y * bw + x] = 1;
+    }
+  }
+
+  const skel = thinMask(mask, bw, bh);
+  const dt = distanceTransform(mask, bw, bh);
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < skel.length; i++) {
+    if (skel[i]) {
+      sum += dt[i] / 3;
+      n++;
+    }
+  }
+  if (n === 0) return null;
+  const widthMm = 2 * (sum / n) * mmPerPx;
+  if (widthMm > o.satinMaxWidthMm) return null; // 太い → タタミで処理
+  const mode: "satin" | "centerline" =
+    o.centerlineMaxWidthMm > 0 && widthMm <= o.centerlineMaxWidthMm ? "centerline" : "satin";
+
+  const { edges, nodes } = skeletonGraph(skel, bw, bh);
+  if (edges.length === 0) return null;
+
+  const runStepPx = Math.max(1, o.outlineStitchMm / mmPerPx);
+  const satinStepPx = Math.max(0.8, o.satinSpacingMm / mmPerPx);
+  const maxHalfWidthPx = ((o.satinMaxWidthMm / mmPerPx) / 2) * 1.3;
+
+  let pxRun: Px[];
+  if (mode === "centerline" && edges.length === 1 && edges[0].a !== edges[0].b) {
+    // 分岐のない1本線は片道のランニング (端で終わる → 隣の線へ繋ぎやすい)
+    pxRun = smoothPolyline(resamplePath(smoothPolyline(edges[0].path, 2), runStepPx), 1);
+  } else {
+    const moves = routeSkeleton(edges, nodes);
+    pxRun = stitchRoute(moves, { mode, satinStepPx, runStepPx, dt, w: bw, maxHalfWidthPx });
+  }
+  if (pxRun.length < 2) return null;
+  return pxRun.map(([lx, ly]) => toUnits([lx + x0, ly + y0]));
+}
+
+/** 領域 (外周-穴) の内部にある点を1つ返す */
+function regionInteriorPoint(region: Region): Pt | null {
+  const loop = region.outer;
+  const inRegion = (p: Pt): boolean => {
+    if (!pointInPolygon(p, region.outer)) return false;
+    for (const hole of region.holes) if (pointInPolygon(p, hole)) return false;
+    return true;
+  };
+  for (let i = 0; i < loop.length; i++) {
+    const [ax, ay] = loop[i];
+    const [bx, by] = loop[(i + 1) % loop.length];
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const nx = (by - ay) / len;
+    const ny = -(bx - ax) / len;
+    for (const s of [0.7, -0.7, 1.5, -1.5]) {
+      const p: Pt = [mx + nx * s, my + ny * s];
+      if (inRegion(p)) return p;
+    }
+  }
+  return null;
+}
+
 // ------------------------------------------------------------ 縫い順最適化
 
 /**
  * run 群を nearest-neighbor で並べ替える。
- * 各 run は始点・終点のどちらからでも縫えるものとして、現在位置に
- * 近い方の端点を選び、必要なら run を反転する (移動距離の最小化)。
+ * - 開いた run: 始点・終点の近い方を選び、必要なら反転する
+ * - 閉じた run (輪郭ループなど): 現在位置に最も近い頂点から
+ *   縫い始められるよう回転する (糸切り・渡りの距離を最小化)
  */
 export function orderRunsNearest(runs: Pt[][], start: Pt | null): Pt[][] {
   const remaining = runs.slice();
   const ordered: Pt[][] = [];
   let cur = start;
+
+  const isClosed = (run: Pt[]): boolean => {
+    const [sx, sy] = run[0];
+    const [ex, ey] = run[run.length - 1];
+    return Math.hypot(ex - sx, ey - sy) < 2;
+  };
+
   while (remaining.length > 0) {
     let bestIdx = 0;
     let bestRev = false;
+    let bestRot = 0;
     let bestD = Infinity;
     if (cur) {
       for (let i = 0; i < remaining.length; i++) {
         const run = remaining[i];
-        const [sx, sy] = run[0];
-        const [ex, ey] = run[run.length - 1];
-        const ds = Math.hypot(sx - cur[0], sy - cur[1]);
-        const de = Math.hypot(ex - cur[0], ey - cur[1]);
-        if (ds < bestD) {
-          bestD = ds;
-          bestIdx = i;
-          bestRev = false;
-        }
-        if (de < bestD) {
-          bestD = de;
-          bestIdx = i;
-          bestRev = true;
+        if (isClosed(run)) {
+          // 閉ループは全頂点が開始点候補
+          for (let k = 0; k < run.length - 1; k++) {
+            const d = Math.hypot(run[k][0] - cur[0], run[k][1] - cur[1]);
+            if (d < bestD) {
+              bestD = d;
+              bestIdx = i;
+              bestRev = false;
+              bestRot = k;
+            }
+          }
+        } else {
+          const [sx, sy] = run[0];
+          const [ex, ey] = run[run.length - 1];
+          const ds = Math.hypot(sx - cur[0], sy - cur[1]);
+          const de = Math.hypot(ex - cur[0], ey - cur[1]);
+          if (ds < bestD) {
+            bestD = ds;
+            bestIdx = i;
+            bestRev = false;
+            bestRot = 0;
+          }
+          if (de < bestD) {
+            bestD = de;
+            bestIdx = i;
+            bestRev = true;
+            bestRot = 0;
+          }
         }
       }
     }
-    const run = remaining.splice(bestIdx, 1)[0];
+    let run = remaining.splice(bestIdx, 1)[0];
+    if (bestRot > 0) {
+      // 閉ループを bestRot 番目の頂点から始まるよう回転して閉じ直す
+      const core = run.slice(0, run.length - 1);
+      const rotated = core.slice(bestRot).concat(core.slice(0, bestRot));
+      rotated.push([rotated[0][0], rotated[0][1]]);
+      run = rotated;
+    }
     if (bestRev) run.reverse();
     ordered.push(run);
     cur = run[run.length - 1];

@@ -143,7 +143,7 @@ function readOptions() {
     tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
     // 縫いの連続性
     reduceTrims: $<HTMLInputElement>("reduceTrims").checked,
-    maxConnectMm: clamp(Number($<HTMLInputElement>("maxConnect").value) || 7, 1, 20),
+    maxConnectMm: clamp(Number($<HTMLInputElement>("maxConnect").value) || 50, 1, 100),
     outlineSmoothing: clamp(Math.round(Number($<HTMLInputElement>("smoothing").value) || 0), 0, 3),
     enabledColors: enabledColors.length > 0 ? enabledColors : undefined,
     excludePoints: excludePoints.length > 0 ? excludePoints : undefined,
