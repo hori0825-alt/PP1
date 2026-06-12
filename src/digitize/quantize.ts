@@ -94,6 +94,8 @@ export function quantize(img: RasterImage, opts: QuantizeOptions): QuantizeResul
 
   // 4c. 境界に残る「どちらつかず」画素を近傍多数派へ寄せる
   //     (色距離ガードつき: 細い線のように自分の色が確かな画素は動かない)
+  //     写真のまだら状の断片を均すため2パス
+  refineLabels(data, labels, w, h, centers);
   refineLabels(data, labels, w, h, centers);
 
   // 5. モードフィルタでごま塩ノイズを除去

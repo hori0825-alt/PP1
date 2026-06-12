@@ -50,6 +50,8 @@ export interface DigitizeOptions {
   satinSpacingMm: number;
   /** この推定幅 (mm) 以下の極細領域はセンターラインで縫う。0 で無効 */
   centerlineMaxWidthMm: number;
+  /** 細長い領域の縫い角度を自動調整 (長軸に直交させ、ストロークを短く揃える) */
+  adaptiveAngle: boolean;
   /**
    * 色の統合強度 (1=弱 2=標準 3=強)。
    * 知覚的に近い色をどこまで1本の糸にまとめるか
@@ -95,6 +97,7 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   satinMaxWidthMm: 6.0,
   satinSpacingMm: 0.3,
   centerlineMaxWidthMm: 1.5,
+  adaptiveAngle: true,
   colorMergeLevel: 2,
   alphaThreshold: 128,
   autoBackground: true,
@@ -274,11 +277,40 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   const cy = (minY + maxY + 1) / 2;
   const toUnits = ([x, y]: Pt): Pt => [(x - cx) * scale, (y - cy) * scale];
 
-  const colorOrder: number[] = [];
+  // 縫い順の決定:
+  //  - 断片化の激しい色 (写真で島が多い色) を先に縫う。
+  //    先に縫った色の渡り縫いは後から縫う色に覆われて見えなくなるため、
+  //    糸切りを大幅に減らせる
+  //  - 線画系の色 (細い領域が大半) は仕上がりのため最後に縫う
+  const mmPerPxGlobal = scale / 10;
+  const colorStats = analyzeColorFragmentation(
+    quant.labels,
+    quant.width,
+    quant.height,
+    mmPerPxGlobal,
+    o.satinMaxWidthMm,
+  );
+  const enabled: number[] = [];
   for (let c = 0; c < quant.palette.length; c++) {
     if (o.enabledColors && o.enabledColors[c] === false) continue;
-    colorOrder.push(c);
+    enabled.push(c);
   }
+  const isLineLike = (c: number): boolean => {
+    const s = colorStats.get(c);
+    return !!s && s.totalArea > 0 && s.thinArea / s.totalArea > 0.6;
+  };
+  const byFragmentation = (a: number, b: number): number => {
+    const sa = colorStats.get(a);
+    const sb = colorStats.get(b);
+    const ca = sa?.compCount ?? 0;
+    const cb = sb?.compCount ?? 0;
+    if (cb !== ca) return cb - ca; // 島が多い色を先に
+    return (sb?.totalArea ?? 0) - (sa?.totalArea ?? 0); // 同数なら大きい色を先に
+  };
+  const fillColors = enabled.filter((c) => !isLineLike(c)).sort(byFragmentation);
+  const lineColors = enabled.filter(isLineLike).sort(byFragmentation);
+  const colorOrder: number[] = [...fillColors, ...lineColors];
+
   // 縫い順ランク: 自分より後に縫われる色の上は移動しても後で覆われる
   const sewRank = new Map<number, number>();
   colorOrder.forEach((ci, rank) => sewRank.set(ci, rank));
@@ -337,7 +369,14 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       }
       const regionLoops = [region.outer, ...region.holes].map((l) => l.map(toUnits));
       if (o.fill) {
-        fillRuns.push(...fillLoops(regionLoops, buildFillOptions("tatami", o, userAngle)));
+        // 細長い領域 (リボン状・ストローク状) は長軸に直交する向きで縫うと
+        // ステッチが短く揃いサテンのようにきれいに見える。塊は一律の角度
+        let angle = userAngle;
+        if (o.adaptiveAngle) {
+          const info = majorAxisInfo(region.outer);
+          if (info.ratio > 4) angle = info.angle + Math.PI / 2;
+        }
+        fillRuns.push(...fillLoops(regionLoops, buildFillOptions("tatami", o, angle)));
       }
       if (o.outline) {
         const stitchLen = o.outlineStitchMm * 10;
@@ -421,12 +460,113 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       return true;
     };
 
+    /**
+     * 直線では隠れない移動のための迂回路探索。
+     * 「隠れた画素」(自分の色 + 後で縫う色) の上だけを通るルートを
+     * 粗いグリッド BFS で探し、見つかれば waypoint 列 (パターン座標) を返す。
+     * 先に縫った色の島 (穴) を避けて渡り縫いできるようになり、糸切りが減る
+     */
+    const hiddenRoute = (ax: number, ay: number, bx: number, by: number): Pt[] | null => {
+      const stepPx = 3;
+      const toPx = (ux: number, uy: number): Pt => [ux / scale + cx, uy / scale + cy];
+      const toUnitsPt = (px: number, py: number): Pt => [(px - cx) * scale, (py - cy) * scale];
+      const [pax, pay] = toPx(ax, ay);
+      const [pbx, pby] = toPx(bx, by);
+      const margin = stepPx * 20;
+      const x0 = Math.max(0, Math.min(pax, pbx) - margin);
+      const y0 = Math.max(0, Math.min(pay, pby) - margin);
+      const x1 = Math.min(quant.width - 1, Math.max(pax, pbx) + margin);
+      const y1 = Math.min(quant.height - 1, Math.max(pay, pby) + margin);
+      const cols = Math.floor((x1 - x0) / stepPx) + 1;
+      const rows = Math.floor((y1 - y0) / stepPx) + 1;
+      if (cols * rows > 80000) return null;
+      const cellOk = (cxI: number, cyI: number): boolean =>
+        hiddenAt(x0 + cxI * stepPx, y0 + cyI * stepPx);
+      const cellOf = (px: number, py: number): [number, number] => [
+        Math.max(0, Math.min(cols - 1, Math.round((px - x0) / stepPx))),
+        Math.max(0, Math.min(rows - 1, Math.round((py - y0) / stepPx))),
+      ];
+      const [sx_, sy_] = cellOf(pax, pay);
+      const [gx, gy] = cellOf(pbx, pby);
+      const parent = new Int32Array(cols * rows).fill(-2); // -2=未訪問 -1=開始
+      const queue: number[] = [sy_ * cols + sx_];
+      parent[sy_ * cols + sx_] = -1;
+      const goalIdx = gy * cols + gx;
+      let found = parent[goalIdx] !== -2;
+      for (let qi = 0; qi < queue.length && !found; qi++) {
+        const cur = queue[qi];
+        const cxI = cur % cols;
+        const cyI = (cur / cols) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = cxI + dx;
+          const ny = cyI + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          const ni = ny * cols + nx;
+          if (parent[ni] !== -2) continue;
+          if (!cellOk(nx, ny)) {
+            parent[ni] = -3; // 通行不可
+            continue;
+          }
+          parent[ni] = cur;
+          if (ni === goalIdx) {
+            found = true;
+            break;
+          }
+          queue.push(ni);
+        }
+      }
+      if (!found) return null;
+      // 経路復元 (グリッド → パターン座標)
+      const cells: Pt[] = [];
+      for (let i = goalIdx; i !== -1; i = parent[i]) {
+        cells.push(toUnitsPt(x0 + (i % cols) * stepPx, y0 + ((i / cols) | 0) * stepPx));
+        if (cells.length > cols * rows) return null;
+      }
+      cells.reverse();
+      const pts: Pt[] = [[ax, ay], ...cells, [bx, by]];
+      // 視線が通る範囲で waypoint を間引く
+      const simplified: Pt[] = [pts[0]];
+      let i0 = 0;
+      while (i0 < pts.length - 1) {
+        let j = pts.length - 1;
+        for (; j > i0 + 1; j--) {
+          if (hiddenPath(pts[i0][0], pts[i0][1], pts[j][0], pts[j][1])) break;
+        }
+        simplified.push(pts[j]);
+        i0 = j;
+      }
+      // 総延長が長すぎる迂回はあきらめて糸切りにする
+      let len = 0;
+      for (let k = 1; k < simplified.length; k++) {
+        len += Math.hypot(
+          simplified[k][0] - simplified[k - 1][0],
+          simplified[k][1] - simplified[k - 1][1],
+        );
+      }
+      if (len > connectUnits * 1.8) return null;
+      return simplified;
+    };
+
     const curPos = (): Pt | null => {
       for (let i = pattern.stitches.length - 1; i >= 0; i--) {
         const s = pattern.stitches[i];
         if (s.cmd === STITCH || s.cmd === JUMP) return [s.x, s.y];
       }
       return null;
+    };
+
+    /** waypoint 列に沿って walkPitch 間隔のつなぎ縫いを打つ */
+    const walkAlong = (from: Pt, waypoints: Pt[]) => {
+      let [px, py] = from;
+      for (const [wx, wy] of waypoints) {
+        const d = Math.hypot(wx - px, wy - py);
+        const n = Math.ceil(d / walkPitch);
+        for (let i = 1; i <= n; i++) {
+          pattern.add(STITCH, px + ((wx - px) * i) / n, py + ((wy - py) * i) / n);
+        }
+        px = wx;
+        py = wy;
+      }
     };
 
     const emitRun = (run: Pt[]) => {
@@ -437,18 +577,23 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
         pattern.add(JUMP, sx, sy);
       } else {
         const d = Math.hypot(sx - last.x, sy - last.y);
-        const hidden =
-          d <= TINY_CONNECT ||
-          (d <= connectUnits && hiddenPath(last.x, last.y, sx, sy));
-        if (o.reduceTrims && hidden) {
-          // つなぎ縫い: 同色領域の内側を通るので見えない
-          const n = Math.ceil(d / walkPitch);
-          for (let i = 1; i < n; i++) {
-            pattern.add(
-              STITCH,
-              last.x + ((sx - last.x) * i) / n,
-              last.y + ((sy - last.y) * i) / n,
-            );
+        if (o.reduceTrims && d <= TINY_CONNECT) {
+          walkAlong([last.x, last.y], [[sx, sy]]);
+        } else if (
+          o.reduceTrims &&
+          d <= connectUnits &&
+          hiddenPath(last.x, last.y, sx, sy)
+        ) {
+          // 直線が隠れた経路 → そのままつなぎ縫い
+          walkAlong([last.x, last.y], [[sx, sy]]);
+        } else if (o.reduceTrims && d <= connectUnits) {
+          // 直線では隠れない → 先に縫った色の島を避ける迂回路を探す
+          const route = hiddenRoute(last.x, last.y, sx, sy);
+          if (route) {
+            walkAlong([last.x, last.y], route.slice(1));
+          } else {
+            pattern.add(TRIM, last.x, last.y);
+            pattern.add(JUMP, sx, sy);
           }
         } else if (d > 1) {
           pattern.add(TRIM, last.x, last.y);
@@ -842,8 +987,11 @@ function regionWidthMm(r: Region): number {
   return (4 * area) / perim / 2 / 10;
 }
 
-/** 辺の長さで重み付けした PCA による領域の長軸方向 (ラジアン) */
-function majorAxisAngle(loop: Pt[]): number {
+/**
+ * 辺の長さで重み付けした PCA による領域の長軸方向と細長さ。
+ * ratio = 長軸分散/短軸分散 (1=等方、大きいほど細長い)
+ */
+function majorAxisInfo(loop: Pt[]): { angle: number; ratio: number } {
   let w = 0;
   let mx = 0;
   let my = 0;
@@ -859,7 +1007,7 @@ function majorAxisAngle(loop: Pt[]): number {
     my += ey * len;
     w += len;
   }
-  if (w < 1e-9) return 0;
+  if (w < 1e-9) return { angle: 0, ratio: 1 };
   mx /= w;
   my /= w;
   let sxx = 0;
@@ -870,7 +1018,70 @@ function majorAxisAngle(loop: Pt[]): number {
     syy += (ey - my) * (ey - my) * len;
     sxy += (ex - mx) * (ey - my) * len;
   }
-  return 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const tr = sxx + syy;
+  const det = Math.sqrt((sxx - syy) * (sxx - syy) + 4 * sxy * sxy);
+  const l1 = (tr + det) / 2;
+  const l2 = Math.max((tr - det) / 2, 1e-9);
+  return { angle: 0.5 * Math.atan2(2 * sxy, sxx - syy), ratio: l1 / l2 };
+}
+
+/** 色ごとの断片化統計 (島の数と細い領域の割合)。縫い順の決定に使う */
+function analyzeColorFragmentation(
+  labels: Int32Array,
+  w: number,
+  h: number,
+  mmPerPx: number,
+  satinMaxWidthMm: number,
+): Map<number, { compCount: number; totalArea: number; thinArea: number }> {
+  const stats = new Map<number, { compCount: number; totalArea: number; thinArea: number }>();
+  const seen = new Uint8Array(w * h);
+  for (let start = 0; start < w * h; start++) {
+    const c = labels[start];
+    if (c < 0 || seen[start]) continue;
+    // 8連結 BFS で1コンポーネント収集
+    let area = 0;
+    let boundary = 0;
+    seen[start] = 1;
+    const stack = [start];
+    while (stack.length > 0) {
+      const p = stack.pop()!;
+      const x = p % w;
+      const y = (p / w) | 0;
+      area++;
+      let isBoundary = false;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          const inside = nx >= 0 && ny >= 0 && nx < w && ny < h;
+          if (inside && labels[ny * w + nx] === c) {
+            const ni = ny * w + nx;
+            if (!seen[ni]) {
+              seen[ni] = 1;
+              stack.push(ni);
+            }
+          } else if (dx === 0 || dy === 0) {
+            isBoundary = true;
+          }
+        }
+      }
+      if (isBoundary) boundary++;
+    }
+    let s = stats.get(c);
+    if (!s) {
+      s = { compCount: 0, totalArea: 0, thinArea: 0 };
+      stats.set(c, s);
+    }
+    s.compCount++;
+    s.totalArea += area;
+    // 「線」は幅が細く、かつ形状が細長い (コンパクトネス = 周長²/面積 が大きい)。
+    // 小さな塊 (コンパクトネス ~16) を線と誤判定しないよう両方を条件にする
+    const widthMm = ((2 * area) / Math.max(1, boundary)) * mmPerPx;
+    const compactness = (boundary * boundary) / Math.max(1, area);
+    if (widthMm <= satinMaxWidthMm * 1.2 && compactness > 50) s.thinArea += area;
+  }
+  return stats;
 }
 
 // ------------------------------------------------------------ モード選択

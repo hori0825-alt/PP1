@@ -142,6 +142,7 @@ function readOptions() {
     centerlineMaxWidthMm: clamp(Number($<HTMLInputElement>("centerlineMax").value) || 0, 0, 5),
     outlineStitchMm: clamp(Number($<HTMLInputElement>("outlineStitch").value) || 2, 0.5, 5),
     tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
+    adaptiveAngle: $<HTMLInputElement>("adaptiveAngle").checked,
     // 縫いの連続性
     reduceTrims: $<HTMLInputElement>("reduceTrims").checked,
     maxConnectMm: clamp(Number($<HTMLInputElement>("maxConnect").value) || 50, 1, 100),
@@ -165,6 +166,7 @@ for (const id of [
   "sizeMm", "maxColors", "colorMerge", "rowSpacing", "stitchLen", "angle", "minRegion",
   "fillOn", "outlineOn", "autoBg",
   "autoThin", "satinMaxWidth", "satinSpacing", "centerlineMax", "outlineStitch", "tripleOutline",
+  "adaptiveAngle",
   "reduceTrims", "maxConnect", "smoothing", "maxStitches",
 ]) {
   $(id).addEventListener("input", () => {
