@@ -109,9 +109,15 @@
         <canvas id="stitchCanvas" width="640" height="640"></canvas>
         <div class="preview-tools">
           <label class="check"><input type="checkbox" id="showJumps" /> 渡り糸・糸切り・色替えを表示</label>
-          <button id="clearExclude" type="button" class="ghost small">抜き指定をすべてクリア</button>
+          <label class="check"><input type="radio" name="clickMode" id="modeExclude" checked /> クリックで抜き</label>
+          <label class="check"><input type="radio" name="clickMode" id="modeRecolor" /> クリックで色を変更</label>
+          <select id="recolorTarget" title="変更先の色"></select>
+          <button id="clearExclude" type="button" class="ghost small">指定をすべてクリア</button>
         </div>
-        <p class="hint">プレビューの塗り領域をクリックすると、その部分を「縫わない (抜き)」にできます。×印をもう一度クリックすると解除されます。</p>
+        <p class="hint">
+          「抜き」: クリックした領域を縫わない (×印を再クリックで解除)。
+          「色を変更」: 誤認識された領域をクリックすると、選択中の色に塗り替えます。
+        </p>
         <p id="warning" class="warning" hidden></p>
       </section>
     </main>

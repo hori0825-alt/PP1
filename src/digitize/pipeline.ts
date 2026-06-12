@@ -81,6 +81,11 @@ export interface DigitizeOptions {
    * 各点が属する連結領域を縫い対象から除外する。
    */
   excludePoints?: [number, number][];
+  /**
+   * 色の修正指定。各点が属する連結領域を指定したパレット番号の色に
+   * 塗り替える (誤認識された色をユーザーが手動で直すため)。
+   */
+  recolorPoints?: { x: number; y: number; color: number }[];
 }
 
 export const DEFAULT_OPTIONS: DigitizeOptions = {
@@ -262,6 +267,11 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       view: emptyView,
       excludedMask: null,
     };
+  }
+
+  // クリックで指定された色の修正 (抜きより先に適用)
+  if (o.recolorPoints && o.recolorPoints.length > 0) {
+    recolorRegions(quant, o.recolorPoints);
   }
 
   // クリックで指定された抜き領域を背景化
@@ -748,17 +758,22 @@ function skeletonRun(
 
   const skel = thinMask(mask, bw, bh);
   const dt = distanceTransform(mask, bw, bh);
+  const widths: number[] = [];
   let sum = 0;
-  let n = 0;
   for (let i = 0; i < skel.length; i++) {
     if (skel[i]) {
-      sum += dt[i] / 3;
-      n++;
+      const hw = dt[i] / 3;
+      widths.push(hw);
+      sum += hw;
     }
   }
-  if (n === 0) return null;
-  const widthMm = 2 * (sum / n) * mmPerPx;
-  if (widthMm > o.satinMaxWidthMm) return null; // 太い → タタミで処理
+  if (widths.length === 0) return null;
+  const widthMm = 2 * (sum / widths.length) * mmPerPx;
+  // 幅の90パーセンタイルで判定: リボンのように部分的に太い領域を
+  // サテンにすると幅上限でカットされ隙間ができるため、タタミに回す
+  widths.sort((a, b) => a - b);
+  const p90Mm = 2 * widths[Math.floor(0.9 * (widths.length - 1))] * mmPerPx;
+  if (p90Mm > o.satinMaxWidthMm) return null; // 太い箇所がある → タタミで処理
   const mode: "satin" | "centerline" =
     o.centerlineMaxWidthMm > 0 && widthMm <= o.centerlineMaxWidthMm ? "centerline" : "satin";
 
@@ -876,6 +891,42 @@ export function orderRunsNearest(runs: Pt[][], start: Pt | null): Pt[][] {
     cur = run[run.length - 1];
   }
   return ordered;
+}
+
+/** 各指定点が属する連結領域を指定したパレット番号の色に塗り替える */
+function recolorRegions(
+  quant: QuantizeResult,
+  points: { x: number; y: number; color: number }[],
+): void {
+  const { labels, width: w, height: h } = quant;
+  for (const { x: px, y: py, color } of points) {
+    const x = Math.round(px);
+    const y = Math.round(py);
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    if (color < 0 || color >= quant.palette.length) continue;
+    const start = y * w + x;
+    const lab = labels[start];
+    if (lab < 0 || lab === color) continue;
+    labels[start] = color;
+    const queue = [start];
+    while (queue.length > 0) {
+      const i = queue.pop()!;
+      const ix = i % w;
+      const iy = (i / w) | 0;
+      const neighbors = [
+        ix > 0 ? i - 1 : -1,
+        ix < w - 1 ? i + 1 : -1,
+        iy > 0 ? i - w : -1,
+        iy < h - 1 ? i + w : -1,
+      ];
+      for (const ni of neighbors) {
+        if (ni >= 0 && labels[ni] === lab) {
+          labels[ni] = color;
+          queue.push(ni);
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- 抜き指定

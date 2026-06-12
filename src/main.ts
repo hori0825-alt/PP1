@@ -32,6 +32,13 @@ let result: LimitedDigitizeResult | null = null;
 let enabledColors: boolean[] = [];
 /** クリックで指定した「縫わない (抜き)」点 (処理画像のピクセル座標) */
 let excludePoints: [number, number][] = [];
+/** クリックで指定した「色の変更」点 (処理画像のピクセル座標 + 変更先パレット番号) */
+let recolorPoints: { x: number; y: number; color: number }[] = [];
+
+function resetClickEdits(): void {
+  excludePoints = [];
+  recolorPoints = [];
+}
 
 // ------------------------------------------------------------ 画像読み込み
 
@@ -46,7 +53,7 @@ function loadImageFile(file: File): void {
       .replace(/[^A-Za-z0-9_-]/g, "")
       .slice(0, 8) || "PP1";
     enabledColors = [];
-    excludePoints = [];
+    resetClickEdits();
     update();
   };
   img.onerror = () => URL.revokeObjectURL(url);
@@ -117,7 +124,7 @@ $("sampleBtn").addEventListener("click", () => {
   setSourceImage(off);
   designName = "SAMPLE";
   enabledColors = [];
-  excludePoints = [];
+  resetClickEdits();
   update();
 });
 
@@ -149,6 +156,7 @@ function readOptions() {
     outlineSmoothing: clamp(Math.round(Number($<HTMLInputElement>("smoothing").value) || 0), 0, 3),
     enabledColors: enabledColors.length > 0 ? enabledColors : undefined,
     excludePoints: excludePoints.length > 0 ? excludePoints : undefined,
+    recolorPoints: recolorPoints.length > 0 ? recolorPoints : undefined,
   };
 }
 
@@ -171,7 +179,9 @@ for (const id of [
 ]) {
   $(id).addEventListener("input", () => {
     if (id === "maxColors" || id === "colorMerge" || id === "autoBg" || id === "minRegion") {
+      // パレットが変わる操作では色番号ベースの指定が無効になるためリセット
       enabledColors = [];
+      recolorPoints = [];
     }
     scheduleUpdate();
   });
@@ -236,8 +246,8 @@ function renderThreadList(): void {
   threadList.innerHTML = "";
   if (!result) return;
   const { quant, colorOrder, pattern } = result;
-  // パレット全色を表示し、ON/OFF を切り替えられるようにする
-  let threadIdx = 0;
+  // パレット全色を表示し、ON/OFF を切り替えられるようにする。
+  // threads は縫い順 (colorOrder) に並んでいるため、パレット番号から引く
   for (let c = 0; c < quant.palette.length; c++) {
     const pal = quant.palette[c];
     const li = document.createElement("li");
@@ -254,9 +264,9 @@ function renderThreadList(): void {
     sw.className = "swatch";
     sw.style.background = `rgb(${pal.r},${pal.g},${pal.b})`;
     const label = document.createElement("span");
-    const isStitched = colorOrder.includes(c) && enabledColors[c] !== false;
-    if (isStitched && threadIdx < pattern.threads.length) {
-      const th = pattern.threads[threadIdx++];
+    const sewIdx = colorOrder.indexOf(c);
+    if (sewIdx >= 0 && sewIdx < pattern.threads.length && enabledColors[c] !== false) {
+      const th = pattern.threads[sewIdx];
       label.textContent = `${th.name} (#${th.catalog})`;
     } else {
       label.textContent = "未使用";
@@ -268,6 +278,20 @@ function renderThreadList(): void {
     li.append(cb, sw, label, pct);
     threadList.appendChild(li);
   }
+
+  // 「色を変更」の変更先セレクトをパレットと同期 (選択は維持)
+  const sel = $<HTMLSelectElement>("recolorTarget");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  for (let c = 0; c < quant.palette.length; c++) {
+    const pal = quant.palette[c];
+    const opt = document.createElement("option");
+    opt.value = String(c);
+    opt.textContent = `色${c + 1} rgb(${pal.r},${pal.g},${pal.b})`;
+    opt.style.background = `rgb(${pal.r},${pal.g},${pal.b})`;
+    sel.appendChild(opt);
+  }
+  if (prev !== "" && Number(prev) < quant.palette.length) sel.value = prev;
 }
 
 function render(): void {
@@ -388,6 +412,27 @@ function render(): void {
     ctx.arc(px, py, r + 3, 0, Math.PI * 2);
     ctx.stroke();
   }
+
+  // 色変更マーカー (変更先の色の丸 + 筆記号)
+  if (recolorPoints.length > 0 && result) {
+    const palette = result.quant.palette;
+    for (const { x: rx, y: ry, color } of recolorPoints) {
+      const ux = (rx - v.cx) * v.scale + v.offsetX;
+      const uy = (ry - v.cy) * v.scale + v.offsetY;
+      const px = origin + ux * pxPerUnit;
+      const py = origin + uy * pxPerUnit;
+      const pal = palette[color];
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.fillStyle = pal ? `rgb(${pal.r},${pal.g},${pal.b})` : "#888";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#222";
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }
 
 // ------------------------------------------------------ クリックで抜き指定
@@ -467,7 +512,15 @@ stitchCanvas.addEventListener("click", (e) => {
   if (!target) return; // 背景クリックは無視
 
   const { width: qw, height: qh } = result.quant;
-  if (target.excluded) {
+  const recolorMode = $<HTMLInputElement>("modeRecolor").checked;
+
+  if (recolorMode) {
+    // 色の変更: クリックした連結領域を選択中の色に塗り替える
+    const colorIdx = Number($<HTMLSelectElement>("recolorTarget").value);
+    if (!Number.isFinite(colorIdx) || colorIdx < 0) return;
+    if (target.excluded) return; // 抜き済み領域は対象外
+    recolorPoints.push({ x: target.x, y: target.y, color: colorIdx });
+  } else if (target.excluded) {
     // すでに抜き指定された領域をクリック → 解除
     const comp = maskComponent(result.excludedMask!, qw, qh, target.x, target.y);
     excludePoints = excludePoints.filter(([qx, qy]) => !comp.has(qy * qw + qx));
@@ -478,8 +531,8 @@ stitchCanvas.addEventListener("click", (e) => {
 });
 
 $("clearExclude").addEventListener("click", () => {
-  if (excludePoints.length === 0) return;
-  excludePoints = [];
+  if (excludePoints.length === 0 && recolorPoints.length === 0) return;
+  resetClickEdits();
   update();
 });
 
