@@ -1,0 +1,51 @@
+// ステッチ生成の共通型。
+// ジェネレーターはプラグイン構造 (registry.ts) で追加できる。
+
+import type { Region } from "../core/region";
+import type { StitchRun } from "../core/types";
+
+export interface GeneratorResult {
+  /** 生成された Run 群。1つの面は必ず1本の連続 Run になっていること */
+  runs: StitchRun[];
+  /** 品質警告 (幅超過・密度異常など)。診断パネルに表示する */
+  warnings: string[];
+}
+
+/** タタミ (面縫い) のパラメータ */
+export interface TatamiParams {
+  /** ステッチ角度 (度)。0 = 水平 */
+  angleDeg: number;
+  /** 行間隔 (内部単位) */
+  rowSpacing: number;
+  /** ステッチ長 (内部単位) */
+  stitchLength: number;
+}
+
+/** サテンのパラメータ */
+export interface SatinParams {
+  /** ジグザグの間隔 (内部単位) */
+  spacing: number;
+  /** 幅がこれを超えたら警告 (内部単位) */
+  maxWidth: number;
+}
+
+/** ランニングステッチのパラメータ */
+export interface RunningParams {
+  /** ステッチ長 (内部単位) */
+  stitchLength: number;
+  /** 二重走り (往復して開始点に戻る) */
+  double: boolean;
+}
+
+/** ジグザグライン (簡易サテンライン) のパラメータ */
+export interface ZigzagLineParams {
+  /** 線幅 (内部単位) */
+  width: number;
+  /** ジグザグの間隔 (内部単位) */
+  spacing: number;
+}
+
+/** 下縫いの種類 */
+export type UnderlayType = "edge" | "center" | "zigzag" | "tatami";
+
+export type StitchGenerator = (region: Region, params: unknown) => GeneratorResult;

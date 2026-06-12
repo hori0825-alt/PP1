@@ -1,17 +1,21 @@
-// Phase 2 の確認ページ。
-// PNG/JPG/BMP/SVG を読み込み、色数削減 → 領域抽出の結果をプレビューする。
-// 表示切替: 元画像 / 減色後 / ベクター輪郭。
+// Phase 3 の確認ページ。
+// PNG/JPG/BMP/SVG → 色数削減 → 領域抽出 → タタミ生成 → PES/DST 出力の一気通貫。
+// 表示切替: 元画像 / 減色後 / ベクター / ステッチ。
 // 本格的な UI (シーケンスビュー等) は Phase 5 で構築する。
 
 import { HOOP_SIZE, UNIT_MM, mm } from "../core/constants";
+import { countStitches, countTrims } from "../core/plan";
 import type { Region } from "../core/region";
+import type { StitchPlan } from "../core/types";
 import { signedArea } from "../core/geometry";
 import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
 import { importSvg } from "../import/svg";
+import { digitizeRegions } from "../stitch/digitize";
 import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
+import type { ValidationResult } from "../export/validate";
 import { validatePlan } from "../export/validate";
 import { buildDemoPlan } from "./demo";
 import { decodeImageFile } from "./loadImage";
@@ -19,28 +23,38 @@ import "./app.css";
 
 declare const __APP_VERSION__: string;
 
-type ViewMode = "original" | "quantized" | "vector";
+type ViewMode = "original" | "quantized" | "vector" | "stitch";
 
 interface AppState {
   raster: RasterImage | null;
   labelMap: LabelMap | null;
   regions: Region[];
+  plan: StitchPlan | null;
+  validation: ValidationResult | null;
+  stitchWarnings: string[];
   svgText: string | null;
+  fileName: string;
   view: ViewMode;
   colorCount: number;
   removeWhite: boolean;
   targetSizeMm: number;
+  angleDeg: number;
 }
 
 const state: AppState = {
   raster: null,
   labelMap: null,
   regions: [],
+  plan: null,
+  validation: null,
+  stitchWarnings: [],
   svgText: null,
-  view: "vector",
+  fileName: "design",
+  view: "stitch",
   colorCount: 6,
   removeWhite: true,
   targetSizeMm: 100,
+  angleDeg: 45,
 };
 
 function download(filename: string, data: Uint8Array): void {
@@ -65,6 +79,18 @@ function recompute(): void {
     state.regions = extractRegions(state.labelMap, {
       unitsPerPixel: fitUnitsPerPixel(state.raster.width, state.raster.height, mm(state.targetSizeMm)),
     });
+  }
+  if (state.regions.length > 0) {
+    const result = digitizeRegions(state.regions, state.fileName.slice(0, 8).toUpperCase(), {
+      angleDeg: state.angleDeg,
+    });
+    state.plan = result.plan;
+    state.stitchWarnings = result.warnings;
+    state.validation = validatePlan(result.plan);
+  } else {
+    state.plan = null;
+    state.validation = null;
+    state.stitchWarnings = [];
   }
   render();
 }
@@ -92,7 +118,7 @@ function renderCanvas(): void {
   const toX = (v: number): number => canvas.width / 2 + v * scale;
   const toY = (v: number): number => canvas.height / 2 + v * scale;
 
-  if (state.view !== "vector" && state.raster) {
+  if ((state.view === "original" || state.view === "quantized") && state.raster) {
     const img = state.raster;
     const upp = fitUnitsPerPixel(img.width, img.height, mm(state.targetSizeMm));
     const tmp = document.createElement("canvas");
@@ -126,7 +152,36 @@ function renderCanvas(): void {
     return;
   }
 
-  // ベクター表示: 領域を塗り + 輪郭線
+  if (state.view === "stitch" && state.plan) {
+    // ステッチ表示: Run 内は実線、Run 間の渡りは点線
+    for (const block of state.plan.blocks) {
+      const color = `rgb(${block.thread.r},${block.thread.g},${block.thread.b})`;
+      let prev: { x: number; y: number } | null = null;
+      for (const run of block.runs) {
+        if (prev && run.stitches.length > 0) {
+          ctx.strokeStyle = "#99999988";
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(toX(prev.x), toY(prev.y));
+          ctx.lineTo(toX(run.stitches[0].x), toY(run.stitches[0].y));
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        run.stitches.forEach((p, i) => {
+          if (i === 0) ctx.moveTo(toX(p.x), toY(p.y));
+          else ctx.lineTo(toX(p.x), toY(p.y));
+        });
+        ctx.stroke();
+        if (run.stitches.length > 0) prev = run.stitches[run.stitches.length - 1];
+      }
+    }
+    return;
+  }
+
+  // ベクター表示
   for (const region of state.regions) {
     const path = new Path2D();
     const trace = (pts: { x: number; y: number }[]): void => {
@@ -146,8 +201,32 @@ function renderCanvas(): void {
   }
 }
 
+function statsPanel(): string {
+  if (!state.plan || !state.validation) {
+    return "<p class=\"note\">画像または SVG を読み込んでください。</p>";
+  }
+  const v = state.validation;
+  const issuesHtml = [...v.issues.map((i) => ({ sev: i.severity, msg: i.message })),
+    ...state.stitchWarnings.map((w) => ({ sev: "warning" as const, msg: w }))]
+    .map((i) => `<p class="${i.sev}">${i.sev === "error" ? "✗" : "⚠"} ${i.msg}</p>`)
+    .join("");
+  return `
+    <dl>
+      <dt>針数</dt><dd>${countStitches(state.plan)}</dd>
+      <dt>色数</dt><dd>${v.stats.colorCount}</dd>
+      <dt>糸切り</dt><dd>${countTrims(state.plan)} 回</dd>
+      <dt>色替え</dt><dd>${v.stats.colorChanges} 回</dd>
+      <dt>サイズ</dt><dd>${(v.stats.width * UNIT_MM).toFixed(1)} × ${(v.stats.height * UNIT_MM).toFixed(1)} mm</dd>
+    </dl>
+    <div id="validation" class="${v.ok ? "ok" : "error"}">
+      ${v.ok ? "✓ 出力可能" : "✗ 修正が必要"}
+      ${issuesHtml}
+    </div>
+  `;
+}
+
 function regionSummary(): string {
-  if (state.regions.length === 0) return "<p class=\"note\">画像または SVG を読み込んでください。</p>";
+  if (state.regions.length === 0) return "";
   const colorKey = (r: Region): string => `${r.color.r},${r.color.g},${r.color.b}`;
   const byColor = new Map<string, { color: Region["color"]; count: number; area: number }>();
   for (const r of state.regions) {
@@ -164,17 +243,15 @@ function regionSummary(): string {
       (e) => `<tr>
         <td><span class="swatch" style="background:rgb(${e.color.r},${e.color.g},${e.color.b})"></span></td>
         <td>${e.count}</td>
-        <td>${(e.area * UNIT_MM * UNIT_MM).toFixed(1)} mm²</td>
+        <td>${(e.area * UNIT_MM * UNIT_MM).toFixed(0)} mm²</td>
       </tr>`,
     )
     .join("");
-  const selfX = state.regions.filter((r) => r.selfIntersecting).length;
   return `
     <table class="colors">
       <thead><tr><th>色</th><th>領域</th><th>面積</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="note">領域 ${state.regions.length} / 色 ${byColor.size}${selfX > 0 ? ` / ⚠ 自己交差 ${selfX}` : ""}</p>
   `;
 }
 
@@ -182,10 +259,11 @@ function render(): void {
   const app = document.getElementById("app");
   if (!app) return;
   const hasImage = state.raster !== null && state.svgText === null;
+  const canExport = state.plan !== null && state.validation !== null && state.validation.ok;
 
   app.innerHTML = `
     <header>
-      <h1>PP1 Stitch Studio <span class="version">v${__APP_VERSION__} (Phase 2)</span></h1>
+      <h1>PP1 Stitch Studio <span class="version">v${__APP_VERSION__} (Phase 3)</span></h1>
     </header>
     <main>
       <canvas id="preview" width="560" height="560"></canvas>
@@ -210,19 +288,28 @@ function render(): void {
           <input type="checkbox" id="white" ${state.removeWhite ? "checked" : ""} ${hasImage ? "" : "disabled"} />
           白背景を除去
         </label>
+        <label>角度
+          <select id="angle">
+            ${[0, 45, 90, 135]
+              .map((v) => `<option value="${v}" ${v === state.angleDeg ? "selected" : ""}>${v}°</option>`)
+              .join("")}
+          </select>
+        </label>
         <label>表示
           <select id="view">
             <option value="original" ${state.view === "original" ? "selected" : ""}>元画像</option>
             <option value="quantized" ${state.view === "quantized" ? "selected" : ""}>減色後</option>
             <option value="vector" ${state.view === "vector" ? "selected" : ""}>ベクター</option>
+            <option value="stitch" ${state.view === "stitch" ? "selected" : ""}>ステッチ</option>
           </select>
         </label>
-        <h2>結果</h2>
-        <div id="summary">${regionSummary()}</div>
-        <h2>Phase 1 デモ出力</h2>
-        <button id="dl-pes">デモ PES</button>
-        <button id="dl-dst">デモ DST</button>
-        <p class="note">領域→ステッチ生成は Phase 3 で実装。</p>
+        <h2>診断</h2>
+        <div id="summary">${statsPanel()}${regionSummary()}</div>
+        <h2>出力</h2>
+        <button id="dl-pes" ${canExport ? "" : "disabled"}>PES をダウンロード</button>
+        <button id="dl-dst" ${canExport ? "" : "disabled"}>DST をダウンロード</button>
+        <button id="dl-demo" class="secondary">デモデザイン (PES)</button>
+        <p class="note">縫い順・糸切り最適化は Phase 4 で実装。</p>
       </aside>
     </main>
   `;
@@ -233,6 +320,7 @@ function render(): void {
     void (async (): Promise<void> => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
+      state.fileName = file.name.replace(/\.[^.]+$/, "") || "design";
       if (file.name.toLowerCase().endsWith(".svg")) {
         state.svgText = await file.text();
         state.raster = null;
@@ -255,17 +343,22 @@ function render(): void {
     state.removeWhite = (e.target as HTMLInputElement).checked;
     recompute();
   });
+  document.getElementById("angle")?.addEventListener("change", (e) => {
+    state.angleDeg = Number((e.target as HTMLSelectElement).value);
+    recompute();
+  });
   document.getElementById("view")?.addEventListener("change", (e) => {
     state.view = (e.target as HTMLSelectElement).value as ViewMode;
     render();
   });
   document.getElementById("dl-pes")?.addEventListener("click", () => {
-    const plan = buildDemoPlan();
-    if (validatePlan(plan).ok) download("phase1-demo.pes", writePes(plan).data);
+    if (state.plan) download(`${state.fileName}.pes`, writePes(state.plan).data);
   });
   document.getElementById("dl-dst")?.addEventListener("click", () => {
-    const plan = buildDemoPlan();
-    if (validatePlan(plan).ok) download("phase1-demo.dst", writeDst(plan));
+    if (state.plan) download(`${state.fileName}.dst`, writeDst(state.plan));
+  });
+  document.getElementById("dl-demo")?.addEventListener("click", () => {
+    download("demo.pes", writePes(buildDemoPlan()).data);
   });
 }
 

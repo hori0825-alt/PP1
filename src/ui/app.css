@@ -110,6 +110,28 @@ button:hover {
   background: #245ac4;
 }
 
+button:disabled {
+  background: #c4cad1;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: #eef1f4;
+  color: #2a2e33;
+}
+
+button.secondary:hover {
+  background: #dde3e9;
+}
+
+#validation p.warning {
+  color: #8a6d1a;
+}
+
+#validation p.error {
+  color: #a02828;
+}
+
 .note {
   font-size: 12px;
   color: #8a939e;

@@ -1,0 +1,235 @@
+// タタミ縫い (面のフィル)。
+//
+// 最重要ルール: 1つの連結領域は必ず1本の連続した StitchRun として生成する。
+// 面の途中で糸切り・ジャンプは発生させない。
+//
+// アルゴリズム:
+//   1. 角度付きスキャンラインで内部区間 (Seg) を行ごとに求める
+//   2. 隣接行で x 区間が重なる Seg を親子として繋ぎ、
+//      「1行1区間が一直線に続く範囲」をセクションに分解する
+//      (穴や凹みで分岐する箇所がセクション境界になる)
+//   3. セクション同士の接続グラフを DFS で辿り、
+//      セクション間は領域の縁に沿った移動ステッチ (Travel on Edge) で繋ぐ
+//   4. 各セクションは行を交互方向 (ジグザグ) に縫い、行内は
+//      ステッチ長間隔 + 行ごとの半ピッチずらし (レンガ状) で点を打つ
+
+import type { Region } from "../core/region";
+import type { Point, StitchRun } from "../core/types";
+import type { CrossRef, Seg } from "./scanline";
+import { rotatePoint, scanRegion, travelAlongRing } from "./scanline";
+import type { GeneratorResult, TatamiParams } from "./types";
+
+interface Section {
+  segs: Seg[]; // 連続する行 (上から下)
+  component: number;
+}
+
+/** x 区間の重なり判定 (角の点接触は除く) */
+function overlaps(a: Seg, b: Seg): boolean {
+  return Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1) > 1e-6;
+}
+
+/** 折れ線を最大 step 間隔で再サンプルする (両端を含む) */
+function resample(path: Point[], step: number): Point[] {
+  const out: Point[] = [path[0]];
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(len / step));
+    for (let k = 1; k <= n; k++) {
+      out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+    }
+  }
+  return out;
+}
+
+/** 1行分のステッチ点 (端点を含み、内部はレンガ状オフセット) */
+function rowPoints(seg: Seg, leftToRight: boolean, parity: number, stitchLength: number): Point[] {
+  const pts: Point[] = [];
+  const len = seg.x2 - seg.x1;
+  const offset = parity % 2 === 0 ? 0 : stitchLength / 2;
+  const xs: number[] = [seg.x1];
+  for (let x = seg.x1 + (offset > 1e-9 ? offset : stitchLength); x < seg.x2 - stitchLength * 0.25; x += stitchLength) {
+    xs.push(x);
+  }
+  xs.push(seg.x2);
+  if (!leftToRight) xs.reverse();
+  for (const x of xs) pts.push({ x, y: seg.y });
+  return pts;
+}
+
+export function tatamiFill(region: Region, params: TatamiParams): GeneratorResult {
+  const warnings: string[] = [];
+  const angleRad = (params.angleDeg * Math.PI) / 180;
+  const { rows, rings } = scanRegion(region, angleRad, params.rowSpacing);
+
+  const allSegs: Seg[] = rows.flat();
+  if (allSegs.length === 0) {
+    warnings.push("領域が細すぎてタタミを生成できません (ランニングへの変換を検討)");
+    return { runs: [], warnings };
+  }
+
+  // --- 親子リンク (隣接行の重なり) と連結成分 ---
+  const children = new Map<Seg, Seg[]>();
+  const parents = new Map<Seg, Seg[]>();
+  for (const s of allSegs) {
+    children.set(s, []);
+    parents.set(s, []);
+  }
+  for (let r = 0; r + 1 < rows.length; r++) {
+    for (const a of rows[r]) {
+      for (const b of rows[r + 1]) {
+        if (overlaps(a, b)) {
+          (children.get(a) as Seg[]).push(b);
+          (parents.get(b) as Seg[]).push(a);
+        }
+      }
+    }
+  }
+
+  const component = new Map<Seg, number>();
+  let compCount = 0;
+  for (const s of allSegs) {
+    if (component.has(s)) continue;
+    const id = compCount++;
+    const stack = [s];
+    component.set(s, id);
+    while (stack.length > 0) {
+      const cur = stack.pop() as Seg;
+      for (const nb of [...(children.get(cur) as Seg[]), ...(parents.get(cur) as Seg[])]) {
+        if (!component.has(nb)) {
+          component.set(nb, id);
+          stack.push(nb);
+        }
+      }
+    }
+  }
+
+  // --- セクション分解: 1行1区間で一直線に続く範囲 ---
+  const sectionOf = new Map<Seg, Section>();
+  const sections: Section[] = [];
+  for (const row of rows) {
+    for (const seg of row) {
+      if (sectionOf.has(seg)) continue;
+      const sec: Section = { segs: [seg], component: component.get(seg) as number };
+      sectionOf.set(seg, sec);
+      // 下方向に「自分の子が1つ & その子の親が1つ」の間だけ延長する
+      let cur = seg;
+      for (;;) {
+        const ch = children.get(cur) as Seg[];
+        if (ch.length !== 1) break;
+        const next = ch[0];
+        if ((parents.get(next) as Seg[]).length !== 1 || sectionOf.has(next)) break;
+        sec.segs.push(next);
+        sectionOf.set(next, sec);
+        cur = next;
+      }
+      sections.push(sec);
+    }
+  }
+
+  // --- セクション接続グラフ ---
+  const adj = new Map<Section, Set<Section>>();
+  for (const sec of sections) adj.set(sec, new Set());
+  for (const s of allSegs) {
+    for (const c of children.get(s) as Seg[]) {
+      const a = sectionOf.get(s) as Section;
+      const b = sectionOf.get(c) as Section;
+      if (a !== b) {
+        (adj.get(a) as Set<Section>).add(b);
+        (adj.get(b) as Set<Section>).add(a);
+      }
+    }
+  }
+
+  // --- 連結成分ごとに DFS でセクションを縫い、1本の Run にする ---
+  const runs: StitchRun[] = [];
+  const visited = new Set<Section>();
+
+  for (let comp = 0; comp < compCount; comp++) {
+    const compSections = sections.filter((s) => s.component === comp);
+    if (compSections.length === 0) continue;
+
+    const order: Section[] = [];
+    const dfs = (sec: Section): void => {
+      visited.add(sec);
+      order.push(sec);
+      // 近い順に訪問すると移動が短くなる
+      const nbs = [...(adj.get(sec) as Set<Section>)].filter((n) => !visited.has(n));
+      nbs.sort((a, b) => a.segs[0].y - b.segs[0].y);
+      for (const nb of nbs) {
+        if (!visited.has(nb)) dfs(nb);
+      }
+    };
+    dfs(compSections[0]);
+
+    const stitches: Point[] = [];
+    let pos: Point | null = null;
+    let posRef: CrossRef | null = null;
+
+    for (const sec of order) {
+      // 入口: 先頭行 or 最終行 × 左端 or 右端 の4候補から現在位置に最も近いものを選ぶ
+      const first = sec.segs[0];
+      const last = sec.segs[sec.segs.length - 1];
+      const candidates: { seg: Seg; fromTop: boolean; left: boolean; p: Point; ref: CrossRef }[] = [];
+      for (const [seg, fromTop] of [
+        [first, true],
+        [last, false],
+      ] as [Seg, boolean][]) {
+        candidates.push({ seg, fromTop, left: true, p: { x: seg.x1, y: seg.y }, ref: seg.c1 });
+        candidates.push({ seg, fromTop, left: false, p: { x: seg.x2, y: seg.y }, ref: seg.c2 });
+      }
+      let entry = candidates[0];
+      if (pos !== null) {
+        let best = Infinity;
+        for (const c of candidates) {
+          const d = Math.hypot(c.p.x - pos.x, c.p.y - pos.y);
+          if (d < best) {
+            best = d;
+            entry = c;
+          }
+        }
+      }
+
+      // セクション間の移動: 同一リング上なら縁沿い (Travel on Edge)、
+      // 異なるリング間は直線 (隣接セクション間なので距離は行間隔程度)
+      if (pos !== null && posRef !== null) {
+        const path =
+          posRef.ring === entry.ref.ring
+            ? travelAlongRing(rings[posRef.ring], posRef.s, entry.ref.s)
+            : [pos, entry.p];
+        const travel = resample(path, params.stitchLength);
+        // 現在位置と重複する先頭は除く
+        for (let i = 1; i < travel.length; i++) stitches.push(travel[i]);
+      }
+
+      // セクション本体をジグザグに縫う
+      const segsInOrder = entry.fromTop ? sec.segs : [...sec.segs].reverse();
+      let leftToRight = entry.left;
+      for (const seg of segsInOrder) {
+        const pts = rowPoints(seg, leftToRight, seg.row, params.stitchLength);
+        // 直前の行末と同じ点が続く場合はスキップ
+        for (const p of pts) {
+          const lastP = stitches[stitches.length - 1];
+          if (lastP && Math.hypot(p.x - lastP.x, p.y - lastP.y) < 1e-6) continue;
+          stitches.push(p);
+        }
+        pos = { x: leftToRight ? seg.x2 : seg.x1, y: seg.y };
+        posRef = leftToRight ? seg.c2 : seg.c1;
+        leftToRight = !leftToRight;
+      }
+    }
+
+    // 回転を元に戻し、整数座標へ丸める
+    const cos = Math.cos(angleRad);
+    const sin = Math.sin(angleRad);
+    const unrotated = stitches.map((p) => {
+      const q = rotatePoint(p, cos, sin);
+      return { x: Math.round(q.x), y: Math.round(q.y) };
+    });
+    runs.push({ stitches: unrotated, connection: "trim" });
+  }
+
+  return { runs, warnings };
+}

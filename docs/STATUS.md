@@ -1,8 +1,65 @@
 # 開発ステータス
 
-最終更新: 2026-06-12 (Phase 2 完了)
+最終更新: 2026-06-12 (Phase 3 完了)
 
 ## 完了フェーズ
+
+### Phase 3: ステッチ生成 — タタミ/サテン/ランニング/下縫い ✅
+
+#### 追加ファイル
+
+```
+src/stitch/
+  types.ts       … TatamiParams / SatinParams / RunningParams / GeneratorResult
+  scanline.ts    … 角度付きスキャンライン (交点にリング弧長位置を記録)、
+                   travelAlongRing (Travel on Edge の経路計算)
+  tatami.ts      … タタミ生成。セクション分解 + DFS + 縁沿い移動で
+                   1連結領域 = 1本の連続 Run を保証
+  satin.ts       … satinFromRails / satinAlongPath (中心線+幅) /
+                   satinFromRegion (PCA 主軸スライス)
+  running.ts     … ランニング (二重走り対応) / ジグザグライン
+  underlay.ts    … 下縫い (edge=内側オフセット周回 / tatami=交差方向の粗いフィル /
+                   center / zigzag)、insetPath (頂点法線オフセット)
+  postprocess.ts … 最小ステッチ長統合 / 最大ステッチ長分割 (Run 連続性は不変)
+  registry.ts    … ジェネレーター登録 (tatami / satin。将来の Wave 等もここに追加)
+  digitize.ts    … Region[] → StitchPlan。同色を1ブロックに集約、
+                   接続を距離で continuous/jump/trim 判定
+test/stitch.test.ts (18テスト)
+```
+
+#### タタミの連続性保証 (前作の「面の途中で糸切り」対策の本体)
+
+1. 角度付きスキャンラインで行ごとの内部区間 (Seg) を抽出。各交点には
+   「どのリング (外周/穴) の周上何 mm か」(CrossRef) を記録
+2. 隣接行の x 重なりで Seg を親子リンクし、分岐 (穴・凹み) のない範囲を
+   「セクション」に分解
+3. セクション接続グラフを DFS で辿り、セクション間は
+   travelAlongRing による縁沿い移動ステッチ (Travel on Edge) で接続。
+   異リング間は直線 (隣接セクションなので行間隔程度)
+4. 連結成分ごとに 1本の StitchRun として出力。
+   Run 内に jump/trim が構造上入らない (テストで隣接距離 ≤ 12.1mm を検証)
+
+#### 同一領域内の糸切り禁止
+
+digitize.ts の decideConnection は sameObject フラグを持ち、
+下縫い→本縫い・連結成分間 (同一領域内) では距離に関わらず trim を返さない
+(continuous または jump のみ)。テストで検証済み。
+
+#### 検証状況 (Phase 3 時点で計66テスト)
+
+- 矩形タタミ: 1本 Run / 連続性 / 針数が理論値 (面積÷行間隔÷針長) ±30%
+- ドーナツ: 1本 Run / 穴の内部 (15% 縮小判定) に着地点ゼロ
+- C字 (凹形状) を分断方向に走査しても 1本 Run
+- 角度 0°/90° で行方向が変わる
+- サテン: 幅保持 / 7mm 超過警告 / 領域からの生成 (PCA スライス)
+- ランニング: 間隔 / 二重走り / 閉路
+- digitize→validate→PES/DST の一気通貫、下縫い付きで領域内 trim ゼロ
+
+#### UI (Phase 3 時点)
+
+読み込み → サイズ/色数/角度設定 → 元画像/減色後/ベクター/ステッチ表示切替
+→ 診断 (針数/色数/糸切り/警告) → 実デザインの PES/DST ダウンロード。
+渡り糸は点線表示。検証エラー時は出力ボタンを無効化。
 
 ### Phase 2: 画像入力 — PNG/SVG 読み込み + 色数削減 + 領域抽出 ✅
 
@@ -146,24 +203,30 @@ DST:
 - `npm run build`: 成功
 - `npm run dev` でデモページから phase1-demo.pes / .dst をダウンロード可能
 
-## 次フェーズへの引き継ぎ事項 (Phase 3: ステッチ生成)
+## 次フェーズへの引き継ぎ事項 (Phase 4: 縫い順・糸切り最適化)
 
-- 実装先: `src/stitch/`。入力は `Region` (src/core/region.ts)、出力は
-  `StitchRun[]` (1つの面 = 1本の連続 Run。これが最重要ルール)
-- ジェネレーターはプラグイン構造にする:
-  `interface StitchGenerator { generate(region, params): StitchRun[] }`
-- タタミ: 角度指定スキャンライン。セグメント間は領域の縁を通る移動ステッチ
-  (Travel on Edge) で接続し1本の Run にする。穴をまたがない。
-  凹形状はサブ領域分割 + 縁経由接続で連続性を保つ
-- サテン: 中心線+幅からジグザグ。幅 7mm 超は警告フラグ + タタミ切替提案。
-  細い Region からの中心線抽出 (スケルトン) も必要
-- ランニング/ジグザグライン、下縫い3種 (中心/エッジ/ジグザグ、複数指定可)。
-  下縫いと本縫いは同一 ColorBlock 内の連続 Run (間に糸切りなし)
-- 後処理: 最小ステッチ長未満の統合 / 最大ステッチ長超の分割
-  (constants.ts の MIN_STITCH_LEN / MAX_STITCH_LEN を使う)
-- Region.outer/holes は浮動小数。ステッチ点の生成時に整数へ丸めること
-- テスト必須項目: 全ジェネレーターの Run 連続性 (隣接距離 ≤ MAX_STITCH_LEN)、
-  ドーナツで穴に着地点がない、C字形状で Run が1本、針数が理論値 ±30%
+- 実装先: `src/plan/`。入力は digitize 後の StitchPlan (または
+  Region+Run の中間構造)、出力は最適化された StitchPlan
+- やること:
+  1. 色グルーピング: 同色を1ブロックに (digitize が既に実施)。
+     色替え回数を最小化する色順の決定。レイヤー重なりで見た目が崩れる
+     場合の分割判定 (Region の重なり判定が必要)
+  2. 同色内の縫い順: 各 Run の開始/終了点候補を列挙し、
+     貪欲法 + 2-opt で巡回順を最適化 (Closest Join)
+  3. 接続判定: TRIM_THRESHOLDS (3/5/10mm) に基づく
+     continuous/jump/trim 決定 + オブジェクト単位の
+     Always/Never/Auto Trim 上書き
+  4. Branching: 同色ランニング/サテンライン群のグラフ化と一筆書き接続
+  5. 統計: src/plan/stats.ts (総針数/色別/糸切り/色替え/渡り距離)
+  6. 自動針数削減: src/plan/reduce.ts (密度→小領域→針長→サイズの順)
+- 現状の digitize.ts は「入力順のまま縫う」素朴な実装。
+  Phase 4 で digitize から順序決定を src/plan/ に移管する
+- タタミ Run の開始/終了点を変えるには tatamiFill の entry 選択を
+  外から指定できるようにする必要がある (現在は前位置から最近傍を自動選択。
+  tatamiFill にオプション追加で対応可能)
+- テスト必須: 近接3オブジェクト (間隔2mm) → trim 0 /
+  遠隔2オブジェクト (50mm) → trim 1 / ランダム10個で総渡り距離が
+  入力順より短い / ColorBlock 内 Run 途中に trim が構造上ない
 
 ## 未解決・保留
 
