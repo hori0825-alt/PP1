@@ -216,7 +216,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   const pxPerMm = 10 / approxScale;
   const minRegionPx = Math.max(1, Math.round(o.minRegionMm2 * pxPerMm * pxPerMm));
 
-  const mergeTolTable: Record<number, number> = { 1: 7, 2: 11, 3: 15 };
+  const mergeTolTable: Record<number, number> = { 1: 3.5, 2: 6, 3: 10 };
   const quant = quantize(img, {
     maxColors: o.maxColors,
     alphaThreshold: o.alphaThreshold,
@@ -339,6 +339,10 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
       for (const comp of comps) {
         const hydraulicMm = ((2 * comp.area) / Math.max(1, comp.boundary)) * mmPerPx;
         if (hydraulicMm > o.satinMaxWidthMm * 1.8) continue;
+        // 「線」は幅が細いだけでなく形状が細長い (コンパクトネス大)。
+        // 小さな塊・面の断片はサテンにせずタタミで縫う
+        const compactness = (comp.boundary * comp.boundary) / Math.max(1, comp.area);
+        if (compactness < 40) continue;
         const run = skeletonRun(comp, compMap, quant.width, quant.height, o, mmPerPx, toUnits);
         if (run) {
           thinComps.add(comp.id);

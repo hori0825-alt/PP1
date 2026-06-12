@@ -98,6 +98,11 @@ export function quantize(img: RasterImage, opts: QuantizeOptions): QuantizeResul
   refineLabels(data, labels, w, h, centers);
   refineLabels(data, labels, w, h, centers);
 
+  // 4d. 「弱い色の島」の吸収: ある色にほぼ囲まれた別色の小領域で、
+  //     実際の画素の色が囲んでいる色とほぼ同等に近い場合は、
+  //     少数色の誤判定とみなして囲んでいる色へ寄せる
+  absorbWeakIslands(data, labels, w, h, centers, fgIdx.length);
+
   // 5. モードフィルタでごま塩ノイズを除去
   modeFilter(labels, w, h);
 
@@ -330,9 +335,10 @@ function kmeansOklab(
     if (!moved) break;
   }
 
-  // 階層的な重み付き統合: 知覚距離がしきい値より近いクラスタ同士を
-  // 占有数で重み付けして1本の糸にまとめる。これにより「色数」は上限で
-  // しかなくなり、画像本来の色数 (例: 髪の微妙な3トーン → 1色) に収束する
+  // 階層的な重み付き統合:
+  //  - maxColors を超えている間は最も近いペアを強制統合 (色数の上限を保証)
+  //  - それ以下では知覚距離がしきい値未満のペアだけ統合 (近似色の重複排除)。
+  //    ユーザーが色数を増やしたときは素直に色が増える
   let entries = centers
     .map((c, i) => ({ c, n: counts[i] }))
     .filter((e) => e.n > 0);
@@ -351,10 +357,11 @@ function kmeansOklab(
         }
       }
     }
+    const overCap = entries.length > k;
     // 小さいクラスタ (5%未満) はより積極的に統合する
     const share = Math.min(entries[bi].n, entries[bj].n) / total;
     const eff = share < 0.05 ? mergeTol * 1.4 : mergeTol;
-    if (bestD >= eff * eff) break;
+    if (!overCap && bestD >= eff * eff) break;
     const a = entries[bi];
     const b = entries[bj];
     const n = a.n + b.n;
@@ -422,11 +429,13 @@ function refineLabels(
         }
       }
       if (maj === own || majC < 5) continue;
-      // 色距離ガード: 自分の色に明確に近い画素は動かさない
+      // 色距離ガード: 自分の色に明確に近い画素は動かさない。
+      // 多数派が圧倒的 (3x3中6以上) な場合はガードを緩める
       const p = labOf(i);
       const dOwn = Math.sqrt(labDist2(p, centers[own]));
       const dMaj = Math.sqrt(labDist2(p, centers[maj]));
-      if (dMaj <= dOwn * 1.4 + 2) labels[i] = maj;
+      const limit = majC >= 6 ? dOwn * 2.0 + 4 : dOwn * 1.4 + 2;
+      if (dMaj <= limit) labels[i] = maj;
     }
   }
 }
@@ -474,6 +483,87 @@ function absorbTinyClusters(labels: Int32Array, fgIdx: number[], centers: Lab[])
     }
   }
   for (const i of fgIdx) labels[i] = remap[labels[i]];
+}
+
+/**
+ * 弱い色の島の吸収。
+ * 連結領域ごとに「周囲をほぼ1色に囲まれていて (70%以上)、領域の実際の
+ * 平均色がその囲み色とほぼ同等に近い」場合、囲み色へ統合する。
+ * 黒い瞳のように色が明確に異なる小領域は距離条件で保護される。
+ */
+function absorbWeakIslands(
+  data: Uint8ClampedArray | Uint8Array,
+  labels: Int32Array,
+  w: number,
+  h: number,
+  centers: Lab[],
+  fgCount: number,
+): void {
+  const n = w * h;
+  const maxArea = Math.max(64, Math.round(fgCount * 0.015)); // 1.5% まで
+  const seen = new Uint8Array(n);
+  for (let start = 0; start < n; start++) {
+    if (seen[start] || labels[start] < 0) continue;
+    const own = labels[start];
+    const region: number[] = [start];
+    seen[start] = 1;
+    const nbCount = new Map<number, number>();
+    let nbTotal = 0;
+    for (let qi = 0; qi < region.length; qi++) {
+      const i = region[qi];
+      const x = i % w;
+      const y = (i / w) | 0;
+      const neighbors = [
+        x > 0 ? i - 1 : -1,
+        x < w - 1 ? i + 1 : -1,
+        y > 0 ? i - w : -1,
+        y < h - 1 ? i + w : -1,
+      ];
+      for (const ni of neighbors) {
+        if (ni < 0) continue;
+        if (labels[ni] === own) {
+          if (!seen[ni]) {
+            seen[ni] = 1;
+            region.push(ni);
+          }
+        } else if (labels[ni] >= 0) {
+          nbCount.set(labels[ni], (nbCount.get(labels[ni]) ?? 0) + 1);
+          nbTotal++;
+        }
+      }
+    }
+    if (region.length > maxArea || nbTotal === 0) continue;
+    // 支配的な囲み色 (70%以上)
+    let domLabel = -1;
+    let domCount = 0;
+    for (const [l, c] of nbCount) {
+      if (c > domCount) {
+        domCount = c;
+        domLabel = l;
+      }
+    }
+    if (domLabel < 0 || domCount / nbTotal < 0.7) continue;
+    // 領域の実際の平均色と両クラスタ中心の距離を比較
+    let sl = 0;
+    let sa = 0;
+    let sb = 0;
+    const stride = Math.max(1, Math.floor(region.length / 200));
+    let m = 0;
+    for (let s = 0; s < region.length; s += stride) {
+      const i = region[s] * 4;
+      const lab = srgbToOklab(data[i], data[i + 1], data[i + 2]);
+      sl += lab[0];
+      sa += lab[1];
+      sb += lab[2];
+      m++;
+    }
+    const mean: Lab = [sl / m, sa / m, sb / m];
+    const dOwn = Math.sqrt(labDist2(mean, centers[own]));
+    const dDom = Math.sqrt(labDist2(mean, centers[domLabel]));
+    if (dDom <= dOwn * 1.2 + 1.5) {
+      for (const i of region) labels[i] = domLabel;
+    }
+  }
 }
 
 function modeFilter(labels: Int32Array, w: number, h: number): void {
