@@ -114,3 +114,46 @@ button:hover {
   font-size: 12px;
   color: #8a939e;
 }
+
+aside label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+aside label.disabled {
+  color: #c4cad1;
+}
+
+aside input[type="file"] {
+  width: 100%;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+aside select {
+  margin-left: 6px;
+}
+
+table.colors {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+table.colors th,
+table.colors td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid #00000022;
+  vertical-align: middle;
+}
