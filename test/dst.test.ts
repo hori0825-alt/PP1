@@ -1,85 +1,146 @@
+// DST エクスポーターのテスト: レコードエンコードのラウンドトリップと実出力の検証。
+
 import { describe, expect, it } from "vitest";
-import { decodeDstRecord, encodeDstRecord, writeDst } from "../src/embroidery/dst";
-import { COLOR_CHANGE, END, JUMP, Pattern, STITCH } from "../src/embroidery/pattern";
-import { PEC_THREADS } from "../src/embroidery/pecThreads";
+import { mm } from "../src/core/constants";
+import type { StitchPlan } from "../src/core/types";
+import { encodeDstRecord, writeDst } from "../src/export/dst";
+import { decodeDst, decodeDstRecord } from "./helpers";
+
+const red = { r: 255, g: 0, b: 0 };
+const blue = { r: 0, g: 0, b: 255 };
 
 describe("encodeDstRecord", () => {
-  it("全デルタ範囲 (-121..121) を往復できる", () => {
-    for (let dx = -121; dx <= 121; dx += 7) {
-      for (let dy = -121; dy <= 121; dy += 7) {
-        const [b0, b1, b2] = encodeDstRecord(dx, dy, false, false);
-        const d = decodeDstRecord(b0, b1, b2);
-        expect([d.dx, d.dy]).toEqual([dx, dy]);
-        expect(d.jump).toBe(false);
-        expect(d.colorChange).toBe(false);
-      }
+  it("全範囲 (-121..121) でエンコード/デコードが一致する", () => {
+    for (let v = -121; v <= 121; v++) {
+      const [a0, a1, a2] = encodeDstRecord(v, 0, "stitch");
+      const dx = decodeDstRecord(a0, a1, a2);
+      expect(dx).toEqual({ dx: v, dy: 0, kind: "stitch" });
+
+      const [b0, b1, b2] = encodeDstRecord(0, v, "stitch");
+      const dy = decodeDstRecord(b0, b1, b2);
+      expect(dy).toEqual({ dx: 0, dy: v, kind: "stitch" });
     }
   });
 
-  it("ジャンプと色替えフラグ", () => {
-    const j = encodeDstRecord(5, -3, true, false);
-    expect(decodeDstRecord(...j).jump).toBe(true);
-    const c = encodeDstRecord(0, 0, false, true);
-    expect(decodeDstRecord(...c).colorChange).toBe(true);
+  it("dx/dy 同時指定とジャンプ・色替えフラグが保持される", () => {
+    const pairs: [number, number][] = [
+      [121, -121],
+      [-73, 41],
+      [1, -1],
+      [0, 0],
+      [100, 100],
+    ];
+    for (const [dx, dy] of pairs) {
+      expect(decodeDstRecord(...encodeDstRecord(dx, dy, "stitch"))).toEqual({
+        dx,
+        dy,
+        kind: "stitch",
+      });
+      expect(decodeDstRecord(...encodeDstRecord(dx, dy, "jump"))).toEqual({
+        dx,
+        dy,
+        kind: "jump",
+      });
+    }
+    expect(decodeDstRecord(...encodeDstRecord(0, 0, "colorChange")).kind).toBe("colorChange");
   });
 
-  it("範囲外はエラー", () => {
-    expect(() => encodeDstRecord(122, 0, false, false)).toThrow();
+  it("範囲外は例外を投げる", () => {
+    expect(() => encodeDstRecord(122, 0, "stitch")).toThrow();
+    expect(() => encodeDstRecord(0, -122, "stitch")).toThrow();
   });
 });
 
 describe("writeDst", () => {
-  it("ヘッダ 512 バイト + レコード + 終端", () => {
-    const p = new Pattern();
-    p.threads.push(PEC_THREADS[19]);
-    p.add(JUMP, 50, 50);
-    p.add(STITCH, 50, 50);
-    p.add(STITCH, 80, 50);
-    p.add(STITCH, 80, 80);
-    p.add(COLOR_CHANGE, 80, 80);
-    p.add(STITCH, 50, 50);
-    p.add(END, 50, 50);
-    const data = writeDst(p);
+  const plan: StitchPlan = {
+    name: "TEST",
+    blocks: [
+      {
+        thread: red,
+        runs: [
+          {
+            stitches: [
+              { x: mm(-10), y: mm(-10) },
+              { x: mm(-5), y: mm(-10) },
+              { x: mm(-5), y: mm(-5) },
+            ],
+            connection: "trim",
+          },
+        ],
+      },
+      {
+        thread: blue,
+        runs: [
+          {
+            stitches: [
+              { x: mm(10), y: mm(10) },
+              { x: mm(15), y: mm(10) },
+            ],
+            connection: "trim",
+          },
+        ],
+      },
+    ],
+  };
 
-    const header = String.fromCharCode(...data.slice(0, 512));
-    expect(header.startsWith("LA:")).toBe(true);
-    expect(header).toContain("ST:");
-    expect(header).toContain("CO:  1");
-    expect(data[512 - 1]).toBe(0x20);
-    // 終端レコード
+  it("ヘッダーの ST/CO/ラベルとレコード数が一致する", () => {
+    const data = writeDst(plan);
+    const dec = decodeDst(data);
+    expect(dec.label).toBe("TEST");
+    expect(dec.records.length).toBe(dec.stitchCount);
+    expect(dec.colorChangeCount).toBe(1);
+    expect(dec.records.filter((r) => r.kind === "colorChange")).toHaveLength(1);
+    // サイズ = 512 ヘッダー + 3×レコード + 3 終端
+    expect(data.length).toBe(512 + dec.records.length * 3 + 3);
     expect(data[data.length - 1]).toBe(0xf3);
-
-    // レコードをデコードして絶対座標を復元 (Y反転を戻す)
-    let x = 0;
-    let y = 0;
-    const stitches: [number, number][] = [];
-    for (let i = 512; i < data.length - 3; i += 3) {
-      const d = decodeDstRecord(data[i], data[i + 1], data[i + 2]);
-      x += d.dx;
-      y += d.dy;
-      if (!d.jump && !d.colorChange) stitches.push([x, -y]);
-    }
-    expect(stitches).toContainEqual([50, 50]);
-    expect(stitches).toContainEqual([80, 80]);
   });
 
-  it("長い移動は複数レコードに分割される", () => {
-    const p = new Pattern();
-    p.threads.push(PEC_THREADS[19]);
-    p.add(JUMP, 400, 0);
-    p.add(STITCH, 400, 0);
-    p.add(STITCH, 405, 0);
-    p.add(END, 405, 0);
-    const data = writeDst(p);
+  it("デコードした絶対座標がプランの座標と一致する (Y は反転)", () => {
+    const data = writeDst(plan);
+    const dec = decodeDst(data);
     let x = 0;
     let y = 0;
-    for (let i = 512; i < data.length - 3; i += 3) {
-      const d = decodeDstRecord(data[i], data[i + 1], data[i + 2]);
-      expect(Math.abs(d.dx)).toBeLessThanOrEqual(121);
-      x += d.dx;
-      y += d.dy;
+    const visited: { x: number; y: number }[] = [];
+    for (const r of dec.records) {
+      x += r.dx;
+      y += r.dy;
+      if (r.kind === "stitch") visited.push({ x, y: -y }); // 内部座標系に戻す
     }
-    expect(x).toBe(405);
-    expect(y).toBe(0);
+    for (const block of plan.blocks) {
+      for (const run of block.runs) {
+        for (const p of run.stitches) {
+          expect(visited).toContainEqual(p);
+        }
+      }
+    }
+  });
+
+  it("遠距離の trim 接続でも全レコードが ±121 に収まる", () => {
+    const farPlan: StitchPlan = {
+      name: "FAR",
+      blocks: [
+        {
+          thread: red,
+          runs: [
+            { stitches: [{ x: mm(-45), y: mm(-45) }, { x: mm(-42), y: mm(-45) }], connection: "trim" },
+            { stitches: [{ x: mm(45), y: mm(45) }, { x: mm(42), y: mm(45) }], connection: "trim" },
+          ],
+        },
+      ],
+    };
+    // writeDst 内の encodeDstRecord が範囲外なら例外になるため、正常終了自体が検証
+    const data = writeDst(farPlan);
+    const dec = decodeDst(data);
+    // trim エミュレーション (3連ジャンプ) + 90mm 移動の分割ジャンプ
+    expect(dec.records.filter((r) => r.kind === "jump").length).toBeGreaterThanOrEqual(3 + 8);
+    // 終点の絶対座標が正しい
+    let x = 0;
+    let y = 0;
+    for (const r of dec.records) {
+      x += r.dx;
+      y += r.dy;
+    }
+    expect(x).toBe(mm(42));
+    expect(-y).toBe(mm(45));
   });
 });

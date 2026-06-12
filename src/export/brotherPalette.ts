@@ -1,14 +1,19 @@
-// Brother PEC 64色スレッドパレット。
-// インデックス (pecIndex) は PEC フォーマットの色番号 (1始まり) と一致する。
-// 出典: pyembroidery EmbThreadPec (Brother 標準刺しゅう糸)
+// Brother 標準64色パレット (PEC フォーマットの色番号 1〜64)。
+// PES/PEC ではこのパレットのインデックスで糸色が保持されるため、
+// 任意の RGB を最近色に割り当てて出力する。
 
-import type { Thread } from "./pattern";
+import type { ThreadColor } from "../core/types";
 
-function t(pecIndex: number, r: number, g: number, b: number, name: string): Thread {
-  return { r, g, b, name, catalog: String(pecIndex), pecIndex };
+export interface BrotherThread extends ThreadColor {
+  /** PEC 色番号 (1始まり) */
+  pecIndex: number;
 }
 
-export const PEC_THREADS: Thread[] = [
+function t(pecIndex: number, r: number, g: number, b: number, name: string): BrotherThread {
+  return { pecIndex, r, g, b, name, code: String(pecIndex) };
+}
+
+export const BROTHER_PALETTE: readonly BrotherThread[] = [
   t(1, 14, 31, 124, "Prussian Blue"),
   t(2, 10, 85, 163, "Blue"),
   t(3, 0, 135, 119, "Teal Green"),
@@ -75,30 +80,19 @@ export const PEC_THREADS: Thread[] = [
   t(64, 255, 200, 200, "Applique"),
 ];
 
-function dist2(r1: number, g1: number, b1: number, t2: Thread): number {
-  const dr = r1 - t2.r;
-  const dg = g1 - t2.g;
-  const db = b1 - t2.b;
-  return dr * dr + dg * dg + db * db;
-}
-
-/** RGB に最も近い PEC スレッドを返す (used に含まれる pecIndex は除外) */
-export function nearestPecThread(
-  r: number,
-  g: number,
-  b: number,
-  used: Set<number> = new Set(),
-): Thread {
-  let best: Thread | null = null;
+/** RGB に最も近い Brother パレット色を返す */
+export function nearestBrotherThread(color: ThreadColor): BrotherThread {
+  let best = BROTHER_PALETTE[0];
   let bestD = Infinity;
-  for (const th of PEC_THREADS) {
-    if (used.has(th.pecIndex)) continue;
-    const d = dist2(r, g, b, th);
+  for (const th of BROTHER_PALETTE) {
+    const dr = color.r - th.r;
+    const dg = color.g - th.g;
+    const db = color.b - th.b;
+    const d = dr * dr + dg * dg + db * db;
     if (d < bestD) {
       bestD = d;
       best = th;
     }
   }
-  // 64色以上使うことはないので必ず見つかる
-  return best ?? PEC_THREADS[19];
+  return best;
 }

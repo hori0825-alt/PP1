@@ -1,0 +1,116 @@
+/* 白基調・すっきりした最小スタイル (Phase 1 用) */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  background: #f7f8fa;
+  color: #2a2e33;
+}
+
+header {
+  padding: 12px 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #e3e7ec;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+header .version {
+  font-size: 12px;
+  color: #8a939e;
+  font-weight: 400;
+}
+
+main {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  align-items: flex-start;
+}
+
+canvas#preview {
+  background: #ffffff;
+  border: 1px solid #e3e7ec;
+  border-radius: 6px;
+}
+
+aside {
+  background: #ffffff;
+  border: 1px solid #e3e7ec;
+  border-radius: 6px;
+  padding: 16px;
+  width: 280px;
+}
+
+aside h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+dl dt {
+  color: #8a939e;
+}
+
+dl dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+#validation {
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+#validation.ok {
+  background: #eef8ef;
+  color: #246b2e;
+}
+
+#validation.error {
+  background: #fdeeee;
+  color: #a02828;
+}
+
+#validation p {
+  margin: 4px 0 0;
+}
+
+button {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 8px;
+  border: none;
+  border-radius: 4px;
+  background: #2f6fed;
+  color: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #245ac4;
+}
+
+.note {
+  font-size: 12px;
+  color: #8a939e;
+}
