@@ -50,6 +50,11 @@ export interface DigitizeOptions {
   satinSpacingMm: number;
   /** この推定幅 (mm) 以下の極細領域はセンターラインで縫う。0 で無効 */
   centerlineMaxWidthMm: number;
+  /**
+   * 色の統合強度 (1=弱 2=標準 3=強)。
+   * 知覚的に近い色をどこまで1本の糸にまとめるか
+   */
+  colorMergeLevel: number;
   /** 透明背景のしきい値 (0-255) */
   alphaThreshold: number;
   /** 画像端の均一色を背景として自動除去 */
@@ -88,8 +93,9 @@ export const DEFAULT_OPTIONS: DigitizeOptions = {
   tripleOutline: false,
   autoThinDetect: true,
   satinMaxWidthMm: 6.0,
-  satinSpacingMm: 0.25,
+  satinSpacingMm: 0.3,
   centerlineMaxWidthMm: 1.5,
+  colorMergeLevel: 2,
   alphaThreshold: 128,
   autoBackground: true,
   bgTolerance: 40,
@@ -207,12 +213,14 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
   const pxPerMm = 10 / approxScale;
   const minRegionPx = Math.max(1, Math.round(o.minRegionMm2 * pxPerMm * pxPerMm));
 
+  const mergeTolTable: Record<number, number> = { 1: 7, 2: 11, 3: 15 };
   const quant = quantize(img, {
     maxColors: o.maxColors,
     alphaThreshold: o.alphaThreshold,
     autoBackground: o.autoBackground,
     bgTolerance: o.bgTolerance,
     minRegionPx,
+    mergeTol: mergeTolTable[Math.round(o.colorMergeLevel)] ?? 11,
   });
 
   const pattern = new Pattern();

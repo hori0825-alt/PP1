@@ -11,7 +11,7 @@ export interface RasterImage {
 }
 
 export interface QuantizeOptions {
-  /** 最大色数 (糸の本数) */
+  /** 最大色数 (糸の本数の上限) */
   maxColors: number;
   /** これ未満のアルファ値は背景扱い (0-255) */
   alphaThreshold: number;
@@ -21,6 +21,12 @@ export interface QuantizeOptions {
   bgTolerance: number;
   /** これ未満のピクセル数の領域は周囲にマージ */
   minRegionPx: number;
+  /**
+   * 色の統合しきい値 (Oklab×100 の知覚距離)。
+   * この距離より近いクラスタ同士は1本の糸に統合される。
+   * 7=弱 11=標準 15=強。省略時 11
+   */
+  mergeTol?: number;
 }
 
 export interface PaletteColor {
@@ -65,7 +71,7 @@ export function quantize(img: RasterImage, opts: QuantizeOptions): QuantizeResul
   //    アンチエイリアスの中間色が「糸色」として認識されるのを防ぐ
   let flatIdx = fgIdx.filter((i) => !edge[i]);
   if (flatIdx.length < Math.max(1000, fgIdx.length * 0.1)) flatIdx = fgIdx;
-  const centers = kmeansOklab(data, flatIdx, opts.maxColors);
+  const centers = kmeansOklab(data, flatIdx, opts.maxColors, opts.mergeTol ?? 11);
 
   // 全前景画素を最近傍クラスタへ割当 (同一RGBはキャッシュして高速化)
   const cache = new Map<number, number>();
@@ -85,6 +91,10 @@ export function quantize(img: RasterImage, opts: QuantizeOptions): QuantizeResul
 
   // 4b. 微小クラスタ (前景の0.8%未満) は最寄りの色へ吸収
   absorbTinyClusters(labels, fgIdx, centers);
+
+  // 4c. 境界に残る「どちらつかず」画素を近傍多数派へ寄せる
+  //     (色距離ガードつき: 細い線のように自分の色が確かな画素は動かない)
+  refineLabels(data, labels, w, h, centers);
 
   // 5. モードフィルタでごま塩ノイズを除去
   modeFilter(labels, w, h);
@@ -267,6 +277,7 @@ function kmeansOklab(
   data: Uint8ClampedArray | Uint8Array,
   idx: number[],
   k: number,
+  mergeTol: number,
 ): Lab[] {
   // サンプリング (最大5万点)
   const stride = Math.max(1, Math.floor(idx.length / 50000));
@@ -295,7 +306,8 @@ function kmeansOklab(
     centers.push(samples[far].slice() as Lab);
   }
 
-  // Lloyd 反復
+  // Lloyd 反復 (最終回のクラスタ占有数も保持)
+  let counts = new Array<number>(centers.length).fill(0);
   for (let iter = 0; iter < 12; iter++) {
     const sum = centers.map(() => [0, 0, 0, 0]);
     for (const s of samples) {
@@ -307,6 +319,7 @@ function kmeansOklab(
     }
     let moved = false;
     for (let c = 0; c < centers.length; c++) {
+      counts[c] = sum[c][3];
       if (sum[c][3] === 0) continue;
       const next: Lab = [sum[c][0] / sum[c][3], sum[c][1] / sum[c][3], sum[c][2] / sum[c][3]];
       if (labDist2(next, centers[c]) > 0.01) moved = true;
@@ -315,15 +328,105 @@ function kmeansOklab(
     if (!moved) break;
   }
 
-  // 知覚的に近いクラスタを統合 (糸の色として区別する意味がない)。
-  // Oklab×100 で距離 6 はかなり似た色 (微妙な色味違い程度)
-  const mergeTol2 = 6 * 6;
-  const merged: Lab[] = [];
-  for (const c of centers) {
-    const dup = merged.find((m) => labDist2(m, c) < mergeTol2);
-    if (!dup) merged.push(c);
+  // 階層的な重み付き統合: 知覚距離がしきい値より近いクラスタ同士を
+  // 占有数で重み付けして1本の糸にまとめる。これにより「色数」は上限で
+  // しかなくなり、画像本来の色数 (例: 髪の微妙な3トーン → 1色) に収束する
+  let entries = centers
+    .map((c, i) => ({ c, n: counts[i] }))
+    .filter((e) => e.n > 0);
+  const total = entries.reduce((s, e) => s + e.n, 0);
+  while (entries.length > 1) {
+    let bi = -1;
+    let bj = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const d = labDist2(entries[i].c, entries[j].c);
+        if (d < bestD) {
+          bestD = d;
+          bi = i;
+          bj = j;
+        }
+      }
+    }
+    // 小さいクラスタ (5%未満) はより積極的に統合する
+    const share = Math.min(entries[bi].n, entries[bj].n) / total;
+    const eff = share < 0.05 ? mergeTol * 1.4 : mergeTol;
+    if (bestD >= eff * eff) break;
+    const a = entries[bi];
+    const b = entries[bj];
+    const n = a.n + b.n;
+    const mergedC: Lab = [
+      (a.c[0] * a.n + b.c[0] * b.n) / n,
+      (a.c[1] * a.n + b.c[1] * b.n) / n,
+      (a.c[2] * a.n + b.c[2] * b.n) / n,
+    ];
+    entries.splice(bj, 1);
+    entries[bi] = { c: mergedC, n };
   }
-  return merged;
+  return entries.map((e) => e.c);
+}
+
+/**
+ * ラベルの平滑化: 3x3 近傍の多数派と自分が異なり、かつ自分の色が
+ * 多数派の色とどちらつかず (距離が拮抗) の画素だけを多数派へ寄せる。
+ * アンチエイリアス由来の境界の帯やごま塩を吸収しつつ、
+ * 細い線 (自分の色との距離が明確に近い) は保護される。
+ */
+function refineLabels(
+  data: Uint8ClampedArray | Uint8Array,
+  labels: Int32Array,
+  w: number,
+  h: number,
+  centers: Lab[],
+): void {
+  const src = labels.slice();
+  const labCache = new Map<number, Lab>();
+  const labOf = (i: number): Lab => {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const key = (r << 16) | (g << 8) | b;
+    let v = labCache.get(key);
+    if (v === undefined) {
+      v = srgbToOklab(r, g, b);
+      labCache.set(key, v);
+    }
+    return v;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const own = src[i];
+      if (own === BG) continue;
+      // 3x3 の多数派ラベルを数える
+      const cnt = new Map<number, number>();
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const l = src[ny * w + nx];
+          if (l === BG) continue;
+          cnt.set(l, (cnt.get(l) ?? 0) + 1);
+        }
+      }
+      let maj = own;
+      let majC = 0;
+      for (const [l, c] of cnt) {
+        if (c > majC) {
+          majC = c;
+          maj = l;
+        }
+      }
+      if (maj === own || majC < 5) continue;
+      // 色距離ガード: 自分の色に明確に近い画素は動かさない
+      const p = labOf(i);
+      const dOwn = Math.sqrt(labDist2(p, centers[own]));
+      const dMaj = Math.sqrt(labDist2(p, centers[maj]));
+      if (dMaj <= dOwn * 1.4 + 2) labels[i] = maj;
+    }
+  }
 }
 
 /**

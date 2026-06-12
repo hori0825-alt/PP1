@@ -127,6 +127,7 @@ function readOptions() {
   return {
     sizeMm: clamp(Number($<HTMLInputElement>("sizeMm").value) || 90, 10, HOOP_MM),
     maxColors: clamp(Number($<HTMLInputElement>("maxColors").value) || 6, 1, 12),
+    colorMergeLevel: clamp(Number($<HTMLSelectElement>("colorMerge").value) || 2, 1, 3),
     rowSpacingMm: clamp(Number($<HTMLInputElement>("rowSpacing").value) || 0.4, 0.2, 1),
     stitchLenMm: clamp(Number($<HTMLInputElement>("stitchLen").value) || 3, 1, 7),
     angleDeg: Number($<HTMLInputElement>("angle").value) || 0,
@@ -137,7 +138,7 @@ function readOptions() {
     // 細い線の設定
     autoThinDetect: $<HTMLInputElement>("autoThin").checked,
     satinMaxWidthMm: clamp(Number($<HTMLInputElement>("satinMaxWidth").value) || 6, 0, 20),
-    satinSpacingMm: clamp(Number($<HTMLInputElement>("satinSpacing").value) || 0.25, 0.1, 0.6),
+    satinSpacingMm: clamp(Number($<HTMLInputElement>("satinSpacing").value) || 0.3, 0.1, 0.6),
     centerlineMaxWidthMm: clamp(Number($<HTMLInputElement>("centerlineMax").value) || 0, 0, 5),
     outlineStitchMm: clamp(Number($<HTMLInputElement>("outlineStitch").value) || 2, 0.5, 5),
     tripleOutline: $<HTMLInputElement>("tripleOutline").checked,
@@ -161,13 +162,15 @@ function scheduleUpdate(): void {
 }
 
 for (const id of [
-  "sizeMm", "maxColors", "rowSpacing", "stitchLen", "angle", "minRegion",
+  "sizeMm", "maxColors", "colorMerge", "rowSpacing", "stitchLen", "angle", "minRegion",
   "fillOn", "outlineOn", "autoBg",
   "autoThin", "satinMaxWidth", "satinSpacing", "centerlineMax", "outlineStitch", "tripleOutline",
   "reduceTrims", "maxConnect", "smoothing", "maxStitches",
 ]) {
   $(id).addEventListener("input", () => {
-    if (id === "maxColors" || id === "autoBg" || id === "minRegion") enabledColors = [];
+    if (id === "maxColors" || id === "colorMerge" || id === "autoBg" || id === "minRegion") {
+      enabledColors = [];
+    }
     scheduleUpdate();
   });
 }

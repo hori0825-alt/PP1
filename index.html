@@ -27,8 +27,15 @@
           <label>サイズ (長辺 mm / 最大100)
             <input type="number" id="sizeMm" min="10" max="100" step="1" value="90" />
           </label>
-          <label>色数 (糸の本数)
+          <label>色数 (糸の本数の上限)
             <input type="number" id="maxColors" min="1" max="12" step="1" value="6" />
+          </label>
+          <label>色の統合 <span class="hint-inline">似た色をどこまで1本の糸にまとめるか。多すぎる色はここを「強」に</span>
+            <select id="colorMerge">
+              <option value="1">弱 (色を忠実に)</option>
+              <option value="2" selected>標準</option>
+              <option value="3">強 (大胆にまとめる)</option>
+            </select>
           </label>
           <label>縫い密度: 行間隔 (mm)
             <input type="number" id="rowSpacing" min="0.2" max="1.0" step="0.05" value="0.4" />
@@ -57,7 +64,7 @@
             <input type="number" id="satinMaxWidth" min="1" max="15" step="0.5" value="6" />
           </label>
           <label>サテン行間隔 (mm) <span class="hint-inline">小さいほど密でなめらか</span>
-            <input type="number" id="satinSpacing" min="0.1" max="0.6" step="0.05" value="0.25" />
+            <input type="number" id="satinSpacing" min="0.1" max="0.6" step="0.05" value="0.3" />
           </label>
           <label>センターライン閾値 (mm) <span class="hint-inline">この幅以下は中心線のみ縫う / 0で無効</span>
             <input type="number" id="centerlineMax" min="0" max="4" step="0.5" value="1.5" />

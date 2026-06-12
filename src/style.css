@@ -84,13 +84,19 @@ label {
   margin-bottom: 8px;
 }
 
-label input[type="number"] {
+label input[type="number"],
+label select {
   width: 80px;
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 6px;
+}
+
+label select {
+  width: auto;
+  min-width: 80px;
 }
 
 label.check {

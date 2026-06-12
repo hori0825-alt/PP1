@@ -113,6 +113,58 @@ describe("quantize (Oklab + エッジ除外)", () => {
   });
 });
 
+describe("色の統合強度 (mergeTol)", () => {
+  // 茶系2トーン: Oklab 距離 ≈ 7.4 (弱=7 では分離、標準=11 で統合)
+  function twoTone() {
+    const w = 80;
+    const h = 40;
+    const data = blank(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (x < 40) {
+          data[i] = 150;
+          data[i + 1] = 90;
+          data[i + 2] = 60;
+        } else {
+          data[i] = 125;
+          data[i + 1] = 70;
+          data[i + 2] = 48;
+        }
+        data[i + 3] = 255;
+      }
+    }
+    return { data, width: w, height: h };
+  }
+
+  it("弱 (7) では似た2トーンが分かれたまま", () => {
+    const q = quantize(twoTone(), { ...QOPTS, mergeTol: 7 });
+    expect(q.palette.length).toBe(2);
+  });
+
+  it("標準 (11) では似た2トーンが1本の糸に統合される", () => {
+    const q = quantize(twoTone(), { ...QOPTS, mergeTol: 11 });
+    expect(q.palette.length).toBe(1);
+  });
+
+  it("強 (15) でもはっきり異なる色は維持される", () => {
+    const w = 80;
+    const h = 40;
+    const data = blank(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        data[i] = x < 40 ? 220 : 40;
+        data[i + 1] = x < 40 ? 40 : 90;
+        data[i + 2] = x < 40 ? 40 : 220;
+        data[i + 3] = 255;
+      }
+    }
+    const q = quantize({ data, width: w, height: h }, { ...QOPTS, mergeTol: 15 });
+    expect(q.palette.length).toBe(2);
+  });
+});
+
 describe("pipeline: 微小 run の除去", () => {
   it("アンチエイリアス由来のゴミがないので糸切りが増えない", () => {
     // 黒線 + 白地 + アンチエイリアスのある画像 (実画像の縮図)
