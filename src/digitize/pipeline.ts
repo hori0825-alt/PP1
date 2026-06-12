@@ -661,7 +661,7 @@ export function digitize(img: RasterImage, options: Partial<DigitizeOptions> = {
 
 // ------------------------------------------------------ 色コンポーネント
 
-interface ColorComponent {
+export interface ColorComponent {
   id: number;
   area: number;
   /** 境界画素数 (周長の近似) */
@@ -673,7 +673,7 @@ interface ColorComponent {
 }
 
 /** 指定色の8連結コンポーネントを抽出する */
-function labelColorComponents(
+export function labelColorComponents(
   labels: Int32Array,
   w: number,
   h: number,
@@ -735,7 +735,7 @@ function labelColorComponents(
  * 戻り値はパターン座標 (0.1mm) の連続した1本の run。
  * 幅がサテン適用幅を超える・スケルトンが取れない場合は null (タタミで処理)。
  */
-function skeletonRun(
+export function skeletonRun(
   comp: ColorComponent,
   compMap: Int32Array,
   w: number,
@@ -755,7 +755,29 @@ function skeletonRun(
       if (compMap[(y + y0) * w + (x + x0)] === comp.id) mask[y * bw + x] = 1;
     }
   }
+  const r = skeletonRunFromMask(mask, bw, bh, x0, y0, o, mmPerPx, toUnits);
+  return r ? r.run : null;
+}
 
+/**
+ * bbox ローカルのマスクからスケルトンルートの run を生成する。
+ * forceMode を指定すると幅による自動判定を上書きする (ユーザー指定用)。
+ */
+export function skeletonRunFromMask(
+  mask: Uint8Array,
+  bw: number,
+  bh: number,
+  x0: number,
+  y0: number,
+  o: Pick<
+    DigitizeOptions,
+    "satinMaxWidthMm" | "centerlineMaxWidthMm" | "satinSpacingMm" | "outlineStitchMm"
+  >,
+  mmPerPx: number,
+  toUnits: (p: Pt) => Pt,
+  forceMode?: "satin" | "centerline",
+): { run: Pt[]; mode: "satin" | "centerline"; widthMm: number } | null {
+  if (bw < 2 || bh < 2) return null;
   const skel = thinMask(mask, bw, bh);
   const dt = distanceTransform(mask, bw, bh);
   const widths: number[] = [];
@@ -773,16 +795,17 @@ function skeletonRun(
   // サテンにすると幅上限でカットされ隙間ができるため、タタミに回す
   widths.sort((a, b) => a - b);
   const p90Mm = 2 * widths[Math.floor(0.9 * (widths.length - 1))] * mmPerPx;
-  if (p90Mm > o.satinMaxWidthMm) return null; // 太い箇所がある → タタミで処理
+  if (!forceMode && p90Mm > o.satinMaxWidthMm) return null; // 太い箇所がある → タタミで処理
   const mode: "satin" | "centerline" =
-    o.centerlineMaxWidthMm > 0 && widthMm <= o.centerlineMaxWidthMm ? "centerline" : "satin";
+    forceMode ??
+    (o.centerlineMaxWidthMm > 0 && widthMm <= o.centerlineMaxWidthMm ? "centerline" : "satin");
 
   const { edges, nodes } = skeletonGraph(skel, bw, bh);
   if (edges.length === 0) return null;
 
   const runStepPx = Math.max(1, o.outlineStitchMm / mmPerPx);
   const satinStepPx = Math.max(0.8, o.satinSpacingMm / mmPerPx);
-  const maxHalfWidthPx = ((o.satinMaxWidthMm / mmPerPx) / 2) * 1.3;
+  const maxHalfWidthPx = (o.satinMaxWidthMm / mmPerPx / 2) * 1.3;
 
   let pxRun: Px[];
   if (mode === "centerline" && edges.length === 1 && edges[0].a !== edges[0].b) {
@@ -793,11 +816,11 @@ function skeletonRun(
     pxRun = stitchRoute(moves, { mode, satinStepPx, runStepPx, dt, w: bw, maxHalfWidthPx });
   }
   if (pxRun.length < 2) return null;
-  return pxRun.map(([lx, ly]) => toUnits([lx + x0, ly + y0]));
+  return { run: pxRun.map(([lx, ly]) => toUnits([lx + x0, ly + y0])), mode, widthMm };
 }
 
 /** 領域 (外周-穴) の内部にある点を1つ返す */
-function regionInteriorPoint(region: Region): Pt | null {
+export function regionInteriorPoint(region: Region): Pt | null {
   const loop = region.outer;
   const inRegion = (p: Pt): boolean => {
     if (!pointInPolygon(p, region.outer)) return false;
@@ -969,7 +992,7 @@ function excludeRegions(quant: QuantizeResult, points: [number, number][]): Uint
 
 // ------------------------------------------------------------ 領域グループ
 
-interface Region {
+export interface Region {
   outer: Pt[];
   holes: Pt[][];
 }
@@ -978,7 +1001,7 @@ interface Region {
  * ループ群を「外周 + その穴」の領域にまとめる。
  * 輪郭抽出の向き (内部が左) により、外周は符号付き面積が正、穴は負になる。
  */
-function groupRegions(loops: Pt[][]): Region[] {
+export function groupRegions(loops: Pt[][]): Region[] {
   const outers: { loop: Pt[]; area: number }[] = [];
   const holeLoops: { loop: Pt[]; area: number }[] = [];
   for (const loop of loops) {
@@ -1016,7 +1039,7 @@ function pointInPolygon([x, y]: Pt, loop: Pt[]): boolean {
   return inside;
 }
 
-function loopPerimeter(loop: Pt[]): number {
+export function loopPerimeter(loop: Pt[]): number {
   let p = 0;
   for (let i = 0; i < loop.length; i++) {
     const [x0, y0] = loop[i];
@@ -1046,7 +1069,7 @@ function regionWidthMm(r: Region): number {
  * 辺の長さで重み付けした PCA による領域の長軸方向と細長さ。
  * ratio = 長軸分散/短軸分散 (1=等方、大きいほど細長い)
  */
-function majorAxisInfo(loop: Pt[]): { angle: number; ratio: number } {
+export function majorAxisInfo(loop: Pt[]): { angle: number; ratio: number } {
   let w = 0;
   let mx = 0;
   let my = 0;
@@ -1081,7 +1104,7 @@ function majorAxisInfo(loop: Pt[]): { angle: number; ratio: number } {
 }
 
 /** 色ごとの断片化統計 (島の数と細い領域の割合)。縫い順の決定に使う */
-function analyzeColorFragmentation(
+export function analyzeColorFragmentation(
   labels: Int32Array,
   w: number,
   h: number,

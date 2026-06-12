@@ -3,124 +3,168 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PP1 Stitch Studio — SKiTCH PP1 刺しゅうデータ作成</title>
+    <title>PP1 Stitch Studio — Brother SKiTCH PP1 向け刺繍デジタイザ</title>
   </head>
-  <body>
-    <header>
-      <h1>PP1 Stitch Studio <span id="version" class="version"></span></h1>
-      <p>Brother SKiTCH PP1 専用 — 画像から刺しゅうデータ (PES/DST) を作成し、Artspira でインポートして PP1 へ転送</p>
+  <body class="mode-easy">
+    <header id="topbar">
+      <div class="brand">
+        <h1>PP1 Stitch Studio <span id="version" class="badge"></span></h1>
+        <span class="sub">Brother SKiTCH PP1 / Artspira 向け</span>
+      </div>
+      <div id="chips" class="chips"></div>
+      <div class="modes">
+        <button id="modeEasy" class="mode active" type="button">かんたん</button>
+        <button id="modePro" class="mode" type="button">プロ</button>
+      </div>
     </header>
-    <main>
-      <aside id="controls">
-        <section>
-          <h2>1. 画像</h2>
+
+    <main id="layout">
+      <!-- 左: 手順パネル -->
+      <aside id="sidebar">
+        <section class="step">
+          <h2><span class="num">1</span> 画像</h2>
           <div id="dropzone" tabindex="0">
             <p>PNG / JPG をドロップ<br />またはクリックして選択</p>
-            <input type="file" id="fileInput" accept="image/*" hidden />
+            <input type="file" id="fileInput" accept="image/png,image/jpeg,image/bmp" hidden />
           </div>
-          <button id="sampleBtn" type="button">サンプルデザインで試す</button>
-          <canvas id="srcPreview" width="160" height="160" hidden></canvas>
+          <div class="row gap">
+            <button id="sampleBtn" class="ghost" type="button">サンプル</button>
+            <button id="loadProjectBtn" class="ghost" type="button">プロジェクトを開く</button>
+            <input type="file" id="projectInput" accept=".json,application/json" hidden />
+          </div>
         </section>
 
-        <section>
-          <h2>2. 変換設定</h2>
-          <label>サイズ (長辺 mm / 最大100)
+        <section class="step">
+          <h2><span class="num">2</span> サイズと色</h2>
+          <div class="presets" id="sizePresets">
+            <button data-mm="100" type="button">10cm</button>
+            <button data-mm="70" type="button">7cm</button>
+            <button data-mm="50" type="button">5cm</button>
+            <button data-mm="30" type="button">3cm</button>
+            <button data-mm="20" type="button">2cm</button>
+          </div>
+          <label>サイズ (長辺 mm)
             <input type="number" id="sizeMm" min="10" max="100" step="1" value="90" />
           </label>
-          <label>色数 (糸の本数の上限)
-            <input type="number" id="maxColors" min="1" max="12" step="1" value="6" />
+          <label>色数 (上限)
+            <input type="number" id="maxColors" min="2" max="15" step="1" value="6" />
           </label>
-          <label>色の統合 <span class="hint-inline">似た色をどこまで1本の糸にまとめるか。多すぎる色はここを「強」に</span>
+          <label>色の統合
             <select id="colorMerge">
-              <option value="1">弱 (色を忠実に)</option>
+              <option value="1">弱 (忠実)</option>
               <option value="2" selected>標準</option>
-              <option value="3">強 (大胆にまとめる)</option>
+              <option value="3">強 (まとめる)</option>
             </select>
           </label>
-          <label>縫い密度: 行間隔 (mm)
-            <input type="number" id="rowSpacing" min="0.2" max="1.0" step="0.05" value="0.4" />
-          </label>
-          <label>最大ステッチ長 (mm)
-            <input type="number" id="stitchLen" min="1" max="7" step="0.5" value="3" />
-          </label>
-          <label>縫い角度 (度)
-            <input type="number" id="angle" min="0" max="180" step="5" value="45" />
-          </label>
-          <label>最小領域 (mm²) — 小さいゴミを除去
-            <input type="number" id="minRegion" min="0" max="20" step="0.5" value="2" />
-          </label>
-          <label>最大針数 (0=無制限) <span class="hint-inline">超える場合は縫い密度を自動調整して収める</span>
-            <input type="number" id="maxStitches" min="0" max="50000" step="500" value="9000" />
-          </label>
-          <label class="check"><input type="checkbox" id="fillOn" checked /> 塗りつぶし (タタミ縫い)</label>
-          <label class="check"><input type="checkbox" id="outlineOn" checked /> 輪郭線 (ランニングステッチ)</label>
           <label class="check"><input type="checkbox" id="autoBg" checked /> 背景を自動除去</label>
         </section>
 
-        <section>
-          <h2>2b. 細い線の設定</h2>
-          <label class="check"><input type="checkbox" id="autoThin" checked /> 細い領域を自動検出してサテン縫いに切り替え</label>
-          <label>サテン適用幅の上限 (mm) <span class="hint-inline">この推定幅以下の領域がサテン縫いになる</span>
-            <input type="number" id="satinMaxWidth" min="1" max="15" step="0.5" value="6" />
+        <section class="step pro-only">
+          <h2><span class="num">3</span> ステッチ設定</h2>
+          <label>タタミ行間隔 (mm)
+            <input type="number" id="rowSpacing" min="0.25" max="1.2" step="0.05" value="0.4" />
           </label>
-          <label>サテン行間隔 (mm) <span class="hint-inline">小さいほど密でなめらか</span>
-            <input type="number" id="satinSpacing" min="0.1" max="0.6" step="0.05" value="0.3" />
+          <label>サテン行間隔 (mm)
+            <input type="number" id="satinSpacing" min="0.15" max="0.6" step="0.05" value="0.3" />
           </label>
-          <label>センターライン閾値 (mm) <span class="hint-inline">この幅以下は中心線のみ縫う / 0で無効</span>
-            <input type="number" id="centerlineMax" min="0" max="4" step="0.5" value="1.5" />
+          <label>最大ステッチ長 (mm)
+            <input type="number" id="stitchLen" min="1.5" max="6" step="0.5" value="3" />
           </label>
-          <label>輪郭ステッチ長 (mm)
-            <input type="number" id="outlineStitch" min="0.5" max="5" step="0.25" value="2" />
+          <label>タタミ角度 (度)
+            <input type="number" id="angleDeg" min="0" max="180" step="5" value="45" />
           </label>
-          <label class="check"><input type="checkbox" id="tripleOutline" /> 輪郭を3重ランニングで太く</label>
-          <label class="check"><input type="checkbox" id="adaptiveAngle" checked /> 細長い領域は縫い角度を自動調整 (ストロークを短く揃える)</label>
+          <label class="check"><input type="checkbox" id="outlineOn" checked /> 輪郭線を付ける</label>
+          <label class="check"><input type="checkbox" id="autoThin" checked /> 細い線を自動でサテン/センターラインに</label>
         </section>
 
-        <section>
-          <h2>2c. 縫いの連続性 (実機向け)</h2>
-          <label class="check"><input type="checkbox" id="reduceTrims" checked /> 糸切りを減らす (面の途中で糸切りしない)</label>
-          <label>同色の最大接続距離 (mm) <span class="hint-inline">同色領域の内側を通る移動 (見えないつなぎ縫い) の上限。他の色や背景を横切る移動は常に糸切り</span>
-            <input type="number" id="maxConnect" min="1" max="100" step="1" value="50" />
+        <section class="step pro-only">
+          <h2><span class="num">4</span> 糸切り制御</h2>
+          <label>糸切りモード (既定)
+            <select id="trimMode">
+              <option value="auto" selected>自動 (隠れる経路はつなぐ)</option>
+              <option value="always">常に糸切り</option>
+              <option value="never">糸切りしない</option>
+            </select>
           </label>
-          <label>アウトライン滑らかさ <span class="hint-inline">0=なし 1=弱 2=標準 3=強</span>
-            <input type="number" id="smoothing" min="0" max="3" step="1" value="2" />
+          <label>接続距離の上限 (mm)
+            <input type="number" id="trimDistance" min="3" max="100" step="1" value="50" />
           </label>
+          <p class="hint">3mm未満は常に接続。自動では「同色の内側」「後で縫う色の上」を通る移動だけ糸を切らずつなぎます。</p>
         </section>
 
-        <section>
-          <h2>3. 糸色 (Brother)</h2>
-          <ul id="threadList"></ul>
-        </section>
-
-        <section>
-          <h2>4. 書き出し</h2>
+        <section class="step">
+          <h2><span class="num last">5</span> 出力</h2>
+          <label>針数上限 <span class="hint-inline">PP1 推奨 12,000</span>
+            <input type="number" id="maxStitches" min="0" max="30000" step="500" value="12000" />
+          </label>
           <button id="exportPes" type="button" disabled>PES を保存</button>
-          <button id="exportDst" type="button" disabled>DST を保存</button>
+          <button id="exportDst" class="ghost" type="button" disabled>DST を保存</button>
+          <button id="saveProject" class="ghost" type="button" disabled>プロジェクトを保存</button>
           <p id="exportStatus" class="hint"></p>
-          <p class="hint">
-            スマホでは共有メニューが開きます。「ファイルに保存」を選ぶか、Artspira に直接渡せます。
-            その後 Artspira の「インポート」から読み込み、Bluetooth で PP1 へ転送してください。
-          </p>
         </section>
       </aside>
 
-      <section id="preview">
-        <div id="stats"></div>
-        <canvas id="stitchCanvas" width="640" height="640"></canvas>
-        <div class="preview-tools">
-          <label class="check"><input type="checkbox" id="showJumps" /> 渡り糸・糸切り・色替えを表示</label>
-          <label class="check"><input type="radio" name="clickMode" id="modeExclude" checked /> クリックで抜き</label>
-          <label class="check"><input type="radio" name="clickMode" id="modeRecolor" /> クリックで色を変更</label>
-          <select id="recolorTarget" title="変更先の色"></select>
-          <button id="clearExclude" type="button" class="ghost small">指定をすべてクリア</button>
+      <!-- 中央: キャンバス + プレイヤー -->
+      <section id="center">
+        <div id="canvasWrap">
+          <canvas id="canvas" width="720" height="720"></canvas>
+          <div id="emptyHint">画像を読み込むと、ここに刺繍プレビューが表示されます</div>
         </div>
-        <p class="hint">
-          「抜き」: クリックした領域を縫わない (×印を再クリックで解除)。
-          「色を変更」: 誤認識された領域をクリックすると、選択中の色に塗り替えます。
-        </p>
-        <p id="warning" class="warning" hidden></p>
+        <div id="player">
+          <button id="playBtn" type="button" title="再生/一時停止">▶</button>
+          <button id="prevTrim" type="button" title="前の糸切りへ">|◀✂</button>
+          <button id="nextTrim" type="button" title="次の糸切りへ">✂▶|</button>
+          <button id="prevColor" type="button" title="前の色替えへ">|◀◆</button>
+          <button id="nextColor" type="button" title="次の色替えへ">◆▶|</button>
+          <input type="range" id="seek" min="0" max="0" value="0" />
+          <span id="playerInfo" class="mono">0 / 0 針</span>
+          <label class="check small"><input type="checkbox" id="showMoves" checked /> 渡り/糸切り表示</label>
+          <label class="check small"><input type="checkbox" id="showArt" /> 下絵を重ねる</label>
+        </div>
       </section>
+
+      <!-- 右: シーケンスビュー + 診断 (プロ) / かんたんでは診断のみ -->
+      <aside id="rightbar">
+        <section id="diagPanel">
+          <h2>診断 <span id="diagBadge" class="badge"></span></h2>
+          <ul id="diagList"></ul>
+        </section>
+        <section id="seqPanel" class="pro-only">
+          <h2>縫い順 (シーケンス)</h2>
+          <p class="hint">上から順に縫います。クリックで選択、↑↓で並べ替え。</p>
+          <ul id="seqList"></ul>
+        </section>
+        <section id="propPanel" class="pro-only" hidden>
+          <h2>オブジェクト設定 <span id="propName" class="mono"></span></h2>
+          <label>ステッチ
+            <select id="propKind">
+              <option value="tatami">タタミ</option>
+              <option value="satin">サテン</option>
+              <option value="centerline">センターライン</option>
+            </select>
+          </label>
+          <label>色
+            <select id="propColor"></select>
+          </label>
+          <label>角度 (タタミ)
+            <select id="propAngle">
+              <option value="">自動</option>
+              <option value="0">0°</option><option value="30">30°</option>
+              <option value="45">45°</option><option value="60">60°</option>
+              <option value="90">90°</option><option value="135">135°</option>
+            </select>
+          </label>
+          <label>このオブジェクトへの糸切り
+            <select id="propTrim">
+              <option value="auto">自動</option>
+              <option value="always">常に糸切り</option>
+              <option value="never">糸切りしない</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="propOutline" /> 輪郭線</label>
+        </section>
+      </aside>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/app.ts"></script>
   </body>
 </html>
