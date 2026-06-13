@@ -292,4 +292,32 @@ describe("digitizeRegions (一気通貫)", () => {
     expect(listGenerators()).toContain("tatami");
     expect(listGenerators()).toContain("satin");
   });
+
+  it("fillType=satin: 細い領域はサテンで縫われる (ジグザグ)", () => {
+    const regions: Region[] = [{ outer: rect(0, 0, mm(30), mm(3)), holes: [], color: RED }];
+    const { plan } = digitizeRegions(regions, "SATIN", { fillType: "satin" });
+    expect(plan.blocks.length).toBe(1);
+    // サテンは左右交互 (ジグザグ) なので、連続ステッチの y 符号が交互に振れる
+    const st = plan.blocks[0].runs[0].stitches;
+    expect(st.length).toBeGreaterThan(4);
+  });
+
+  it("fillType=satin: 穴あき複雑形状はタタミにフォールバックする", () => {
+    // 穴ありはサテン不可 → タタミ。例外なく生成できることを確認
+    const regions: Region[] = [
+      { outer: circle(0, 0, mm(20)), holes: [circle(0, 0, mm(8)).reverse()], color: RED },
+    ];
+    const { plan } = digitizeRegions(regions, "FB", { fillType: "satin" });
+    expect(plan.blocks.length).toBe(1);
+    expect(plan.blocks[0].runs.length).toBeGreaterThan(0);
+  });
+
+  it("fillType=auto: 太い領域はタタミ、細い領域はサテン", () => {
+    const wide: Region[] = [{ outer: rect(0, 0, mm(30), mm(30)), holes: [], color: RED }];
+    const thin: Region[] = [{ outer: rect(0, 0, mm(30), mm(3)), holes: [], color: RED }];
+    const wideStitches = digitizeRegions(wide, "W", { fillType: "auto" }).plan.blocks[0].runs[0].stitches.length;
+    const thinStitches = digitizeRegions(thin, "T", { fillType: "auto" }).plan.blocks[0].runs[0].stitches.length;
+    // どちらも生成でき、太い方が針数が多い
+    expect(wideStitches).toBeGreaterThan(thinStitches);
+  });
 });

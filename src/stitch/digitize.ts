@@ -10,7 +10,7 @@
 //      (Always/Never/Auto Trim と Trim Distance を指定可能)
 //   6. 同一領域内 (下縫い→本縫い等) は距離に関わらず糸切りしない
 
-import { TATAMI_DEFAULT } from "../core/constants";
+import { SATIN_DEFAULT, TATAMI_DEFAULT } from "../core/constants";
 import { polygonCentroid, signedArea } from "../core/geometry";
 import type { Region } from "../core/region";
 import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
@@ -18,9 +18,13 @@ import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
 import { optimizeOrder } from "../plan/order";
 import { postprocessRuns } from "./postprocess";
+import { satinFromRegion } from "./satin";
 import { tatamiFill } from "./tatami";
 import { fillUnderlay } from "./underlay";
-import type { TatamiParams, UnderlayType } from "./types";
+import type { GeneratorResult, TatamiParams, UnderlayType } from "./types";
+
+/** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする */
+export type FillType = "tatami" | "satin" | "auto";
 
 export interface DigitizeOptions {
   /** タタミ角度 (度) */
@@ -37,11 +41,55 @@ export interface DigitizeOptions {
   trimMode?: TrimMode;
   /** auto 時の糸切り距離閾値 */
   trimDistance?: number;
+  /** 面の塗り方 (デフォルト tatami)。文字刺繍で satin/auto を使う */
+  fillType?: FillType;
 }
 
 export interface DigitizeResult {
   plan: StitchPlan;
   warnings: string[];
+}
+
+/** 領域の最小辺 (バウンディングの短辺) を内部単位で返す */
+function regionMinExtent(region: Region): number {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of region.outer) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return Math.min(maxX - minX, maxY - minY);
+}
+
+/**
+ * 領域の塗りを生成する。
+ * - tatami: 常にタタミ
+ * - satin: サテンを試み、分岐警告が出たらタタミにフォールバック
+ *   (複雑なグリフでパーツが欠けるのを防ぐ)
+ * - auto: 短辺が SATIN_DEFAULT.maxWidth 以下かつ穴なしならサテン、他はタタミ
+ */
+function generateFill(
+  region: Region,
+  params: TatamiParams,
+  fillType: FillType,
+  startNear: Point | null,
+  exitNear: Point | null,
+): GeneratorResult {
+  const useSatin =
+    fillType === "satin" ||
+    (fillType === "auto" && region.holes.length === 0 && regionMinExtent(region) <= SATIN_DEFAULT.maxWidth);
+
+  if (useSatin) {
+    const satin = satinFromRegion(region, { spacing: SATIN_DEFAULT.spacing, maxWidth: SATIN_DEFAULT.maxWidth });
+    const branched = satin.warnings.some((w) => w.includes("分岐"));
+    // 分岐や生成失敗時はタタミにフォールバック (パーツ欠けを防ぐ)
+    if (!branched && satin.runs.length > 0) return satin;
+  }
+  return tatamiFill(region, params, startNear, exitNear);
 }
 
 export function digitizeRegions(
@@ -117,7 +165,7 @@ export function digitizeRegions(
           : currentEnd;
       const exitNear =
         doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      const fill = tatamiFill(region, params, fillStart ?? null, exitNear);
+      const fill = generateFill(region, params, options.fillType ?? "tatami", fillStart ?? null, exitNear);
       regionRuns.push(...fill.runs);
       warnings.push(...fill.warnings);
 

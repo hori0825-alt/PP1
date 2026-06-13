@@ -20,13 +20,34 @@ import type { SequenceModel } from "../plan/sequence";
 import { buildSimulation } from "../plan/simulate";
 import type { Simulation } from "../plan/simulate";
 import { digitizeRegions } from "../stitch/digitize";
+import type { FillType } from "../stitch/digitize";
 import type { UnderlayType } from "../stitch/types";
+import type { LayoutMode } from "../text/layout";
 import { editShapeToRegion, regionToEditShape } from "../vector/shape";
 import type { EditShape } from "../vector/shape";
 
 export type Mode = "easy" | "pro";
 export type ViewMode = "original" | "quantized" | "vector" | "stitch";
-export type Tab = "design" | "color" | "stitch" | "vector" | "sequence" | "fabric" | "diagnostics" | "output";
+export type Tab =
+  | "design"
+  | "color"
+  | "stitch"
+  | "vector"
+  | "text"
+  | "sequence"
+  | "fabric"
+  | "diagnostics"
+  | "output";
+
+export interface TextSettings {
+  text: string;
+  fontFamily: string;
+  fontSizeMm: number;
+  letterSpacingMm: number;
+  mode: LayoutMode;
+  arcRadiusMm: number;
+  fillType: FillType;
+}
 
 export type VectorTool = "select" | "add" | "delete";
 
@@ -70,6 +91,11 @@ export interface AppState {
   /** ベクター編集 (ベクタータブを開いている間のみ) */
   vectorEdit: VectorEditState | null;
 
+  // 文字刺繍
+  textSettings: TextSettings;
+  /** 面の塗り方 (文字でサテン/auto を使う。画像はタタミ) */
+  fillType: FillType;
+
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
 }
@@ -94,7 +120,31 @@ export function createState(): AppState {
     simFrame: 0,
     simPlaying: false,
     vectorEdit: null,
+    textSettings: {
+      text: "",
+      fontFamily: "sans-serif",
+      fontSizeMm: 15,
+      letterSpacingMm: 0,
+      mode: "horizontal",
+      arcRadiusMm: 40,
+      fillType: "auto",
+    },
+    fillType: "tatami",
   };
+}
+
+/**
+ * 文字から生成済みの領域を取り込んでステッチ化する。
+ * 領域変換 (textToRegions) は DOM 依存のため UI 層で行い、結果をここへ渡す。
+ */
+export function setTextRegions(state: AppState, regions: Region[], fillType: FillType): void {
+  state.regions = regions;
+  state.project.regions = regions;
+  state.project.source = { kind: "none", data: null, fileName: "text" };
+  state.raster = null;
+  state.labelMap = null;
+  state.fillType = fillType;
+  recomputeStitches(state);
 }
 
 /** ベクター編集を開始: 現在の領域を編集可能形状に変換する */
@@ -161,6 +211,7 @@ export function recomputeStitches(state: AppState): void {
     angleDeg: s.angleDeg,
     trimMode: s.trimMode,
     underlay: s.underlay as UnderlayType[],
+    fillType: state.fillType,
   });
   state.plan = result.plan;
   state.project.plan = result.plan;
@@ -203,6 +254,7 @@ export function designName(state: AppState): string {
 /** ソースを差し替えるときに ID は維持しつつ表示名を更新 */
 export function setSourceImage(state: AppState, raster: RasterImage, dataUrl: string, fileName: string): void {
   state.raster = raster;
+  state.fillType = "tatami"; // 画像はタタミ
   state.project.source = { kind: "image", data: dataUrl, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";
   if (!state.project.id) state.project.id = generateId();
@@ -212,6 +264,7 @@ export function setSourceImage(state: AppState, raster: RasterImage, dataUrl: st
 export function setSourceSvg(state: AppState, svgText: string, fileName: string): void {
   state.raster = null;
   state.labelMap = null;
+  state.fillType = "tatami";
   state.project.source = { kind: "svg", data: svgText, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";
   recomputeRegions(state);

@@ -520,3 +520,20 @@ table.colors td {
   margin-bottom: 6px;
   color: #4a525b;
 }
+
+/* --- 文字タブ --- */
+textarea#txt-input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+
+#validation p.warning,
+.diag-item p.warning {
+  color: #8a6d1a;
+}

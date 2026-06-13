@@ -2,7 +2,7 @@
 // 左ツール / 中央キャンバス / 右プロパティ / 下シミュレーター・シーケンス。
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
-import { UNIT_MM } from "../core/constants";
+import { UNIT_MM, mm } from "../core/constants";
 import { countStitches, countTrims } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
@@ -25,8 +25,13 @@ import {
   refreshDerived,
   setSourceImage,
   setSourceSvg,
+  setTextRegions,
 } from "./state";
 import type { AppState, Tab, VectorTool, ViewMode } from "./state";
+import { checkTextQuality } from "../text/metrics";
+import { textToRegions } from "./textTool";
+import type { LayoutMode } from "../text/layout";
+import type { FillType } from "../stitch/digitize";
 import {
   attachVectorPointer,
   drawVectorEdit,
@@ -86,6 +91,8 @@ function tabContent(): string {
       return stitchTab();
     case "vector":
       return vectorTabContent(state);
+    case "text":
+      return textTab();
     case "sequence":
       return `<div id="seq-controls">
         ${(["all", "trims", "warnings"] as SeqFilter[])
@@ -169,6 +176,46 @@ function stitchTab(): string {
   `;
 }
 
+function textTab(): string {
+  const t = state.textSettings;
+  const fonts = ["sans-serif", "serif", "'Hiragino Sans'", "'Noto Sans JP'", "'Yu Gothic'", "monospace"];
+  const warnings = checkTextQuality({ fontSize: mm(t.fontSizeMm) });
+  const warnHtml = warnings
+    .map((w) => `<p class="${w.level === "critical" ? "error" : "warning"}">${w.level === "critical" ? "✗" : "⚠"} ${w.message}</p>`)
+    .join("");
+  return `
+    <h2>テキスト</h2>
+    <textarea id="txt-input" rows="2" placeholder="文字を入力 (改行可)">${t.text}</textarea>
+    <label>フォント
+      <select id="txt-font">${fonts.map((f) => `<option value="${f}" ${f === t.fontFamily ? "selected" : ""}>${f.replace(/'/g, "")}</option>`).join("")}</select>
+    </label>
+    <label>文字高 ${t.fontSizeMm}mm
+      <input type="range" id="txt-size" min="3" max="50" value="${t.fontSizeMm}">
+    </label>
+    <label>字間 ${t.letterSpacingMm}mm
+      <input type="range" id="txt-spacing" min="-2" max="10" value="${t.letterSpacingMm}">
+    </label>
+    <label>配置
+      <select id="txt-mode">
+        <option value="horizontal" ${t.mode === "horizontal" ? "selected" : ""}>横書き</option>
+        <option value="vertical" ${t.mode === "vertical" ? "selected" : ""}>縦書き</option>
+        <option value="arc" ${t.mode === "arc" ? "selected" : ""}>円弧</option>
+      </select>
+    </label>
+    ${t.mode === "arc" ? `<label>円弧半径 ${t.arcRadiusMm}mm<input type="range" id="txt-arc" min="15" max="50" value="${t.arcRadiusMm}"></label>` : ""}
+    <label>縫い方
+      <select id="txt-fill">
+        <option value="auto" ${t.fillType === "auto" ? "selected" : ""}>自動 (細→サテン/太→タタミ)</option>
+        <option value="satin" ${t.fillType === "satin" ? "selected" : ""}>サテン文字</option>
+        <option value="tatami" ${t.fillType === "tatami" ? "selected" : ""}>タタミ文字</option>
+      </select>
+    </label>
+    ${warnHtml ? `<div class="diag-item notice">${warnHtml}</div>` : ""}
+    <button id="txt-apply">文字を刺繍化</button>
+    <p class="note">ブラウザのフォントを使用します。穴あき文字 (A/O/8 等) も正しく縫えます。</p>
+  `;
+}
+
 function diagnosticsTab(): string {
   if (!state.diagnostics) return '<p class="note">画像を読み込んでください。</p>';
   const d = state.diagnostics;
@@ -233,6 +280,7 @@ function render(): void {
           ["color", "色"],
           ["stitch", "ステッチ"],
           ["vector", "ベクター"],
+          ["text", "文字"],
           ["sequence", "縫い順"],
           ["fabric", "布地"],
           ["diagnostics", "診断"],
@@ -425,6 +473,9 @@ function bindEvents(): void {
   // ベクター編集
   bindVectorTab();
 
+  // 文字
+  bindTextTab();
+
   // キャンバス: クリックでオブジェクト選択 (ステッチ表示時。編集中は無効)
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
   canvas?.addEventListener("click", (ev) => {
@@ -437,6 +488,58 @@ function bindEvents(): void {
 
   // ベクター編集中のノード操作ポインタを取り付け直す
   syncVectorPointer();
+}
+
+function bindTextTab(): void {
+  const t = state.textSettings;
+  const reSize = (): void => render(); // ラベル更新のため再描画
+  document.getElementById("txt-input")?.addEventListener("input", (e) => {
+    t.text = (e.target as HTMLTextAreaElement).value;
+  });
+  document.getElementById("txt-font")?.addEventListener("change", (e) => {
+    t.fontFamily = (e.target as HTMLSelectElement).value;
+  });
+  document.getElementById("txt-size")?.addEventListener("input", (e) => {
+    t.fontSizeMm = Number((e.target as HTMLInputElement).value);
+    reSize();
+  });
+  document.getElementById("txt-spacing")?.addEventListener("input", (e) => {
+    t.letterSpacingMm = Number((e.target as HTMLInputElement).value);
+    reSize();
+  });
+  document.getElementById("txt-mode")?.addEventListener("change", (e) => {
+    t.mode = (e.target as HTMLSelectElement).value as LayoutMode;
+    render();
+  });
+  document.getElementById("txt-arc")?.addEventListener("input", (e) => {
+    t.arcRadiusMm = Number((e.target as HTMLInputElement).value);
+    reSize();
+  });
+  document.getElementById("txt-fill")?.addEventListener("change", (e) => {
+    t.fillType = (e.target as HTMLSelectElement).value as FillType;
+  });
+  document.getElementById("txt-apply")?.addEventListener("click", () => {
+    if (t.text.trim() === "") {
+      alert("文字を入力してください");
+      return;
+    }
+    const regions = textToRegions({
+      text: t.text,
+      fontFamily: t.fontFamily,
+      fontSizeMm: t.fontSizeMm,
+      letterSpacingMm: t.letterSpacingMm,
+      mode: t.mode,
+      color: { r: 0, g: 0, b: 0, name: "Black" },
+      arcRadiusMm: t.arcRadiusMm,
+    });
+    if (regions.length === 0) {
+      alert("文字を刺繍化できませんでした (フォントを変えてお試しください)");
+      return;
+    }
+    setTextRegions(state, regions, t.fillType);
+    state.view = "stitch";
+    render();
+  });
 }
 
 function bindVectorTab(): void {
