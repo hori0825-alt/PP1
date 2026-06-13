@@ -14,6 +14,7 @@ import {
   createState,
   enterVectorEdit,
   recomputeStitches,
+  setPhotoMode,
 } from "../src/ui/state";
 
 function rect(cx: number, cy: number, w: number, h: number): Point[] {
@@ -128,5 +129,37 @@ describe("ベクター編集ライフサイクル", () => {
     cancelVectorEdit(state);
     expect(state.vectorEdit).toBeNull();
     expect(state.regions).toBe(regionsBefore);
+  });
+});
+
+describe("PhotoStitch モード", () => {
+  function darkBlob(w: number, h: number): { width: number; height: number; data: Uint8ClampedArray } {
+    const data = new Uint8ClampedArray(w * h * 4);
+    const r = Math.min(w, h) * 0.3;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const inside = (x - w / 2) ** 2 + (y - h / 2) ** 2 <= r * r;
+        const v = inside ? 20 : 255;
+        const i = (y * w + x) * 4;
+        data[i] = v;
+        data[i + 1] = v;
+        data[i + 2] = v;
+        data[i + 3] = 255;
+      }
+    }
+    return { width: w, height: h, data };
+  }
+
+  it("photoMode ON で写真から plan・診断・シミュレーションが揃う", () => {
+    const state = createState();
+    state.raster = darkBlob(100, 100);
+    state.project.source = { kind: "image", data: null, fileName: "photo" };
+    setPhotoMode(state, true);
+    expect(state.photoMode).toBe(true);
+    expect(state.plan).not.toBeNull();
+    expect(state.plan?.blocks.length).toBeGreaterThanOrEqual(1);
+    expect(state.diagnostics).not.toBeNull();
+    expect(state.simulation).not.toBeNull();
+    expect(state.regions.length).toBe(0); // 写真は領域を使わない
   });
 });

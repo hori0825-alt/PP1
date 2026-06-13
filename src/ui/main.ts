@@ -21,9 +21,11 @@ import {
   cancelVectorEdit,
   createState,
   enterVectorEdit,
+  recomputePhoto,
   recomputeRegions,
   recomputeStitches,
   refreshDerived,
+  setPhotoMode,
   setSourceImage,
   setSourceSvg,
   setTextRegions,
@@ -130,6 +132,22 @@ function designTab(): string {
         .map((vm) => `<button class="vtab ${state.view === vm ? "active" : ""}" data-view="${vm}">${{ original: "元画像", quantized: "減色", vector: "ベクター", stitch: "ステッチ" }[vm]}</button>`)
         .join("")}
     </div>` : `<p class="note">PNG / JPG / SVG を読み込むと自動で刺繍化されます。</p>`}
+    ${state.project.source.kind === "image" ? photoSection() : ""}
+  `;
+}
+
+function photoSection(): string {
+  const p = state.photoSettings;
+  return `
+    <h2>写真刺繍 (PhotoStitch)</h2>
+    <label><input type="checkbox" id="photo-mode" ${state.photoMode ? "checked" : ""}> 写真として明暗を刺繍化</label>
+    ${state.photoMode ? `
+      <label>色数 <input type="range" id="photo-colors" min="1" max="4" value="${p.colorCount}"><span>${p.colorCount}</span></label>
+      <label>コントラスト <input type="range" id="photo-contrast" min="0.5" max="2.5" step="0.1" value="${p.contrast}"><span>${p.contrast.toFixed(1)}</span></label>
+      <label>明るさ <input type="range" id="photo-bright" min="-0.4" max="0.4" step="0.05" value="${p.brightness}"><span>${p.brightness.toFixed(2)}</span></label>
+      <label><input type="checkbox" id="photo-bg" ${p.removeBackground ? "checked" : ""}> 背景を除去</label>
+      <p class="note">明暗をステッチ密度に変換します。針数が多い場合は自動で行間隔を広げます。</p>
+    ` : ""}
   `;
 }
 
@@ -405,10 +423,38 @@ function bindEvents(): void {
   document.querySelectorAll<HTMLElement>(".preset").forEach((b) =>
     b.addEventListener("click", () => {
       state.project.settings.targetSizeMm = Number(b.dataset.size);
-      recomputeRegions(state);
+      if (state.photoMode) recomputePhoto(state);
+      else recomputeRegions(state);
       render();
     }),
   );
+
+  // 写真刺繍 (PhotoStitch)
+  document.getElementById("photo-mode")?.addEventListener("change", (e) => {
+    setPhotoMode(state, (e.target as HTMLInputElement).checked);
+    state.view = "stitch";
+    render();
+  });
+  const photoRecompute = (): void => {
+    recomputePhoto(state);
+    render();
+  };
+  document.getElementById("photo-colors")?.addEventListener("change", (e) => {
+    state.photoSettings.colorCount = Number((e.target as HTMLInputElement).value);
+    photoRecompute();
+  });
+  document.getElementById("photo-contrast")?.addEventListener("change", (e) => {
+    state.photoSettings.contrast = Number((e.target as HTMLInputElement).value);
+    photoRecompute();
+  });
+  document.getElementById("photo-bright")?.addEventListener("change", (e) => {
+    state.photoSettings.brightness = Number((e.target as HTMLInputElement).value);
+    photoRecompute();
+  });
+  document.getElementById("photo-bg")?.addEventListener("change", (e) => {
+    state.photoSettings.removeBackground = (e.target as HTMLInputElement).checked;
+    photoRecompute();
+  });
 
   // 色
   document.getElementById("colors")?.addEventListener("change", (e) => {

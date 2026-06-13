@@ -12,6 +12,7 @@ import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
 import { importSvg } from "../import/svg";
 import { getRecipe, recipeToDigitizeOptions } from "../fabric/recipes";
+import { generatePhotoStitch } from "../photo/photostitch";
 import type { TrimMode } from "../plan/connect";
 import { diagnose } from "../plan/diagnostics";
 import type { DiagnosticReport } from "../plan/diagnostics";
@@ -97,8 +98,20 @@ export interface AppState {
   /** 面の塗り方 (文字でサテン/auto を使う。画像はタタミ) */
   fillType: FillType;
 
+  // 写真刺繍 (PhotoStitch)
+  photoSettings: PhotoSettings;
+  /** PhotoStitch モード (ON のとき画像を写真刺繍として変換) */
+  photoMode: boolean;
+
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
+}
+
+export interface PhotoSettings {
+  colorCount: number;
+  contrast: number;
+  brightness: number;
+  removeBackground: boolean;
 }
 
 export function createState(): AppState {
@@ -131,6 +144,8 @@ export function createState(): AppState {
       fillType: "auto",
     },
     fillType: "tatami",
+    photoSettings: { colorCount: 1, contrast: 1.2, brightness: 0, removeBackground: true },
+    photoMode: false,
   };
 }
 
@@ -146,6 +161,32 @@ export function setTextRegions(state: AppState, regions: Region[], fillType: Fil
   state.labelMap = null;
   state.fillType = fillType;
   recomputeStitches(state);
+}
+
+/** PhotoStitch を生成して plan に反映する (photoMode ON 時) */
+export function recomputePhoto(state: AppState): void {
+  if (!state.raster) return;
+  const ps = state.photoSettings;
+  const result = generatePhotoStitch(state.raster, designName(state), {
+    targetSizeMm: state.project.settings.targetSizeMm,
+    colorCount: ps.colorCount,
+    contrast: ps.contrast,
+    brightness: ps.brightness,
+    removeBackground: ps.removeBackground,
+  });
+  state.regions = []; // 写真刺繍は領域を使わない
+  state.plan = result.plan;
+  state.project.plan = result.plan;
+  state.stitchWarnings = result.warnings;
+  refreshDerived(state);
+  state.reduceApplied = [];
+}
+
+/** PhotoStitch モードの切替。ON で写真変換、OFF で通常デジタイズに戻す */
+export function setPhotoMode(state: AppState, on: boolean): void {
+  state.photoMode = on;
+  if (on) recomputePhoto(state);
+  else recomputeRegions(state);
 }
 
 /** 布地レシピを選択し、下縫いを推奨値で初期化してステッチを再生成する */
@@ -271,13 +312,15 @@ export function setSourceImage(state: AppState, raster: RasterImage, dataUrl: st
   state.project.source = { kind: "image", data: dataUrl, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";
   if (!state.project.id) state.project.id = generateId();
-  recomputeRegions(state);
+  if (state.photoMode) recomputePhoto(state);
+  else recomputeRegions(state);
 }
 
 export function setSourceSvg(state: AppState, svgText: string, fileName: string): void {
   state.raster = null;
   state.labelMap = null;
   state.fillType = "tatami";
+  state.photoMode = false; // SVG は写真刺繍の対象外
   state.project.source = { kind: "svg", data: svgText, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";
   recomputeRegions(state);
