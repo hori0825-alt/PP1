@@ -21,10 +21,27 @@ import { buildSimulation } from "../plan/simulate";
 import type { Simulation } from "../plan/simulate";
 import { digitizeRegions } from "../stitch/digitize";
 import type { UnderlayType } from "../stitch/types";
+import { editShapeToRegion, regionToEditShape } from "../vector/shape";
+import type { EditShape } from "../vector/shape";
 
 export type Mode = "easy" | "pro";
 export type ViewMode = "original" | "quantized" | "vector" | "stitch";
-export type Tab = "design" | "color" | "stitch" | "sequence" | "fabric" | "diagnostics" | "output";
+export type Tab = "design" | "color" | "stitch" | "vector" | "sequence" | "fabric" | "diagnostics" | "output";
+
+export type VectorTool = "select" | "add" | "delete";
+
+/** ベクター/ノード編集の状態 (ベクタータブを開いている間だけ非 null) */
+export interface VectorEditState {
+  shapes: EditShape[];
+  /** 編集対象の shape インデックス */
+  activeShape: number;
+  /** 編集対象パス: "outer" または穴のインデックス */
+  activePath: "outer" | number;
+  /** 選択中ノード */
+  selectedNode: number | null;
+  tool: VectorTool;
+  snapEnabled: boolean;
+}
 
 export interface AppState {
   mode: Mode;
@@ -50,6 +67,9 @@ export interface AppState {
   simFrame: number;
   simPlaying: boolean;
 
+  /** ベクター編集 (ベクタータブを開いている間のみ) */
+  vectorEdit: VectorEditState | null;
+
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
 }
@@ -73,7 +93,38 @@ export function createState(): AppState {
     reduceApplied: [],
     simFrame: 0,
     simPlaying: false,
+    vectorEdit: null,
   };
+}
+
+/** ベクター編集を開始: 現在の領域を編集可能形状に変換する */
+export function enterVectorEdit(state: AppState): void {
+  if (state.regions.length === 0) {
+    state.vectorEdit = null;
+    return;
+  }
+  state.vectorEdit = {
+    shapes: state.regions.map((r) => regionToEditShape(r)),
+    activeShape: 0,
+    activePath: "outer",
+    selectedNode: null,
+    tool: "select",
+    snapEnabled: true,
+  };
+}
+
+/** ベクター編集を確定: 編集形状を領域へ戻してステッチを再生成 */
+export function applyVectorEdit(state: AppState): void {
+  if (!state.vectorEdit) return;
+  state.regions = state.vectorEdit.shapes.map((s) => editShapeToRegion(s));
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+  state.vectorEdit = null;
+}
+
+/** ベクター編集を破棄 */
+export function cancelVectorEdit(state: AppState): void {
+  state.vectorEdit = null;
 }
 
 /** 設定から領域抽出をやり直す (ソース → regions) */

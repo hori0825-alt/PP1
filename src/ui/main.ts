@@ -7,6 +7,8 @@ import { countStitches, countTrims } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
+import { setNodeType } from "../vector/path";
+import type { NodeType } from "../vector/path";
 import { renderCanvas, createViewport, fitViewport, screenToDesign } from "./canvas";
 import type { Viewport } from "./canvas";
 import { decodeImageFile } from "./loadImage";
@@ -14,14 +16,23 @@ import { renderSequence } from "./sequenceView";
 import type { SeqFilter } from "./sequenceView";
 import {
   applyAutoReduce,
+  applyVectorEdit,
+  cancelVectorEdit,
   createState,
+  enterVectorEdit,
   recomputeRegions,
   recomputeStitches,
   refreshDerived,
   setSourceImage,
   setSourceSvg,
 } from "./state";
-import type { AppState, Tab, ViewMode } from "./state";
+import type { AppState, Tab, VectorTool, ViewMode } from "./state";
+import {
+  attachVectorPointer,
+  drawVectorEdit,
+  vectorSetAllType,
+  vectorTabContent,
+} from "./vectorEdit";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -30,6 +41,7 @@ const state: AppState = createState();
 const viewport: Viewport = createViewport();
 let seqFilter: SeqFilter = "all";
 let simTimer: number | null = null;
+let detachVectorPointer: (() => void) | null = null;
 
 function download(filename: string, data: Uint8Array | string, mime = "application/octet-stream"): void {
   const blob = typeof data === "string" ? new Blob([data], { type: mime }) : new Blob([data.buffer as ArrayBuffer], { type: mime });
@@ -72,6 +84,8 @@ function tabContent(): string {
       return colorTab();
     case "stitch":
       return stitchTab();
+    case "vector":
+      return vectorTabContent(state);
     case "sequence":
       return `<div id="seq-controls">
         ${(["all", "trims", "warnings"] as SeqFilter[])
@@ -218,6 +232,7 @@ function render(): void {
           ["design", "デザイン"],
           ["color", "色"],
           ["stitch", "ステッチ"],
+          ["vector", "ベクター"],
           ["sequence", "縫い順"],
           ["fabric", "布地"],
           ["diagnostics", "診断"],
@@ -249,11 +264,25 @@ function render(): void {
   const canvas = document.getElementById("preview") as HTMLCanvasElement;
   fitViewport(viewport, canvas);
   renderCanvas(canvas, viewport, state);
+  if (state.vectorEdit) drawVectorEdit(canvas, viewport, state);
   if (state.tab === "sequence") {
     const list = document.getElementById("sequence-list");
     if (list) renderSequence(list, state, seqFilter);
   }
   bindEvents();
+}
+
+/** ベクター編集中だけ、キャンバスにノード操作用のポインタを取り付ける */
+function syncVectorPointer(): void {
+  detachVectorPointer?.();
+  detachVectorPointer = null;
+  if (!state.vectorEdit) return;
+  const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
+  if (!canvas) return;
+  detachVectorPointer = attachVectorPointer(canvas, viewport, state, () => {
+    renderCanvas(canvas, viewport, state);
+    drawVectorEdit(canvas, viewport, state);
+  });
 }
 
 state.onChange = render;
@@ -393,13 +422,77 @@ function bindEvents(): void {
   // シミュレーター
   bindSimulator();
 
-  // キャンバス: クリックでオブジェクト選択 (ステッチ表示時)
+  // ベクター編集
+  bindVectorTab();
+
+  // キャンバス: クリックでオブジェクト選択 (ステッチ表示時。編集中は無効)
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
   canvas?.addEventListener("click", (ev) => {
-    if (state.view !== "stitch" || !state.plan) return;
+    if (state.vectorEdit || state.view !== "stitch" || !state.plan) return;
     const rect = canvas.getBoundingClientRect();
     const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
     state.selectedObjectId = pickObject(p);
+    render();
+  });
+
+  // ベクター編集中のノード操作ポインタを取り付け直す
+  syncVectorPointer();
+}
+
+function bindVectorTab(): void {
+  const ve = state.vectorEdit;
+  document.getElementById("ve-enter")?.addEventListener("click", () => {
+    enterVectorEdit(state);
+    render();
+  });
+  if (!ve) return;
+
+  document.getElementById("ve-shape")?.addEventListener("change", (e) => {
+    ve.activeShape = Number((e.target as HTMLSelectElement).value);
+    ve.activePath = "outer";
+    ve.selectedNode = null;
+    render();
+  });
+  document.getElementById("ve-path")?.addEventListener("change", (e) => {
+    const val = (e.target as HTMLSelectElement).value;
+    ve.activePath = val === "outer" ? "outer" : Number(val);
+    ve.selectedNode = null;
+    render();
+  });
+  document.querySelectorAll<HTMLElement>(".ve-tool").forEach((b) =>
+    b.addEventListener("click", () => {
+      ve.tool = b.dataset.tool as VectorTool;
+      render();
+    }),
+  );
+  document.getElementById("ve-snap")?.addEventListener("change", (e) => {
+    ve.snapEnabled = (e.target as HTMLInputElement).checked;
+  });
+  document.getElementById("ve-toggle-type")?.addEventListener("click", () => {
+    if (ve.selectedNode === null) return;
+    const shape = ve.shapes[ve.activeShape];
+    const path = ve.activePath === "outer" ? shape.outer : shape.holes[ve.activePath];
+    const next: NodeType = path.nodes[ve.selectedNode].type === "corner" ? "smooth" : "corner";
+    const newPath = setNodeType(path, ve.selectedNode, next);
+    if (ve.activePath === "outer") shape.outer = newPath;
+    else shape.holes[ve.activePath] = newPath;
+    render();
+  });
+  document.getElementById("ve-all-smooth")?.addEventListener("click", () => {
+    vectorSetAllType(state, "smooth");
+    render();
+  });
+  document.getElementById("ve-all-corner")?.addEventListener("click", () => {
+    vectorSetAllType(state, "corner");
+    render();
+  });
+  document.getElementById("ve-apply")?.addEventListener("click", () => {
+    applyVectorEdit(state);
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("ve-cancel")?.addEventListener("click", () => {
+    cancelVectorEdit(state);
     render();
   });
 }

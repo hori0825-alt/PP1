@@ -8,7 +8,13 @@ import { mm } from "../src/core/constants";
 import type { Region } from "../src/core/region";
 import type { Point } from "../src/core/types";
 import { renderSequence } from "../src/ui/sequenceView";
-import { createState, recomputeStitches } from "../src/ui/state";
+import {
+  applyVectorEdit,
+  cancelVectorEdit,
+  createState,
+  enterVectorEdit,
+  recomputeStitches,
+} from "../src/ui/state";
 
 function rect(cx: number, cy: number, w: number, h: number): Point[] {
   return [
@@ -86,5 +92,41 @@ describe("シーケンスビュー描画 (jsdom)", () => {
     rows.forEach((r) => {
       expect(r.querySelector(".badge.trim")).not.toBeNull();
     });
+  });
+});
+
+describe("ベクター編集ライフサイクル", () => {
+  it("編集開始→ノード移動→適用で領域が更新される", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: RED }];
+    recomputeStitches(state);
+    const before = state.plan;
+
+    enterVectorEdit(state);
+    expect(state.vectorEdit).not.toBeNull();
+    expect(state.vectorEdit?.shapes.length).toBe(1);
+
+    // 外周の角ノードを外側へ動かす
+    const ve = state.vectorEdit;
+    if (ve) {
+      const path = ve.shapes[0].outer;
+      path.nodes[0] = { ...path.nodes[0], x: -mm(20), y: -mm(20) };
+    }
+    applyVectorEdit(state);
+    expect(state.vectorEdit).toBeNull();
+    expect(state.plan).not.toBe(before); // 再生成された
+    expect(state.plan?.blocks.length).toBe(1);
+  });
+
+  it("破棄すると領域は変わらない", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: RED }];
+    recomputeStitches(state);
+    const regionsBefore = state.regions;
+
+    enterVectorEdit(state);
+    cancelVectorEdit(state);
+    expect(state.vectorEdit).toBeNull();
+    expect(state.regions).toBe(regionsBefore);
   });
 });

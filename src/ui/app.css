@@ -484,3 +484,39 @@ table.colors td {
 .seq-eye:hover {
   background: #eef1f4;
 }
+
+/* --- ベクター編集 --- */
+.ve-tools {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.ve-tool {
+  width: auto;
+  flex: 1;
+  margin: 0;
+  padding: 6px 4px;
+  font-size: 12px;
+  background: #eef1f4;
+  color: #4a525b;
+}
+
+.ve-tool.active {
+  background: #2f6fed;
+  color: #fff;
+}
+
+.ve-node-edit {
+  font-size: 12px;
+  background: #f6f8fa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.ve-node-edit span {
+  display: block;
+  margin-bottom: 6px;
+  color: #4a525b;
+}

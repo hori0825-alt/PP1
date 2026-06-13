@@ -21,6 +21,16 @@ function toScreen(v: Viewport, canvas: HTMLCanvasElement, x: number, y: number):
   return [canvas.width / 2 + x * v.scale + v.panX, canvas.height / 2 + y * v.scale + v.panY];
 }
 
+/** 設計座標 → 画面座標 (ベクター編集オーバーレイ用) */
+export function designToScreen(
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  x: number,
+  y: number,
+): [number, number] {
+  return toScreen(v, canvas, x, y);
+}
+
 export function screenToDesign(
   v: Viewport,
   canvas: HTMLCanvasElement,

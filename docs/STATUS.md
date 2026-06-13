@@ -1,8 +1,52 @@
 # 開発ステータス
 
-最終更新: 2026-06-13 (Phase 6 完了)
+最終更新: 2026-06-13 (Phase 7 完了)
 
 ## 完了フェーズ
+
+### Phase 7: ベクター/ノード編集・Snap to Artwork ✅
+
+#### 追加ファイル
+
+```
+src/vector/
+  path.ts        … EditPath/EditNode 型 + ノード操作 (add/delete/move/setType/
+                   split/join) + pathToPolyline (corner=直線, smooth=Catmull-Rom)
+  simplify.ts    … pointsToPath: 稠密輪郭→ノード列 (DP抽出 + 屈曲角で corner/smooth)
+  shape.ts       … Region ↔ EditShape 変換 (regionToEditShape/editShapeToRegion)
+  snap.ts        … snapToArtwork: ノードを参照輪郭の最寄りエッジに吸着
+  centerline.ts  … extractCenterline: 主軸スライス中点で細線の中心線抽出 (Quick Trace)
+src/ui/
+  vectorEdit.ts  … ノードハンドル描画 + ポインタ操作 (移動/追加/削除) + タブ HTML
+test/vector.test.ts (16) … ノード操作/ポリライン化/簡略化/往復/Snap/センターライン
+```
+
+#### UI 機能 (プロモードの「ベクター」タブ)
+
+- 「ベクター編集を開始」で全領域を EditShape (ノード列) に変換
+- 形状・パス (外周/穴) を選択して編集対象を切替
+- ツール: 選択/移動 (ドラッグ) / 追加 (最寄りセグメントに挿入) / 削除
+- ノードの corner↔smooth 切替、全ノードの角丸化 (smooth 化)
+- Snap to Artwork トグル (ドラッグ中、元領域の輪郭に 1.5mm で吸着)
+- 「編集を適用」で EditShape→Region に戻して digitize 再生成、「破棄」で取消
+- canvas に EditShape とノードハンドル (corner=□, smooth=○) を重ね描き
+
+#### 設計判断
+
+- 編集は稠密点列でなくノード列で行う (Region.outer は数百点で直接ドラッグ不可)。
+  ステッチ生成直前に pathToPolyline で展開、editShapeToRegion で符号も正規化
+- pathToPolyline は corner ノードで接線を切り、smooth で Catmull-Rom 連続。
+  corner 隣接時はその端点を制御点に使いオーバーシュートを防ぐ
+
+#### 検証状況 (計133テスト)
+
+- ノード操作の非破壊性・2点保持・split/join、ポリライン化 (corner=頂点保持/
+  smooth=曲線展開/面積増加)、簡略化 (矩形→corner / 円→smooth)、
+  Region 往復 (面積保持・外周正/穴負)、Snap (閾値内吸着/閾値外素通り)、
+  センターライン (横長領域→水平中心線)
+- ui-smoke (jsdom): 編集開始→ノード移動→適用で plan 再生成、破棄で不変
+
+
 
 ### Phase 6: 実機検証準備・仕上げ ✅
 
@@ -356,7 +400,6 @@ Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針
 
 ## 次フェーズの候補 (将来拡張、基礎構造を壊さず追加可能)
 
-- Phase 7: ベクター/ノード編集・Snap to Artwork
 - Phase 8: 文字刺繍 (TrueType → サテン文字)
 - Phase 9: 布地レシピ + Pull/Push 補正 (UI の布地タブは枠だけ実装済み)
 - Phase 10: PhotoStitch (12,000針制限つき)
@@ -374,6 +417,11 @@ Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針
 - PES は最小構成 v1 (CEmbOne なし)。実機で問題あれば v6 検討
 - 細い領域は satin ジェネレーター登録済みだが digitize は現状タタミ固定
   (細領域の自動サテン振り分けは未実装)
+- ベクター編集はノード移動/追加/削除・corner/smooth・Snap まで。
+  ベジェハンドルの直接操作は未実装 (smooth ノードの接線は自動計算)
+- extractCenterline (Quick Trace センターライン) はコア実装・テスト済みだが、
+  digitize がまだ線オブジェクト (ランニング) を領域から自動生成しないため
+  UI ボタンは未提供 (線オブジェクト対応は Phase 8 文字刺繍と合わせて検討)
 
 ## 未解決・保留
 
