@@ -11,6 +11,7 @@
 //   6. 同一領域内 (下縫い→本縫い等) は距離に関わらず糸切りしない
 
 import { SATIN_DEFAULT, TATAMI_DEFAULT } from "../core/constants";
+export type { FillType } from "../core/types";
 import { polygonCentroid, signedArea } from "../core/geometry";
 import type { Region } from "../core/region";
 import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
@@ -22,10 +23,8 @@ import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
 import { tatamiFill } from "./tatami";
 import { fillUnderlay } from "./underlay";
+import type { FillType } from "../core/types";
 import type { GeneratorResult, TatamiParams, UnderlayType } from "./types";
-
-/** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする */
-export type FillType = "tatami" | "satin" | "auto";
 
 export interface DigitizeOptions {
   /** タタミ角度 (度) */
@@ -75,7 +74,7 @@ function generateFill(
   startNear: Point | null,
   exitNear: Point | null,
   satinSpacing?: number,
-): GeneratorResult {
+): GeneratorResult & { usedSatin: boolean } {
   const useSatin =
     fillType === "satin" ||
     (fillType === "auto" && region.holes.length === 0 && regionMinExtent(region) <= SATIN_DEFAULT.maxWidth);
@@ -87,9 +86,9 @@ function generateFill(
     });
     const branched = satin.warnings.some((w) => w.includes("分岐"));
     // 分岐や生成失敗時はタタミにフォールバック (パーツ欠けを防ぐ)
-    if (!branched && satin.runs.length > 0) return satin;
+    if (!branched && satin.runs.length > 0) return { ...satin, usedSatin: true };
   }
-  return tatamiFill(region, params, startNear, exitNear);
+  return { ...tatamiFill(region, params, startNear, exitNear), usedSatin: false };
 }
 
 export function digitizeRegions(
@@ -183,9 +182,12 @@ export function digitizeRegions(
           : currentEnd;
       const exitNear =
         doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      const fill = generateFill(region, regionParams, options.fillType ?? "tatami", fillStart ?? null, exitNear, options.satinSpacing);
+      // パーツ固有の fillType が設定されていればそれを優先する
+      const regionFillType = region.fillType ?? options.fillType ?? "tatami";
+      const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
       regionRuns.push(...fill.runs);
       warnings.push(...fill.warnings);
+      const fillUsedSatin = fill.usedSatin;
 
       // --- 5./6. 接続決定 ---
       const processed = postprocessRuns(regionRuns);
@@ -202,7 +204,7 @@ export function digitizeRegions(
           stitches: processed[i].stitches,
           connection: decideConnection(from, processed[i].stitches[0], i > 0, connectOptions),
           objectId,
-          stitchType: i < underlayCount ? "underlay" : "tatami",
+          stitchType: i < underlayCount ? "underlay" : (fillUsedSatin ? "satin" : "tatami"),
         };
       }
       runs.push(...processed);
