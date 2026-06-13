@@ -1,16 +1,18 @@
 {
   "name": "pp1-stitch-studio",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
-  "description": "Brother SKiTCH PP1 向けブラウザ刺しゅうデータ作成ツール (PNG → PES/DST)",
+  "description": "Brother PP1 / Artspira 向けブラウザ刺しゅうデジタイザ v2 (PNG/SVG → PES/DST)",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "samples": "vite-node scripts/build-samples.ts"
   },
   "devDependencies": {
+    "jsdom": "^29.1.1",
     "typescript": "^5.6.3",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"

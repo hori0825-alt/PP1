@@ -1,0 +1,17 @@
+{
+  "id": "a-solid-circle",
+  "name": "CIRCLE",
+  "purpose": "単色タタミの連続性。面の途中で糸切りが起きない (糸切り0回)",
+  "expect": {
+    "colorChanges": 0,
+    "maxTrims": 0
+  },
+  "actual": {
+    "stitches": 2505,
+    "colors": 1,
+    "colorChanges": 0,
+    "trims": 0,
+    "maxTravelMm": 0,
+    "estMinutes": 6.3
+  }
+}
