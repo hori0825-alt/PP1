@@ -1,8 +1,67 @@
 # 開発ステータス
 
-最終更新: 2026-06-13 (Phase 4 完了)
+最終更新: 2026-06-13 (Phase 5 完了)
 
 ## 完了フェーズ
+
+### Phase 5: UI・シーケンスビュー・シミュレーター・診断 ✅
+
+#### 追加ファイル
+
+```
+src/core/
+  project.ts      … 独自プロジェクト形式 (JSON) の保存/読込・ID発行・前方互換
+src/plan/
+  diagnostics.ts  … diagnose(): validate + stats を OK/注意/修正必須の3段階に。
+                    針数超過は autofix='reduce-stitches' を付与
+  simulate.ts     … buildSimulation(): flattenPlan の MachineOp を針単位フレームに展開。
+                    色替え/糸切りフレーム位置を記録 (ステッチプレイヤー用)
+  sequence.ts     … buildSequence(): 縫製順のエントリ列 (色/タイプ/針数/接続/渡り/
+                    開始終了点/色替え/糸切り)。reorderBlocks で D&D 並べ替え
+src/ui/
+  state.ts        … AppState + 再計算 (source→regions→plan→診断/シーケンス/シミュ)
+  canvas.ts       … 100mm枠/グリッド/各表示モード/開始(▶)終了(■)マーカー/
+                    シミュ再生位置/Viewport 座標変換
+  sequenceView.ts … シーケンスビュー描画・選択・表示切替・D&D・フィルター
+  main.ts         … 全面再構築。ヘッダー統計チップ + かんたん/プロモード +
+                    タブ (デザイン/色/ステッチ/縫い順/布地/診断/出力) +
+                    シミュレーターバー
+test/
+  phase5.test.ts (12) … diagnose / buildSimulation / buildSequence / project
+  ui-smoke.test.ts (3, jsdom) … state ロジック + シーケンスビュー描画
+```
+
+#### 型拡張
+
+- StitchRun に objectId?・stitchType? を追加 (シーケンスビューのオブジェクト
+  グループ化用、optional なので既存構造・連続性ルールに影響なし)
+- digitize が領域ごとに objectId を採番、下縫い/本縫いに stitchType を付与
+
+#### UI 機能
+
+- かんたんモード: デザイン/色/診断/出力の4タブ。
+  プロモード: + ステッチ/縫い順/布地
+- 中央キャンバス: 元画像/減色/ベクター/ステッチ表示切替、ズーム枠固定、
+  渡り糸 (jump=灰点線, trim=赤点線)、選択オブジェクトの開始終了マーカー、
+  クリックでオブジェクト選択
+- シミュレーター: 再生/停止/リセット/スライダー/前後の糸切りへジャンプ、
+  現在針数・色番号表示。flattenPlan のフレームを忠実に再生
+- シーケンスビュー: 縫製順一覧 (番号/色/タイプ/針数/色替え/糸切り/渡り距離)、
+  すべて/糸切りのみ/警告のみフィルター、目アイコンで表示切替、
+  D&D で色ブロック順変更 (→ 再診断)
+- 診断タブ: 3段階表示 + 針数超過時の自動削減ボタン
+- 出力タブ: PES/DST ダウンロード (critical 時はブロック)、
+  プロジェクト保存/読込 (.json)
+
+#### 検証状況 (計99テスト)
+
+- diagnose: 正常=ok / 枠外=critical / 針数超過=autofix付与
+- buildSimulation: フレーム数=総ステッチ数、色替え/最終位置の整合
+- buildSequence: 縫製順連続・色替え/糸切り記録・objectId グループ化・reorder
+- project: ラウンドトリップ・欠損補完・不正バージョン例外
+- ui-smoke (jsdom): state 再計算・シーケンス描画・目アイコン・フィルター
+
+
 
 ### Phase 4: 縫い順・糸切り最適化 ✅ (前作の最重要問題への対策)
 
@@ -242,28 +301,28 @@ DST:
 - `npm run build`: 成功
 - `npm run dev` でデモページから phase1-demo.pes / .dst をダウンロード可能
 
-## 次フェーズへの引き継ぎ事項 (Phase 5: UI・シーケンスビュー・シミュレーター・診断)
+## 次フェーズへの引き継ぎ事項 (Phase 6: 実機検証準備・仕上げ)
 
-- 実装先: `src/ui/` の全面構築 + `src/core/diagnostics.ts`
-- UI 構成: 左ツール / 中央キャンバス / 右プロパティ /
-  下シミュレーター&シーケンスビュー / 右上統計。白基調・情報過多にしない。
-  かんたんモード (ウィザード) とプロモードの切替
-- シーケンスビュー: 実際の縫製順と完全一致のオブジェクトリスト
-  (色チップ/タイプ/針数/糸切り/渡り距離)、D&D 順序変更、フィルター。
-  データは plan.blocks[].runs[] と planStats から取れる
-- シミュレーター: 再生/速度/スライダー/針単位移動/糸切り・色替えジャンプ。
-  flattenPlan(plan) の MachineOp 列をそのまま再生するのが正確
-  (export/flatten.ts は UI からも使える)
-- 開始点・終了点マーカーのドラッグ変更: tatamiFill の startNear/exitNear を
-  ユーザー指定で上書きする経路が必要 (digitize にオブジェクト単位設定を追加)
-- 診断: validate.ts + planStats を OK/注意/修正必須の3段階で表示、
-  自動修正ボタン (針数超過→autoReduce は実装済み)
-- プロジェクト保存/読込 (JSON): 元画像参照/領域/設定/縫い順を含める
+- 実装内容:
+  1. samples/ に実機テスト用サンプル3種を生成・保存:
+     (a) 単色の円 (タタミ・連続性確認) (b) 2色・穴あき (穴/色替え確認)
+     (c) 3色・同色分散 (糸切り最適化確認)。各々に期待糸切り/色替え/針数を明記
+  2. PES バイナリの最終検証: 出力 PES を test/helpers.ts の decodePes で
+     読み戻し、針数/色/座標一致のラウンドトリップを samples で確認
+  3. エッジケース: 1針 Run・空 ColorBlock・枠ぴったりデザイン
+  4. README.md を v2 内容に全面更新 (使い方・実機テスト手順)
+  5. docs/ に実機テスト手順書
+- サンプル生成は Node スクリプト (scripts/) で digitizeRegions →
+  writePes/writeDst → ファイル書き出し。合成 Region を直接組む
+  (画像不要、決定的)
 - 既知の制約 (将来改善):
-  - 色順は面積降順のみ (重なり検出による厳密なレイヤー判定は未実装)
-  - runningStitch は折れ線全体を均等再サンプル (鋭角コーナーの頂点は
-    厳密に保持されない)
-  - satinFromRegion は startNear/exitNear 未対応 (タタミのみ対応)
+  - 色順は面積降順のみ (重なり検出による厳密レイヤー判定は未実装)
+  - 開始点/終了点マーカーは表示・自動配置のみ (ドラッグ変更は未実装。
+    tatamiFill の startNear/exitNear をユーザー上書きする経路が必要)
+  - シーケンスビューの D&D は色ブロック単位 (同色内オブジェクトの
+    並べ替えは未実装)
+  - satinFromRegion は startNear/exitNear 未対応 (タタミのみ)
+  - PES は最小構成 v1 (CEmbOne なし)。実機で問題あれば v6 検討
 
 ## 未解決・保留
 

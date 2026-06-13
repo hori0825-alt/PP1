@@ -27,6 +27,13 @@ export type Connection = "continuous" | "jump" | "trim";
 export interface StitchRun {
   stitches: Point[];
   connection: Connection;
+  /**
+   * 由来オブジェクト (領域) の識別子。同一オブジェクトの下縫いと本縫いは
+   * 同じ objectId を持つ。シーケンスビューのグループ化に使う (任意)。
+   */
+  objectId?: number;
+  /** ステッチタイプ (シーケンスビュー表示用。任意) */
+  stitchType?: "tatami" | "satin" | "running" | "underlay";
 }
 
 /** 糸色。PES 出力時は Brother 標準64色パレットの最近色に割り当てる。 */

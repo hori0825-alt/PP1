@@ -83,6 +83,7 @@ export function digitizeRegions(
 
   const blocks: ColorBlock[] = [];
   let currentEnd: Point | null = null; // 直前に縫った位置 (色をまたいで引き継ぐ)
+  let objectIdCounter = 0; // オブジェクト (領域) 単位の通し番号
 
   for (const group of groupList) {
     // --- 3. 同色内の巡回順最適化 (Closest Join) ---
@@ -96,12 +97,15 @@ export function digitizeRegions(
     const runs: StitchRun[] = [];
     for (let idx = 0; idx < ordered.length; idx++) {
       const region = ordered[idx];
+      const objectId = objectIdCounter++;
       const regionRuns: StitchRun[] = [];
+      let underlayCount = 0;
 
       // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
       if (options.underlay && options.underlay.length > 0) {
         const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: params.angleDeg });
         regionRuns.push(...u.runs);
+        underlayCount = u.runs.length;
         warnings.push(...u.warnings);
       }
 
@@ -131,6 +135,8 @@ export function digitizeRegions(
         processed[i] = {
           stitches: processed[i].stitches,
           connection: decideConnection(from, processed[i].stitches[0], i > 0, connectOptions),
+          objectId,
+          stitchType: i < underlayCount ? "underlay" : "tatami",
         };
       }
       runs.push(...processed);
