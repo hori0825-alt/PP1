@@ -39,7 +39,8 @@ export type Tab =
   | "sequence"
   | "fabric"
   | "diagnostics"
-  | "output";
+  | "output"
+  | "library";
 
 export interface TextSettings {
   text: string;

@@ -33,6 +33,8 @@ import {
 import type { AppState, Tab, VectorTool, ViewMode } from "./state";
 import { checkTextQuality } from "../text/metrics";
 import { FABRIC_RECIPES, getRecipe } from "../fabric/recipes";
+import { downloadPreview, downloadQr, openWorkOrder } from "./report";
+import { bindLibraryTab, libraryTabContent } from "./library";
 import { textToRegions } from "./textTool";
 import type { LayoutMode } from "../text/layout";
 import type { FillType } from "../stitch/digitize";
@@ -109,6 +111,8 @@ function tabContent(): string {
       return diagnosticsTab();
     case "output":
       return outputTab();
+    case "library":
+      return libraryTab();
     default:
       return "";
   }
@@ -289,12 +293,20 @@ function outputTab(): string {
     <button id="dl-pes" ${canExport ? "" : "disabled"}>PES をダウンロード</button>
     <button id="dl-dst" ${canExport ? "" : "disabled"}>DST をダウンロード</button>
     ${state.diagnostics?.overall === "critical" ? '<p class="error">⚠ 修正必須の項目があります。診断タブで確認してください。</p>' : ""}
+    <h2>作業指示書・画像</h2>
+    <button id="dl-report" ${state.plan ? "" : "disabled"}>作業指示書を表示 (PDF 印刷)</button>
+    <button id="dl-qr" class="secondary">QR コードを保存 (.svg)</button>
+    <button id="dl-preview" class="secondary" ${state.plan ? "" : "disabled"}>プレビュー画像を保存 (.svg)</button>
+    <p class="note">プロジェクト ID: ${state.project.id}</p>
     <h2>プロジェクト</h2>
     <button id="save-proj" class="secondary">プロジェクトを保存 (.json)</button>
     <button id="load-proj" class="secondary">プロジェクトを開く</button>
     <input type="file" id="proj-file" accept=".json" hidden />
-    <p class="note">作業指示書 PDF・QR コードは Phase 6.5 で実装します。</p>
   `;
+}
+
+function libraryTab(): string {
+  return libraryTabContent();
 }
 
 // --- 下部: シミュレーター ---
@@ -320,7 +332,7 @@ function render(): void {
   if (!app) return;
   const tabs: [Tab, string][] =
     state.mode === "easy"
-      ? [["design", "デザイン"], ["color", "色"], ["diagnostics", "診断"], ["output", "出力"]]
+      ? [["design", "デザイン"], ["color", "色"], ["diagnostics", "診断"], ["output", "出力"], ["library", "ライブラリ"]]
       : [
           ["design", "デザイン"],
           ["color", "色"],
@@ -331,6 +343,7 @@ function render(): void {
           ["fabric", "布地"],
           ["diagnostics", "診断"],
           ["output", "出力"],
+          ["library", "ライブラリ"],
         ];
   if (!tabs.some(([t]) => t === state.tab)) state.tab = "design";
 
@@ -517,6 +530,24 @@ function bindEvents(): void {
       state.project.exportHistory.push({ format: "DST", at: new Date().toISOString() });
     }
   });
+  document.getElementById("dl-report")?.addEventListener("click", () => {
+    if (!state.plan) return;
+    openWorkOrder({
+      plan: state.plan,
+      projectId: state.project.id,
+      designName: state.project.name,
+      fileName: state.project.source.fileName || designName(),
+      createdAt: state.project.createdAt,
+      fabricId: state.project.settings.fabricId,
+    });
+    state.project.exportHistory.push({ format: "PDF", at: new Date().toISOString() });
+  });
+  document.getElementById("dl-qr")?.addEventListener("click", () => {
+    downloadQr(state.project.id);
+  });
+  document.getElementById("dl-preview")?.addEventListener("click", () => {
+    if (state.plan) downloadPreview(state.plan, designName());
+  });
   document.getElementById("save-proj")?.addEventListener("click", () => {
     download(`${designName()}.json`, serializeProject(state.project), "application/json");
   });
@@ -549,6 +580,9 @@ function bindEvents(): void {
 
   // 文字
   bindTextTab();
+
+  // ライブラリ
+  if (state.tab === "library") bindLibraryTab(state, render);
 
   // 布地レシピ
   document.getElementById("fabric")?.addEventListener("change", (e) => {

@@ -537,3 +537,86 @@ textarea#txt-input {
 .diag-item p.warning {
   color: #8a6d1a;
 }
+
+/* --- ライブラリ --- */
+#lib-search {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.lib-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lib-card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #e3e7ec;
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.lib-thumb {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #eef1f4;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.lib-thumb svg {
+  width: 100%;
+  height: 100%;
+}
+
+.lib-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.lib-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-sub {
+  font-size: 11px;
+  color: #8a939e;
+}
+
+.lib-tags {
+  margin-top: 2px;
+}
+
+.lib-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lib-actions button {
+  width: auto;
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+  background: #eef1f4;
+  color: #4a525b;
+}
+
+.lib-actions .lib-load {
+  background: #2f6fed;
+  color: #fff;
+}
