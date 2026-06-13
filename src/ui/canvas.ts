@@ -122,7 +122,8 @@ function drawVectorView(
   canvas: HTMLCanvasElement,
   state: AppState,
 ): void {
-  for (const region of state.regions) {
+  state.regions.forEach((region, idx) => {
+    const selected = idx === state.selectedRegionIndex;
     const path = new Path2D();
     const trace = (pts: { x: number; y: number }[]): void => {
       pts.forEach((p, i) => {
@@ -134,12 +135,12 @@ function drawVectorView(
     };
     trace(region.outer);
     for (const hole of region.holes) trace(hole);
-    ctx.fillStyle = `rgba(${region.color.r},${region.color.g},${region.color.b},0.82)`;
+    ctx.fillStyle = `rgba(${region.color.r},${region.color.g},${region.color.b},${selected ? 0.95 : 0.82})`;
     ctx.fill(path, "evenodd");
-    ctx.strokeStyle = region.selfIntersecting ? "#e02020" : "#00000033";
-    ctx.lineWidth = region.selfIntersecting ? 2 : 0.7;
+    ctx.strokeStyle = selected ? "#1a7fe8" : region.selfIntersecting ? "#e02020" : "#00000033";
+    ctx.lineWidth = selected ? 2.5 : region.selfIntersecting ? 2 : 0.7;
     ctx.stroke(path);
-  }
+  });
 }
 
 function drawStitchView(

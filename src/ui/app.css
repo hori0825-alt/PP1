@@ -620,3 +620,22 @@ textarea#txt-input {
   background: #2f6fed;
   color: #fff;
 }
+
+/* --- パーツ個別縫い方パネル --- */
+.region-panel {
+  background: #eef3fb;
+  border: 1.5px solid #2f6fed;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.region-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: #1a4fa0;
+}

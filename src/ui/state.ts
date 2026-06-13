@@ -86,6 +86,8 @@ export interface AppState {
 
   // 表示・編集
   selectedObjectId: number | null;
+  /** ベクタービューでクリックして選択した領域インデックス (state.regions のインデックス) */
+  selectedRegionIndex: number | null;
   hiddenObjectIds: Set<number>;
   reduceApplied: string[];
 
@@ -135,6 +137,7 @@ export function createState(): AppState {
     simulation: null,
     stitchWarnings: [],
     selectedObjectId: null,
+    selectedRegionIndex: null,
     hiddenObjectIds: new Set(),
     reduceApplied: [],
     simFrame: 0,
@@ -149,7 +152,7 @@ export function createState(): AppState {
       arcRadiusMm: 40,
       fillType: "auto",
     },
-    fillType: "tatami",
+    fillType: "auto",
     photoSettings: { colorCount: 1, contrast: 1.2, brightness: 0, removeBackground: true },
     photoMode: false,
     puffy: false,
@@ -335,7 +338,7 @@ export function designName(state: AppState): string {
 /** ソースを差し替えるときに ID は維持しつつ表示名を更新 */
 export function setSourceImage(state: AppState, raster: RasterImage, dataUrl: string, fileName: string): void {
   state.raster = raster;
-  state.fillType = "tatami"; // 画像はタタミ
+  state.fillType = "auto"; // 細い領域は自動でサテン、広い面はタタミ
   state.project.source = { kind: "image", data: dataUrl, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";
   if (!state.project.id) state.project.id = generateId();
@@ -346,7 +349,7 @@ export function setSourceImage(state: AppState, raster: RasterImage, dataUrl: st
 export function setSourceSvg(state: AppState, svgText: string, fileName: string): void {
   state.raster = null;
   state.labelMap = null;
-  state.fillType = "tatami";
+  state.fillType = "auto";
   state.photoMode = false; // SVG は写真刺繍の対象外
   state.project.source = { kind: "svg", data: svgText, fileName };
   state.project.name = fileName.replace(/\.[^.]+$/, "") || "design";

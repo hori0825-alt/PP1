@@ -3,6 +3,7 @@
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
 import { UNIT_MM, mm } from "../core/constants";
+import { pointInPolygon } from "../core/geometry";
 import { countStitches, countTrims } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
@@ -183,10 +184,50 @@ function colorTab(): string {
   `;
 }
 
+function fillTypeLabel(f: FillType): string {
+  return f === "satin" ? "サテン縫い" : f === "tatami" ? "タタミ縫い" : "自動 (細→サテン / 広→タタミ)";
+}
+
 function stitchTab(): string {
   const s = state.project.settings;
+  const selIdx = state.selectedRegionIndex;
+  const selRegion = selIdx !== null ? state.regions[selIdx] : null;
+
+  const selectedPanel = selRegion
+    ? `<div class="region-panel">
+        <div class="region-panel-title">
+          <span class="swatch" style="background:rgb(${selRegion.color.r},${selRegion.color.g},${selRegion.color.b})"></span>
+          パーツ ${selIdx! + 1} の縫い方
+        </div>
+        <label>縫い方
+          <select id="region-fill">
+            <option value="" ${!selRegion.fillType ? "selected" : ""}>全体設定に従う (${fillTypeLabel(state.fillType)})</option>
+            <option value="satin" ${selRegion.fillType === "satin" ? "selected" : ""}>サテン縫い (固定)</option>
+            <option value="tatami" ${selRegion.fillType === "tatami" ? "selected" : ""}>タタミ縫い (固定)</option>
+            <option value="auto" ${selRegion.fillType === "auto" ? "selected" : ""}>自動 (固定)</option>
+          </select>
+        </label>
+        <button id="region-deselect" class="secondary">選択解除</button>
+      </div>`
+    : `<p class="note">ベクタービュー (表示: ベクター) でパーツをクリックすると個別に設定できます。</p>`;
+
   return `
-    <h2>タタミ設定</h2>
+    <h2>縫い方 (全体)</h2>
+    <label>デフォルト縫い方
+      <select id="global-fill">
+        <option value="auto" ${state.fillType === "auto" ? "selected" : ""}>自動 (細→サテン / 広→タタミ)</option>
+        <option value="satin" ${state.fillType === "satin" ? "selected" : ""}>すべてサテン縫い</option>
+        <option value="tatami" ${state.fillType === "tatami" ? "selected" : ""}>すべてタタミ縫い</option>
+      </select>
+    </label>
+    <div class="ve-tools">
+      <button id="fill-all-satin">全パーツをサテンに</button>
+      <button id="fill-all-tatami">全パーツをタタミに</button>
+      <button id="fill-all-clear" class="secondary">個別設定をクリア</button>
+    </div>
+    <h2>パーツ個別設定</h2>
+    ${selectedPanel}
+    <h2>タタミ角度</h2>
     <label>角度
       <select id="angle">${[0, 45, 90, 135].map((v) => `<option value="${v}" ${v === s.angleDeg ? "selected" : ""}>${v}°</option>`).join("")}</select>
     </label>
@@ -534,6 +575,42 @@ function bindEvents(): void {
       render();
     }),
   );
+  // 縫い方: 全体設定
+  document.getElementById("global-fill")?.addEventListener("change", (e) => {
+    state.fillType = (e.target as HTMLSelectElement).value as FillType;
+    recomputeStitches(state);
+    render();
+  });
+  // 縫い方: 全パーツに一括適用
+  document.getElementById("fill-all-satin")?.addEventListener("click", () => {
+    state.regions.forEach((r) => { r.fillType = "satin"; });
+    recomputeStitches(state);
+    render();
+  });
+  document.getElementById("fill-all-tatami")?.addEventListener("click", () => {
+    state.regions.forEach((r) => { r.fillType = "tatami"; });
+    recomputeStitches(state);
+    render();
+  });
+  document.getElementById("fill-all-clear")?.addEventListener("click", () => {
+    state.regions.forEach((r) => { delete r.fillType; });
+    recomputeStitches(state);
+    render();
+  });
+  // 縫い方: 選択中パーツの個別設定
+  document.getElementById("region-fill")?.addEventListener("change", (e) => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null || !state.regions[idx]) return;
+    const val = (e.target as HTMLSelectElement).value;
+    if (val === "") delete state.regions[idx].fillType;
+    else state.regions[idx].fillType = val as FillType;
+    recomputeStitches(state);
+    render();
+  });
+  document.getElementById("region-deselect")?.addEventListener("click", () => {
+    state.selectedRegionIndex = null;
+    render();
+  });
 
   // シーケンスフィルター
   document.querySelectorAll<HTMLElement>(".filter").forEach((b) =>
@@ -627,13 +704,19 @@ function bindEvents(): void {
   // 特殊 (装飾配置・アップリケ・パフィー)
   bindSpecialTab();
 
-  // キャンバス: クリックでオブジェクト選択 (ステッチ表示時。編集中は無効)
+  // キャンバス: クリックでオブジェクト/領域を選択 (編集中は無効)
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
   canvas?.addEventListener("click", (ev) => {
-    if (state.vectorEdit || state.view !== "stitch" || !state.plan) return;
+    if (state.vectorEdit) return;
     const rect = canvas.getBoundingClientRect();
     const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
-    state.selectedObjectId = pickObject(p);
+    if (state.view === "vector") {
+      // ベクタービュー: 領域をクリックして個別に縫い方を設定できる
+      state.selectedRegionIndex = pickRegion(p);
+      if (state.selectedRegionIndex !== null) state.tab = "stitch";
+    } else if (state.view === "stitch" && state.plan) {
+      state.selectedObjectId = pickObject(p);
+    }
     render();
   });
 
@@ -796,6 +879,18 @@ function bindVectorTab(): void {
 function designName(): string {
   const base = state.project.source.fileName.replace(/\.[^.]+$/, "") || state.project.name;
   return (base || "design").slice(0, 16);
+}
+
+/** クリック位置の領域インデックスを返す (ベクタービュー用) */
+function pickRegion(p: { x: number; y: number }): number | null {
+  for (let i = state.regions.length - 1; i >= 0; i--) {
+    const r = state.regions[i];
+    if (pointInPolygon(p, r.outer)) {
+      const inHole = r.holes.some((h) => pointInPolygon(p, h));
+      if (!inHole) return i;
+    }
+  }
+  return null;
 }
 
 /** クリック位置に最も近いオブジェクトの始点/ステッチを探す */
