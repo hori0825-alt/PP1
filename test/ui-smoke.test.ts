@@ -9,13 +9,16 @@ import type { Region } from "../src/core/region";
 import type { Point } from "../src/core/types";
 import { renderSequence } from "../src/ui/sequenceView";
 import {
+  applyApplique,
   applyVectorEdit,
   cancelVectorEdit,
   createState,
   enterVectorEdit,
   recomputeStitches,
+  replaceRegions,
   setPhotoMode,
 } from "../src/ui/state";
+import { makeRadial } from "../src/decorate/arrange";
 
 function rect(cx: number, cy: number, w: number, h: number): Point[] {
   return [
@@ -161,5 +164,36 @@ describe("PhotoStitch モード", () => {
     expect(state.diagnostics).not.toBeNull();
     expect(state.simulation).not.toBeNull();
     expect(state.regions.length).toBe(0); // 写真は領域を使わない
+  });
+});
+
+describe("装飾配置・アップリケ・パフィー (state)", () => {
+  function squareRegion(cx: number, cy: number): Region {
+    return { outer: rect(cx, cy, mm(12), mm(12)), holes: [], color: RED };
+  }
+
+  it("放射配置で領域が増えステッチが再生成される", () => {
+    const state = createState();
+    state.regions = [squareRegion(mm(20), 0)];
+    recomputeStitches(state);
+    replaceRegions(state, makeRadial(state.regions, { count: 5 }));
+    expect(state.regions.length).toBe(5);
+    expect(state.plan).not.toBeNull();
+  });
+
+  it("アップリケで配置線/仮止め/仕上げの工程 plan になる", () => {
+    const state = createState();
+    state.regions = [squareRegion(0, 0)];
+    applyApplique(state, 2.5);
+    expect(state.plan?.blocks.length).toBe(3);
+    expect(state.plan?.blocks[0].thread.name).toBe("配置線");
+  });
+
+  it("パフィー ON でサテンに切り替わる", () => {
+    const state = createState();
+    state.regions = [squareRegion(0, 0)];
+    state.puffy = true;
+    recomputeStitches(state);
+    expect(state.plan).not.toBeNull();
   });
 });

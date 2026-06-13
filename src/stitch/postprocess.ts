@@ -46,7 +46,7 @@ export function postprocessRun(run: StitchRun, options: PostprocessOptions = {})
     out.push(b);
   }
 
-  return { stitches: out, connection: run.connection };
+  return { stitches: out, connection: run.connection, objectId: run.objectId, stitchType: run.stitchType };
 }
 
 export function postprocessRuns(runs: StitchRun[], options?: PostprocessOptions): StitchRun[] {

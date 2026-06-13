@@ -13,6 +13,7 @@ import { extractRegions, fitUnitsPerPixel } from "../import/regions";
 import { importSvg } from "../import/svg";
 import { getRecipe, recipeToDigitizeOptions } from "../fabric/recipes";
 import { generatePhotoStitch } from "../photo/photostitch";
+import { appliquePlan } from "../applique/applique";
 import type { TrimMode } from "../plan/connect";
 import { diagnose } from "../plan/diagnostics";
 import type { DiagnosticReport } from "../plan/diagnostics";
@@ -38,6 +39,7 @@ export type Tab =
   | "text"
   | "sequence"
   | "fabric"
+  | "special"
   | "diagnostics"
   | "output"
   | "library";
@@ -104,6 +106,9 @@ export interface AppState {
   /** PhotoStitch モード (ON のとき画像を写真刺繍として変換) */
   photoMode: boolean;
 
+  /** 3D パフィー (サテンを詰めて立体的に) */
+  puffy: boolean;
+
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
 }
@@ -147,6 +152,7 @@ export function createState(): AppState {
     fillType: "tatami",
     photoSettings: { colorCount: 1, contrast: 1.2, brightness: 0, removeBackground: true },
     photoMode: false,
+    puffy: false,
   };
 }
 
@@ -223,6 +229,24 @@ export function applyVectorEdit(state: AppState): void {
   state.vectorEdit = null;
 }
 
+/** 装飾配置などで領域を差し替え、ステッチを再生成する */
+export function replaceRegions(state: AppState, regions: Region[]): void {
+  state.regions = regions;
+  state.project.regions = regions;
+  state.photoMode = false;
+  recomputeStitches(state);
+}
+
+/** 現在の領域をアップリケ工程の plan に変換する (digitize を介さず直接) */
+export function applyApplique(state: AppState, satinWidthMm: number): void {
+  if (state.regions.length === 0) return;
+  state.plan = appliquePlan(state.regions, designName(state), { satinWidthMm });
+  state.project.plan = state.plan;
+  state.photoMode = false;
+  refreshDerived(state);
+  state.reduceApplied = [];
+}
+
 /** ベクター編集を破棄 */
 export function cancelVectorEdit(state: AppState): void {
   state.vectorEdit = null;
@@ -266,7 +290,9 @@ export function recomputeStitches(state: AppState): void {
     angleDeg: s.angleDeg,
     trimMode: s.trimMode,
     underlay: s.underlay as UnderlayType[],
-    fillType: state.fillType,
+    fillType: state.puffy ? "satin" : state.fillType,
+    // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
+    satinSpacing: state.puffy ? mm(0.3) : undefined,
   });
   state.plan = result.plan;
   state.project.plan = result.plan;

@@ -52,6 +52,8 @@ export interface DigitizeOptions {
   minObjectExtent?: number;
   /** 小さい面の密度を自動で下げる */
   autoDensity?: boolean;
+  /** サテンの間隔 (内部単位)。3D/パフィーで詰める用 */
+  satinSpacing?: number;
 }
 
 export interface DigitizeResult {
@@ -72,13 +74,17 @@ function generateFill(
   fillType: FillType,
   startNear: Point | null,
   exitNear: Point | null,
+  satinSpacing?: number,
 ): GeneratorResult {
   const useSatin =
     fillType === "satin" ||
     (fillType === "auto" && region.holes.length === 0 && regionMinExtent(region) <= SATIN_DEFAULT.maxWidth);
 
   if (useSatin) {
-    const satin = satinFromRegion(region, { spacing: SATIN_DEFAULT.spacing, maxWidth: SATIN_DEFAULT.maxWidth });
+    const satin = satinFromRegion(region, {
+      spacing: satinSpacing ?? SATIN_DEFAULT.spacing,
+      maxWidth: SATIN_DEFAULT.maxWidth,
+    });
     const branched = satin.warnings.some((w) => w.includes("分岐"));
     // 分岐や生成失敗時はタタミにフォールバック (パーツ欠けを防ぐ)
     if (!branched && satin.runs.length > 0) return satin;
@@ -177,7 +183,7 @@ export function digitizeRegions(
           : currentEnd;
       const exitNear =
         doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      const fill = generateFill(region, regionParams, options.fillType ?? "tatami", fillStart ?? null, exitNear);
+      const fill = generateFill(region, regionParams, options.fillType ?? "tatami", fillStart ?? null, exitNear, options.satinSpacing);
       regionRuns.push(...fill.runs);
       warnings.push(...fill.warnings);
 

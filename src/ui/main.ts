@@ -15,12 +15,14 @@ import { decodeImageFile } from "./loadImage";
 import { renderSequence } from "./sequenceView";
 import type { SeqFilter } from "./sequenceView";
 import {
+  applyApplique,
   applyAutoReduce,
   applyFabric,
   applyVectorEdit,
   cancelVectorEdit,
   createState,
   enterVectorEdit,
+  replaceRegions,
   recomputePhoto,
   recomputeRegions,
   recomputeStitches,
@@ -33,6 +35,7 @@ import {
 import type { AppState, Tab, VectorTool, ViewMode } from "./state";
 import { checkTextQuality } from "../text/metrics";
 import { FABRIC_RECIPES, getRecipe } from "../fabric/recipes";
+import { makeKaleidoscope, makeMirror, makeRadial } from "../decorate/arrange";
 import { downloadPreview, downloadQr, openWorkOrder } from "./report";
 import { bindLibraryTab, libraryTabContent } from "./library";
 import { textToRegions } from "./textTool";
@@ -107,6 +110,8 @@ function tabContent(): string {
       </div><div id="sequence-list"></div>`;
     case "fabric":
       return fabricTab();
+    case "special":
+      return specialTab();
     case "diagnostics":
       return diagnosticsTab();
     case "output":
@@ -309,6 +314,34 @@ function libraryTab(): string {
   return libraryTabContent();
 }
 
+function specialTab(): string {
+  const hasRegions = state.regions.length > 0;
+  return `
+    <h2>装飾配置</h2>
+    ${hasRegions ? `
+      <div class="ve-tools">
+        <button id="arr-mx">左右ミラー</button>
+        <button id="arr-my">上下ミラー</button>
+      </div>
+      <label>放射コピー個数 <input type="number" id="arr-count" min="2" max="16" value="6" style="width:56px"></label>
+      <div class="ve-tools">
+        <button id="arr-radial">放射状に配置</button>
+        <button id="arr-kaleido">万華鏡</button>
+      </div>
+      <p class="note">中心はデザイン中心。適用後はベクター編集や縫い順で調整できます。</p>
+    ` : '<p class="note">画像・SVG・文字を読み込むと装飾配置できます。</p>'}
+    <h2>アップリケ</h2>
+    ${hasRegions ? `
+      <label>仕上げサテン幅 <input type="range" id="ap-width" min="1.5" max="5" step="0.5" value="2.5"><span id="ap-width-v">2.5</span>mm</label>
+      <button id="ap-apply">アップリケ工程を生成</button>
+      <p class="note">配置線→仮止め→仕上げサテンの3工程を生成します。工程の境目で色替え (実機停止) します。</p>
+    ` : ""}
+    <h2>3D パフィー</h2>
+    <label><input type="checkbox" id="puffy" ${state.puffy ? "checked" : ""}> パフィー (サテンを詰めて立体に)</label>
+    <p class="note">スポンジ併用を想定し、サテンを高密度で生成します。小さい/細い文字は文字タブの警告を確認してください。</p>
+  `;
+}
+
 // --- 下部: シミュレーター ---
 function simulatorBar(): string {
   if (!state.simulation) return "";
@@ -341,6 +374,7 @@ function render(): void {
           ["text", "文字"],
           ["sequence", "縫い順"],
           ["fabric", "布地"],
+          ["special", "特殊"],
           ["diagnostics", "診断"],
           ["output", "出力"],
           ["library", "ライブラリ"],
@@ -590,6 +624,9 @@ function bindEvents(): void {
     render();
   });
 
+  // 特殊 (装飾配置・アップリケ・パフィー)
+  bindSpecialTab();
+
   // キャンバス: クリックでオブジェクト選択 (ステッチ表示時。編集中は無効)
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
   canvas?.addEventListener("click", (ev) => {
@@ -652,6 +689,48 @@ function bindTextTab(): void {
     }
     setTextRegions(state, regions, t.fillType);
     state.view = "stitch";
+    render();
+  });
+}
+
+function bindSpecialTab(): void {
+  const count = (): number => {
+    const el = document.getElementById("arr-count") as HTMLInputElement | null;
+    return el ? Math.max(2, Math.min(16, Number(el.value))) : 6;
+  };
+  document.getElementById("arr-mx")?.addEventListener("click", () => {
+    replaceRegions(state, makeMirror(state.regions, "x", 0));
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("arr-my")?.addEventListener("click", () => {
+    replaceRegions(state, makeMirror(state.regions, "y", 0));
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("arr-radial")?.addEventListener("click", () => {
+    replaceRegions(state, makeRadial(state.regions, { count: count() }));
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("arr-kaleido")?.addEventListener("click", () => {
+    replaceRegions(state, makeKaleidoscope(state.regions, { segments: count() }));
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("ap-width")?.addEventListener("input", (e) => {
+    const v = document.getElementById("ap-width-v");
+    if (v) v.textContent = (e.target as HTMLInputElement).value;
+  });
+  document.getElementById("ap-apply")?.addEventListener("click", () => {
+    const w = Number((document.getElementById("ap-width") as HTMLInputElement)?.value ?? 2.5);
+    applyApplique(state, w);
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("puffy")?.addEventListener("change", (e) => {
+    state.puffy = (e.target as HTMLInputElement).checked;
+    recomputeStitches(state);
     render();
   });
 }

@@ -1,8 +1,53 @@
 # 開発ステータス
 
-最終更新: 2026-06-13 (Phase 11 完了)
+最終更新: 2026-06-13 (Phase 12 完了 — 全予定フェーズ完了)
 
 ## 完了フェーズ
+
+### Phase 12: 装飾配置・アップリケ・3D パフィー ✅
+
+#### 追加・変更ファイル
+
+```
+src/decorate/arrange.ts   … makeMirror / makeRadial / makeKaleidoscope /
+                            rotateRegion / normalizeRegion (反転後の巻き修復)
+src/applique/applique.ts  … appliqueBlocks/appliquePlan (配置線→仮止め→仕上げの
+                            3工程を別 ColorBlock = 色替えで実機停止)
+src/stitch/digitize.ts    … satinSpacing オプション (3D パフィーの高密度サテン)
+src/stitch/postprocess.ts … objectId/stitchType を保持するよう修正
+src/ui/state.ts           … puffy、replaceRegions、applyApplique
+src/ui/main.ts            … 特殊タブ (装飾配置/アップリケ/パフィー)
+test/decorate.test.ts (16)
+```
+
+#### 装飾配置 (transform を土台に純粋関数)
+
+- ミラー (左右/上下、元+反転 or 反転のみ)、放射状/円形 (count 個等角、
+  自転 on/off)、万華鏡 (segments の回転コピー + 鏡像で 2×segments)、
+  中心まわり回転。反転で崩れる外周/穴の巻きは normalizeRegion で修復
+- 出力は Region[] なので digitize にそのまま流せる (花柄・エンブレム・
+  魔法陣風)。確認: 葉1枚→万華鏡6→12領域3841針
+
+#### アップリケ (工程 = 色替え停止)
+
+- 配置線 (外周ランニング) → 仮止め (内側ランニング) → 仕上げサテン縁取りの
+  3工程を別 ColorBlock として生成。flattenPlan がブロック間に色替えを入れ、
+  実機ではそこで停止 (布を置く/切る確認)。工程名は thread.name に入り、
+  シーケンスビューと作業指示書に「工程」として表示される
+
+#### 3D パフィー
+
+- puffy ON でフィルをサテン化 + サテン間隔を 0.3mm に詰めて盛り上げる
+  (スポンジ併用想定)。小さい/細い文字の警告は Phase 8 の checkTextQuality
+
+#### 検証状況 (計203テスト)
+
+- 装飾: normalize 巻き修復 / ミラー対称 / 回転位置 / 放射の円周配置と原点対称 /
+  万華鏡 2×segments / 全コピー外周正
+- アップリケ: 3工程ブロック・工程名・タイプ(running/satin)・工程内連続
+- ui-smoke (jsdom): 放射で領域増→再生成 / アップリケ3工程 / パフィー切替
+
+
 
 ### Phase 11: 作業指示書PDF・QRコード・デザインライブラリ ✅
 
@@ -563,20 +608,26 @@ Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針
 実機テスト (docs/FIELD-TEST.md) で samples/ の3種を縫い、糸切り回数が
 期待どおりかを確認するのが次のリアルな検証ステップ。
 
-## 次フェーズの候補 (将来拡張、基礎構造を壊さず追加可能)
+## 全予定フェーズ (1〜12) 完了
 
-- Phase 12: アップリケ・3D・装飾配置 (ミラー/万華鏡。transform.ts が土台)
+Phase 1〜12 をすべて実装した。次にやるべきは実機での検証
+(docs/FIELD-TEST.md の samples/ を縫って糸切り回数を確認) と、
+下記「既知の制約」の改善。さらなる拡張候補: CutWork/アイレット/StumpWork、
+エコーキルト、マルチフープ、WiFi 転送、クラウドライブラリ。
 
 ## 既知の制約 (将来改善)
 
+- 細領域の自動サテン振り分け: digitize は fillType=auto で短辺判定するが、
+  画像デジタイズのデフォルトはタタミ (文字/特殊で satin/auto を指定)
 - 色順は面積降順のみ (重なり検出による厳密レイヤー判定は未実装)
 - 開始点/終了点マーカーは表示・自動配置のみ (ドラッグ変更は未実装。
   tatamiFill の startNear/exitNear をユーザー上書きする経路が必要)
 - シーケンスビューの D&D は色ブロック単位 (同色内オブジェクトの並べ替えは未実装)
 - satinFromRegion は startNear/exitNear 未対応 (タタミのみ)
 - PES は最小構成 v1 (CEmbOne なし)。実機で問題あれば v6 検討
-- 細い領域は satin ジェネレーター登録済みだが digitize は現状タタミ固定
-  (細領域の自動サテン振り分けは未実装)
+- アップリケの工程停止は色替えで近似 (PEC の停止専用コードは未使用)。
+  装飾配置のコピーは重なり削除をしない (針数が増える場合あり)
+
 - ベクター編集はノード移動/追加/削除・corner/smooth・Snap まで。
   ベジェハンドルの直接操作は未実装 (smooth ノードの接線は自動計算)
 - extractCenterline (Quick Trace センターライン) はコア実装・テスト済みだが、
