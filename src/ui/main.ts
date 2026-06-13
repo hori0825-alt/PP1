@@ -16,6 +16,7 @@ import { renderSequence } from "./sequenceView";
 import type { SeqFilter } from "./sequenceView";
 import {
   applyAutoReduce,
+  applyFabric,
   applyVectorEdit,
   cancelVectorEdit,
   createState,
@@ -29,6 +30,7 @@ import {
 } from "./state";
 import type { AppState, Tab, VectorTool, ViewMode } from "./state";
 import { checkTextQuality } from "../text/metrics";
+import { FABRIC_RECIPES, getRecipe } from "../fabric/recipes";
 import { textToRegions } from "./textTool";
 import type { LayoutMode } from "../text/layout";
 import type { FillType } from "../stitch/digitize";
@@ -100,7 +102,7 @@ function tabContent(): string {
           .join("")}
       </div><div id="sequence-list"></div>`;
     case "fabric":
-      return `<p class="note">布地レシピは Phase 5.5 で実装します。</p>`;
+      return fabricTab();
     case "diagnostics":
       return diagnosticsTab();
     case "output":
@@ -213,6 +215,32 @@ function textTab(): string {
     ${warnHtml ? `<div class="diag-item notice">${warnHtml}</div>` : ""}
     <button id="txt-apply">文字を刺繍化</button>
     <p class="note">ブラウザのフォントを使用します。穴あき文字 (A/O/8 等) も正しく縫えます。</p>
+  `;
+}
+
+function fabricTab(): string {
+  const id = state.project.settings.fabricId;
+  const recipe = getRecipe(id);
+  return `
+    <h2>布地レシピ</h2>
+    <label>布地
+      <select id="fabric">${FABRIC_RECIPES.map((r) => `<option value="${r.id}" ${r.id === id ? "selected" : ""}>${r.name}</option>`).join("")}</select>
+    </label>
+    <table class="colors">
+      <tbody>
+        <tr><td>タタミ密度</td><td>${recipe.tatamiSpacingMm}mm 間隔</td></tr>
+        <tr><td>ステッチ長</td><td>${recipe.stitchLengthMm}mm</td></tr>
+        <tr><td>下縫い</td><td>${recipe.underlay.length ? recipe.underlay.join(" + ") : "なし"}</td></tr>
+        <tr><td>Pull 補正</td><td>${recipe.pullCompMm}mm</td></tr>
+        <tr><td>Push 補正</td><td>${recipe.pushCompMm}mm</td></tr>
+        <tr><td>最小オブジェクト</td><td>${recipe.minObjectMm}mm</td></tr>
+        <tr><td>糸切り閾値</td><td>${recipe.trimDistanceMm}mm</td></tr>
+        <tr><td>自動密度</td><td>${recipe.autoDensity ? "ON" : "OFF"}</td></tr>
+        <tr><td>推奨糸</td><td>${recipe.recommendedThread}</td></tr>
+        <tr><td>推奨針</td><td>${recipe.recommendedNeedle}</td></tr>
+      </tbody>
+    </table>
+    <p class="note">布地を選ぶと密度・補正・下縫いが推奨値になります。角度や糸切りはステッチタブで微調整できます。</p>
   `;
 }
 
@@ -475,6 +503,12 @@ function bindEvents(): void {
 
   // 文字
   bindTextTab();
+
+  // 布地レシピ
+  document.getElementById("fabric")?.addEventListener("change", (e) => {
+    applyFabric(state, (e.target as HTMLSelectElement).value);
+    render();
+  });
 
   // キャンバス: クリックでオブジェクト選択 (ステッチ表示時。編集中は無効)
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;

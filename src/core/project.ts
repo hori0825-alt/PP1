@@ -17,6 +17,8 @@ export interface ProjectSettings {
   angleDeg: number;
   trimMode: "auto" | "never" | "always";
   underlay: string[];
+  /** 布地レシピ ID (src/fabric/recipes.ts) */
+  fabricId: string;
 }
 
 export interface Project {
@@ -62,7 +64,8 @@ export function createEmptyProject(name = "untitled"): Project {
       targetSizeMm: 100,
       angleDeg: 45,
       trimMode: "auto",
-      underlay: [],
+      underlay: ["edge"],
+      fabricId: "standard",
     },
     regions: [],
     plan: null,

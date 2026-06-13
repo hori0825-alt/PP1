@@ -17,6 +17,7 @@ import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
 import { optimizeOrder } from "../plan/order";
+import { compensateRegion, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
 import { tatamiFill } from "./tatami";
@@ -43,26 +44,19 @@ export interface DigitizeOptions {
   trimDistance?: number;
   /** 面の塗り方 (デフォルト tatami)。文字刺繍で satin/auto を使う */
   fillType?: FillType;
+  /** Pull 補正 (内部単位)。布地レシピ由来 */
+  pullCompensation?: number;
+  /** Push 補正 (内部単位) */
+  pushCompensation?: number;
+  /** 最小オブジェクト短辺 (内部単位)。これ未満は除外 (Small Object Protection) */
+  minObjectExtent?: number;
+  /** 小さい面の密度を自動で下げる */
+  autoDensity?: boolean;
 }
 
 export interface DigitizeResult {
   plan: StitchPlan;
   warnings: string[];
-}
-
-/** 領域の最小辺 (バウンディングの短辺) を内部単位で返す */
-function regionMinExtent(region: Region): number {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of region.outer) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  return Math.min(maxX - minX, maxY - minY);
 }
 
 /**
@@ -108,10 +102,21 @@ export function digitizeRegions(
     trimDistance: options.trimDistance,
   };
   const doOptimize = options.optimizeOrder ?? true;
+  const minExtent = options.minObjectExtent ?? 0;
+  const pull = options.pullCompensation ?? 0;
+  const push = options.pushCompensation ?? 0;
+  const autoDensity = options.autoDensity ?? false;
+  const sewAngleRad = (params.angleDeg * Math.PI) / 180;
+
+  // --- 0. Small Object Protection: 短辺が閾値未満の小片を除外 ---
+  const survivors =
+    minExtent > 0 ? regions.filter((r) => regionMinExtent(r) >= minExtent) : regions;
+  const dropped = regions.length - survivors.length;
+  if (dropped > 0) warnings.push(`小さすぎる ${dropped} 個のオブジェクトを除外しました`);
 
   // --- 1. 同色グループ化 ---
   const groups = new Map<string, { color: Region["color"]; regions: Region[]; area: number }>();
-  for (const region of regions) {
+  for (const region of survivors) {
     const key = `${region.color.r},${region.color.g},${region.color.b}`;
     const net =
       Math.abs(signedArea(region.outer)) -
@@ -144,10 +149,17 @@ export function digitizeRegions(
 
     const runs: StitchRun[] = [];
     for (let idx = 0; idx < ordered.length; idx++) {
-      const region = ordered[idx];
+      // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する
+      const region = compensateRegion(ordered[idx], { pull, push, sewAngleRad });
       const objectId = objectIdCounter++;
       const regionRuns: StitchRun[] = [];
       let underlayCount = 0;
+
+      // 密度補正: 小さい面では行間隔を広げる (Auto Density)
+      const regionParams: TatamiParams = {
+        ...params,
+        rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
+      };
 
       // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
       if (options.underlay && options.underlay.length > 0) {
@@ -165,7 +177,7 @@ export function digitizeRegions(
           : currentEnd;
       const exitNear =
         doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      const fill = generateFill(region, params, options.fillType ?? "tatami", fillStart ?? null, exitNear);
+      const fill = generateFill(region, regionParams, options.fillType ?? "tatami", fillStart ?? null, exitNear);
       regionRuns.push(...fill.runs);
       warnings.push(...fill.warnings);
 

@@ -1,8 +1,49 @@
 # 開発ステータス
 
-最終更新: 2026-06-13 (Phase 8 完了)
+最終更新: 2026-06-13 (Phase 9 完了)
 
 ## 完了フェーズ
+
+### Phase 9: 布地レシピ + Pull/Push 補正 ✅
+
+#### 追加・変更ファイル
+
+```
+src/stitch/compensation.ts … compensateRegion (Pull=直交方向拡張/Push=縫い方向収縮、
+                              ステッチ方向を x 軸に回した重心基準スケール) /
+                              densityCompensatedSpacing (小面で密度↓) /
+                              regionArea / regionMinExtent
+src/fabric/recipes.ts      … 12 種の布地レシピ (密度/下縫い/Pull/Push/最小サイズ/
+                              糸切り閾値/推奨糸針) + recipeToDigitizeOptions
+src/stitch/digitize.ts     … pullCompensation/pushCompensation/minObjectExtent/
+                              autoDensity を追加。Small Object 除外→補正→密度補正→塗り
+src/core/project.ts        … settings.fabricId 追加
+src/ui/state.ts            … recomputeStitches がレシピ値を基礎に適用、applyFabric
+src/ui/main.ts             … 布地タブ (レシピ選択 + 設定一覧表示)
+test/fabric.test.ts (16)
+```
+
+#### 補正の規約と実装
+
+- sewAngle = ステッチ方向。Pull はそれに直交方向へ領域を広げ (縫い縮み対策)、
+  Push はステッチ方向に縮める (はみ出し対策)。ステッチ方向を x 軸に回した系での
+  重心基準の異方スケールで近似 (オフセットと違い自己交差しない)
+- Density Compensation: 150mm² 未満の面で行間隔を最大 1.4 倍まで広げ密度を下げる
+- Small Object Protection: 短辺が最小サイズ未満のオブジェクトを除外し警告
+- Min/Max ステッチ長は Phase 3 の postprocess で実装済み
+- レシピ → digitize: 密度/ステッチ長/下縫い/Pull/Push/最小サイズ/糸切り閾値/
+  自動密度を供給。角度・糸切りモード・下縫いはステッチタブで上書き可能
+
+#### 検証状況 (計161テスト)
+
+- compensateRegion: Pull で直交拡張・Push で縫方向収縮・90°回転で軸入替・
+  補正0で不変・穴も同変換
+- densityCompensatedSpacing: 無効=不変 / 大面=基準 / 小面=拡張 (≤1.4倍)
+- レシピ: 全レシピ妥当値・伸縮>標準の Pull・不明 ID フォールバック・単位変換
+- 統合: Small Object 除外+警告 / Pull で針数増 / auto density で小面の針数減
+- サンプル (roundtrip) はレシピ非使用のため期待値不変
+
+
 
 ### Phase 8: 文字刺繍 (フォント → サテン/タタミ文字) ✅
 
@@ -438,7 +479,6 @@ Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針
 
 ## 次フェーズの候補 (将来拡張、基礎構造を壊さず追加可能)
 
-- Phase 9: 布地レシピ + Pull/Push 補正 (UI の布地タブは枠だけ実装済み)
 - Phase 10: PhotoStitch (12,000針制限つき)
 - Phase 11: 作業指示書PDF・QRコード・デザインライブラリ
   (project.ts に id/meta/exportHistory は実装済み)
@@ -464,6 +504,9 @@ Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針
   複雑グリフはタタミに自動フォールバック。文字単位の個別編集
   (色/サイズ/回転) は未実装 (一括設定のみ)
 - 文字ラスタライズは実ブラウザのフォント描画が必要 (jsdom テスト不可)
+- Pull/Push 補正は重心基準の異方スケール近似 (定距離オフセットではない)。
+  小補正値 (〜0.5mm) 向け。大きな値では形状が歪むため推奨しない。
+  Pull は外周のみ対象 (穴の補正は重心スケールに含まれるが個別調整は不可)
 
 ## 未解決・保留
 

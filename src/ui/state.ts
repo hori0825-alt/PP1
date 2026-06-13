@@ -11,6 +11,7 @@ import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
 import { importSvg } from "../import/svg";
+import { getRecipe, recipeToDigitizeOptions } from "../fabric/recipes";
 import type { TrimMode } from "../plan/connect";
 import { diagnose } from "../plan/diagnostics";
 import type { DiagnosticReport } from "../plan/diagnostics";
@@ -147,6 +148,14 @@ export function setTextRegions(state: AppState, regions: Region[], fillType: Fil
   recomputeStitches(state);
 }
 
+/** 布地レシピを選択し、下縫いを推奨値で初期化してステッチを再生成する */
+export function applyFabric(state: AppState, fabricId: string): void {
+  state.project.settings.fabricId = fabricId;
+  // 下縫いはレシピの推奨で上書き (ユーザーはステッチタブで再調整可能)
+  state.project.settings.underlay = [...getRecipe(fabricId).underlay];
+  recomputeStitches(state);
+}
+
 /** ベクター編集を開始: 現在の領域を編集可能形状に変換する */
 export function enterVectorEdit(state: AppState): void {
   if (state.regions.length === 0) {
@@ -207,7 +216,11 @@ export function recomputeStitches(state: AppState): void {
     state.stitchWarnings = [];
     return;
   }
+  // 布地レシピ由来の密度・補正・最小サイズを基礎にし、
+  // 角度・糸切りモード・下縫いはユーザー設定 (ステッチタブ) で上書きする
+  const recipe = getRecipe(s.fabricId);
   const result = digitizeRegions(state.regions, designName(state), {
+    ...recipeToDigitizeOptions(recipe),
     angleDeg: s.angleDeg,
     trimMode: s.trimMode,
     underlay: s.underlay as UnderlayType[],
