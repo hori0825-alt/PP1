@@ -1,0 +1,17 @@
+{
+  "id": "b-donut",
+  "name": "DONUT",
+  "purpose": "穴あき形状 (穴を埋めない) と色替え。穴の内部に着地しない",
+  "expect": {
+    "colorChanges": 1,
+    "maxTrims": 1
+  },
+  "actual": {
+    "stitches": 2575,
+    "colors": 2,
+    "colorChanges": 1,
+    "trims": 0,
+    "maxTravelMm": 6.5,
+    "estMinutes": 6.4
+  }
+}

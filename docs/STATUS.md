@@ -1,8 +1,51 @@
 # 開発ステータス
 
-最終更新: 2026-06-13 (Phase 5 完了)
+最終更新: 2026-06-13 (Phase 6 完了)
 
 ## 完了フェーズ
+
+### Phase 6: 実機検証準備・仕上げ ✅
+
+#### 追加・変更ファイル
+
+```
+src/export/
+  decode.ts      … PES/DST リーダー (test/helpers.ts から昇格)。
+                   dstStitchPoints / pesStitchPoints で絶対座標復元
+  svgPreview.ts  … planToSvg: StitchPlan を SVG プレビューに (DOM 非依存)
+  flatten.ts     … [修正] 先頭が空 ColorBlock のとき色替えを誤挿入する
+                   バグを修正 (emittedBlocks で判定)
+src/samples/
+  designs.ts     … 実機テスト用サンプル3種の定義 (決定的・画像不要)
+scripts/
+  build-samples.ts … samples/ に pes/dst/svg/json + README を生成
+test/
+  roundtrip.test.ts … サンプル往復検証 + エッジケース (計19テスト)
+  helpers.ts     … decode.ts の再エクスポートに変更
+samples/         … 生成物 (3サンプル × pes/dst/svg/json + README.md)
+docs/FIELD-TEST.md … 実機テスト手順書
+README.md        … v2 内容に全面更新
+```
+
+#### サンプル実測値 (npm run samples)
+
+| ID | 針数 | 色替え | 糸切り | 確認内容 |
+|----|-----:|------:|------:|----------|
+| a-solid-circle | 2505 | 0 | **0** | 単色タタミの連続性 (面途中で糸切りなし) |
+| b-donut | 2575 | 1 | **0** | 穴を埋めない + 色替え1回 |
+| c-scatter | 1732 | 2 | 6 | 同色分散の縫い順最適化 (糸切りは遠隔ジャンプのみ) |
+
+- a/b で糸切り 0 回 = 「面の途中で糸切りしない」が実現できている証拠
+- c の糸切り6回はすべて 10mm 超の遠隔移動 (最大渡り 49mm)
+
+#### 検証状況 (計115テスト)
+
+- 3サンプル × {検証OK・枠内/12000針・PES往復・DST往復} = 12
+- エッジケース: 1針 Run / 空 ColorBlock (色替え誤挿入しない) /
+  枠ぴったり±50mm / 完全空プラン
+- PES/DST を decode.ts で読み戻し、全ステッチ点の座標一致を確認
+  (-0/+0 は正規化。ファイルとしては正しく往復)
+
 
 ### Phase 5: UI・シーケンスビュー・シミュレーター・診断 ✅
 
@@ -301,28 +344,36 @@ DST:
 - `npm run build`: 成功
 - `npm run dev` でデモページから phase1-demo.pes / .dst をダウンロード可能
 
-## 次フェーズへの引き継ぎ事項 (Phase 6: 実機検証準備・仕上げ)
+## 最小実用セット (Phase 1〜6) 完了
 
-- 実装内容:
-  1. samples/ に実機テスト用サンプル3種を生成・保存:
-     (a) 単色の円 (タタミ・連続性確認) (b) 2色・穴あき (穴/色替え確認)
-     (c) 3色・同色分散 (糸切り最適化確認)。各々に期待糸切り/色替え/針数を明記
-  2. PES バイナリの最終検証: 出力 PES を test/helpers.ts の decodePes で
-     読み戻し、針数/色/座標一致のラウンドトリップを samples で確認
-  3. エッジケース: 1針 Run・空 ColorBlock・枠ぴったりデザイン
-  4. README.md を v2 内容に全面更新 (使い方・実機テスト手順)
-  5. docs/ に実機テスト手順書
-- サンプル生成は Node スクリプト (scripts/) で digitizeRegions →
-  writePes/writeDst → ファイル書き出し。合成 Region を直接組む
-  (画像不要、決定的)
-- 既知の制約 (将来改善):
-  - 色順は面積降順のみ (重なり検出による厳密レイヤー判定は未実装)
-  - 開始点/終了点マーカーは表示・自動配置のみ (ドラッグ変更は未実装。
-    tatamiFill の startNear/exitNear をユーザー上書きする経路が必要)
-  - シーケンスビューの D&D は色ブロック単位 (同色内オブジェクトの
-    並べ替えは未実装)
-  - satinFromRegion は startNear/exitNear 未対応 (タタミのみ)
-  - PES は最小構成 v1 (CEmbOne なし)。実機で問題あれば v6 検討
+補足で挙げられた「最初に実用化すべき項目」がすべて揃いました:
+PNG/SVG読込・色数削減・輪郭スムージング・タタミ/サテン/ランニング生成・
+面縫い中に糸切りしない構造・同色パーツ接続・Branching・Closest Join・
+Travel on Edge・シーケンスビュー・針数診断・PES出力・12,000針制限。
+
+実機テスト (docs/FIELD-TEST.md) で samples/ の3種を縫い、糸切り回数が
+期待どおりかを確認するのが次のリアルな検証ステップ。
+
+## 次フェーズの候補 (将来拡張、基礎構造を壊さず追加可能)
+
+- Phase 7: ベクター/ノード編集・Snap to Artwork
+- Phase 8: 文字刺繍 (TrueType → サテン文字)
+- Phase 9: 布地レシピ + Pull/Push 補正 (UI の布地タブは枠だけ実装済み)
+- Phase 10: PhotoStitch (12,000針制限つき)
+- Phase 11: 作業指示書PDF・QRコード・デザインライブラリ
+  (project.ts に id/meta/exportHistory は実装済み)
+- Phase 12: アップリケ・3D・装飾配置
+
+## 既知の制約 (将来改善)
+
+- 色順は面積降順のみ (重なり検出による厳密レイヤー判定は未実装)
+- 開始点/終了点マーカーは表示・自動配置のみ (ドラッグ変更は未実装。
+  tatamiFill の startNear/exitNear をユーザー上書きする経路が必要)
+- シーケンスビューの D&D は色ブロック単位 (同色内オブジェクトの並べ替えは未実装)
+- satinFromRegion は startNear/exitNear 未対応 (タタミのみ)
+- PES は最小構成 v1 (CEmbOne なし)。実機で問題あれば v6 検討
+- 細い領域は satin ジェネレーター登録済みだが digitize は現状タタミ固定
+  (細領域の自動サテン振り分けは未実装)
 
 ## 未解決・保留
 

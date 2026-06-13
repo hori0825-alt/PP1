@@ -40,12 +40,16 @@ function splitMove(from: Point, to: Point, maxLen: number): Point[] {
 export function flattenPlan(plan: StitchPlan): MachineOp[] {
   const ops: MachineOp[] = [];
   let cur: Point | null = null;
+  let emittedBlocks = 0; // 実際にステッチを出したブロック数 (空ブロックは数えない)
 
   for (let bi = 0; bi < plan.blocks.length; bi++) {
     const block = plan.blocks[bi];
     const runs = block.runs.filter((r) => r.stitches.length > 0);
     if (runs.length === 0) continue;
-    if (bi > 0) ops.push({ kind: "colorChange" });
+    // 色替えは「すでに別の色を縫った後」にだけ入れる (先頭の空ブロックで
+    // 誤って色替えが入らないよう、ブロック番号ではなく出力済み数で判定)
+    if (emittedBlocks > 0) ops.push({ kind: "colorChange" });
+    emittedBlocks++;
 
     for (let ri = 0; ri < runs.length; ri++) {
       const run = runs[ri];

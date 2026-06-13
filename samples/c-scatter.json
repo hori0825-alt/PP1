@@ -1,0 +1,17 @@
+{
+  "id": "c-scatter",
+  "name": "FLOWER",
+  "purpose": "同色分散の縫い順最適化。糸切りは遠隔ジャンプのみ (色数+α)",
+  "expect": {
+    "colorChanges": 2,
+    "maxTrims": 8
+  },
+  "actual": {
+    "stitches": 1732,
+    "colors": 3,
+    "colorChanges": 2,
+    "trims": 6,
+    "maxTravelMm": 49,
+    "estMinutes": 4.3
+  }
+}

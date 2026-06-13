@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "samples": "vite-node scripts/build-samples.ts"
   },
   "devDependencies": {
     "jsdom": "^29.1.1",
