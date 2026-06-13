@@ -122,6 +122,23 @@ export function chaikinClosed(path: Point[], iterations = 1): Point[] {
   return pts;
 }
 
+/** ポリゴンの面積重心。退化時は先頭点を返す */
+export function polygonCentroid(path: Point[]): Point {
+  let cx = 0;
+  let cy = 0;
+  let a = 0;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i];
+    const q = path[(i + 1) % path.length];
+    const cross = p.x * q.y - q.x * p.y;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+    a += cross;
+  }
+  if (Math.abs(a) < 1e-9) return path[0];
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
 function orient(a: Point, b: Point, c: Point): number {
   return Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
 }

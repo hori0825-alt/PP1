@@ -1,8 +1,47 @@
 # 開発ステータス
 
-最終更新: 2026-06-12 (Phase 3 完了)
+最終更新: 2026-06-13 (Phase 4 完了)
 
 ## 完了フェーズ
+
+### Phase 4: 縫い順・糸切り最適化 ✅ (前作の最重要問題への対策)
+
+#### 追加ファイル
+
+```
+src/plan/
+  order.ts     … optimizeOrder: 貪欲法(最近傍) + 2-opt による巡回順最適化
+  connect.ts   … decideConnection: 3mm未満=continuous / 10mm未満=jump / 以遠=trim。
+                 TrimMode (auto/never/always) と trimDistance 指定可。
+                 同一オブジェクト内は全モードで糸切り禁止
+  branching.ts … 線群のグラフ化 + DFS二重走行 (再走行) で連結線群を
+                 1本の連続 Run に。branchOrder (単純貪欲) も提供
+  stats.ts     … planStats: 針数/色別/糸切り/ジャンプ/渡り距離(最大・平均)/推定時間
+  reduce.ts    … autoReduce: 密度↓ → 小領域削除 → 針長↑ → サイズ↓ の順で
+                 12,000針以下まで自動削減、適用内容を報告
+test/plan.test.ts (18テスト)
+```
+
+#### Closest Join / Travel on Edge (糸切り削減の本体)
+
+- digitizeRegions: 色順=面積大→小 (背景先)。同色内は重心の貪欲+2-opt。
+  各領域は前の終点を startNear、次の領域の重心を exitNear として生成
+- tatamiFill に入口/出口トラベルを追加:
+  - 入口: 前のオブジェクトに最も近い境界点から縁沿いに走査入口へ移動
+  - 出口: 縫い終わりに次のオブジェクトに最も近い境界点まで縁沿いに移動
+  - どちらも「接続距離が 1mm 以上縮む場合のみ」実行 (無駄な travel 抑制)
+  - これにより接続距離 = オブジェクト間の実ギャップになり、
+    近接オブジェクトの糸切りが構造的に消える
+- scanline.ts に nearestOnRing (リング周上の最近点) を追加
+
+#### サンプル実測 (3色・9オブジェクト分散配置、100mm枠)
+
+- 糸切り 6回 = 全て 10mm 超の遠隔ジャンプのみ (近接接続の糸切りゼロ)
+- 最適化で総渡り距離 228mm → 185mm (-19%)、針数 1,853 / 色替え 2
+- テスト: 近接3個(ギャップ2mm)→糸切り0 / 遠隔2個(50mm)→糸切り1 /
+  trimMode=never→0・always→全間 / Y字分岐→再走行込み1本Run
+
+
 
 ### Phase 3: ステッチ生成 — タタミ/サテン/ランニング/下縫い ✅
 
@@ -203,30 +242,28 @@ DST:
 - `npm run build`: 成功
 - `npm run dev` でデモページから phase1-demo.pes / .dst をダウンロード可能
 
-## 次フェーズへの引き継ぎ事項 (Phase 4: 縫い順・糸切り最適化)
+## 次フェーズへの引き継ぎ事項 (Phase 5: UI・シーケンスビュー・シミュレーター・診断)
 
-- 実装先: `src/plan/`。入力は digitize 後の StitchPlan (または
-  Region+Run の中間構造)、出力は最適化された StitchPlan
-- やること:
-  1. 色グルーピング: 同色を1ブロックに (digitize が既に実施)。
-     色替え回数を最小化する色順の決定。レイヤー重なりで見た目が崩れる
-     場合の分割判定 (Region の重なり判定が必要)
-  2. 同色内の縫い順: 各 Run の開始/終了点候補を列挙し、
-     貪欲法 + 2-opt で巡回順を最適化 (Closest Join)
-  3. 接続判定: TRIM_THRESHOLDS (3/5/10mm) に基づく
-     continuous/jump/trim 決定 + オブジェクト単位の
-     Always/Never/Auto Trim 上書き
-  4. Branching: 同色ランニング/サテンライン群のグラフ化と一筆書き接続
-  5. 統計: src/plan/stats.ts (総針数/色別/糸切り/色替え/渡り距離)
-  6. 自動針数削減: src/plan/reduce.ts (密度→小領域→針長→サイズの順)
-- 現状の digitize.ts は「入力順のまま縫う」素朴な実装。
-  Phase 4 で digitize から順序決定を src/plan/ に移管する
-- タタミ Run の開始/終了点を変えるには tatamiFill の entry 選択を
-  外から指定できるようにする必要がある (現在は前位置から最近傍を自動選択。
-  tatamiFill にオプション追加で対応可能)
-- テスト必須: 近接3オブジェクト (間隔2mm) → trim 0 /
-  遠隔2オブジェクト (50mm) → trim 1 / ランダム10個で総渡り距離が
-  入力順より短い / ColorBlock 内 Run 途中に trim が構造上ない
+- 実装先: `src/ui/` の全面構築 + `src/core/diagnostics.ts`
+- UI 構成: 左ツール / 中央キャンバス / 右プロパティ /
+  下シミュレーター&シーケンスビュー / 右上統計。白基調・情報過多にしない。
+  かんたんモード (ウィザード) とプロモードの切替
+- シーケンスビュー: 実際の縫製順と完全一致のオブジェクトリスト
+  (色チップ/タイプ/針数/糸切り/渡り距離)、D&D 順序変更、フィルター。
+  データは plan.blocks[].runs[] と planStats から取れる
+- シミュレーター: 再生/速度/スライダー/針単位移動/糸切り・色替えジャンプ。
+  flattenPlan(plan) の MachineOp 列をそのまま再生するのが正確
+  (export/flatten.ts は UI からも使える)
+- 開始点・終了点マーカーのドラッグ変更: tatamiFill の startNear/exitNear を
+  ユーザー指定で上書きする経路が必要 (digitize にオブジェクト単位設定を追加)
+- 診断: validate.ts + planStats を OK/注意/修正必須の3段階で表示、
+  自動修正ボタン (針数超過→autoReduce は実装済み)
+- プロジェクト保存/読込 (JSON): 元画像参照/領域/設定/縫い順を含める
+- 既知の制約 (将来改善):
+  - 色順は面積降順のみ (重なり検出による厳密なレイヤー判定は未実装)
+  - runningStitch は折れ線全体を均等再サンプル (鋭角コーナーの頂点は
+    厳密に保持されない)
+  - satinFromRegion は startNear/exitNear 未対応 (タタミのみ対応)
 
 ## 未解決・保留
 

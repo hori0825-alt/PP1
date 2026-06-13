@@ -12,6 +12,9 @@ import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
 import { importSvg } from "../import/svg";
+import type { TrimMode } from "../plan/connect";
+import { autoReduce } from "../plan/reduce";
+import { planStats } from "../plan/stats";
 import { digitizeRegions } from "../stitch/digitize";
 import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
@@ -39,6 +42,9 @@ interface AppState {
   removeWhite: boolean;
   targetSizeMm: number;
   angleDeg: number;
+  trimMode: TrimMode;
+  /** 自動削減の適用内容 (表示用) */
+  reduceApplied: string[];
 }
 
 const state: AppState = {
@@ -55,6 +61,8 @@ const state: AppState = {
   removeWhite: true,
   targetSizeMm: 100,
   angleDeg: 45,
+  trimMode: "auto",
+  reduceApplied: [],
 };
 
 function download(filename: string, data: Uint8Array): void {
@@ -83,6 +91,7 @@ function recompute(): void {
   if (state.regions.length > 0) {
     const result = digitizeRegions(state.regions, state.fileName.slice(0, 8).toUpperCase(), {
       angleDeg: state.angleDeg,
+      trimMode: state.trimMode,
     });
     state.plan = result.plan;
     state.stitchWarnings = result.warnings;
@@ -92,6 +101,24 @@ function recompute(): void {
     state.validation = null;
     state.stitchWarnings = [];
   }
+  state.reduceApplied = [];
+  render();
+}
+
+/** 自動針数削減を実行して結果を反映する */
+function runAutoReduce(): void {
+  if (state.regions.length === 0) return;
+  const result = autoReduce(state.regions, state.fileName.slice(0, 8).toUpperCase(), {
+    angleDeg: state.angleDeg,
+    trimMode: state.trimMode,
+  });
+  state.regions = result.regions;
+  state.plan = result.plan;
+  state.validation = validatePlan(result.plan);
+  state.reduceApplied = [
+    `針数 ${result.before} → ${result.after}`,
+    ...result.applied,
+  ];
   render();
 }
 
@@ -206,22 +233,32 @@ function statsPanel(): string {
     return "<p class=\"note\">画像または SVG を読み込んでください。</p>";
   }
   const v = state.validation;
+  const stats = planStats(state.plan);
   const issuesHtml = [...v.issues.map((i) => ({ sev: i.severity, msg: i.message })),
     ...state.stitchWarnings.map((w) => ({ sev: "warning" as const, msg: w }))]
     .map((i) => `<p class="${i.sev}">${i.sev === "error" ? "✗" : "⚠"} ${i.msg}</p>`)
     .join("");
+  const overLimit = v.issues.some((i) => i.code === "stitch-count-exceeded");
+  const reducedHtml =
+    state.reduceApplied.length > 0
+      ? `<div class="reduced">${state.reduceApplied.map((s) => `<p>✓ ${s}</p>`).join("")}</div>`
+      : "";
   return `
     <dl>
       <dt>針数</dt><dd>${countStitches(state.plan)}</dd>
       <dt>色数</dt><dd>${v.stats.colorCount}</dd>
       <dt>糸切り</dt><dd>${countTrims(state.plan)} 回</dd>
       <dt>色替え</dt><dd>${v.stats.colorChanges} 回</dd>
+      <dt>渡り糸</dt><dd>最大 ${(stats.travel.max * UNIT_MM).toFixed(1)} / 平均 ${(stats.travel.avg * UNIT_MM).toFixed(1)} mm</dd>
+      <dt>推定時間</dt><dd>約 ${Math.ceil(stats.estMinutes)} 分</dd>
       <dt>サイズ</dt><dd>${(v.stats.width * UNIT_MM).toFixed(1)} × ${(v.stats.height * UNIT_MM).toFixed(1)} mm</dd>
     </dl>
     <div id="validation" class="${v.ok ? "ok" : "error"}">
       ${v.ok ? "✓ 出力可能" : "✗ 修正が必要"}
       ${issuesHtml}
     </div>
+    ${overLimit ? `<button id="reduce">自動針数削減を実行</button>` : ""}
+    ${reducedHtml}
   `;
 }
 
@@ -295,6 +332,13 @@ function render(): void {
               .join("")}
           </select>
         </label>
+        <label>糸切り
+          <select id="trim">
+            <option value="auto" ${state.trimMode === "auto" ? "selected" : ""}>自動 (距離判定)</option>
+            <option value="never" ${state.trimMode === "never" ? "selected" : ""}>切らない</option>
+            <option value="always" ${state.trimMode === "always" ? "selected" : ""}>常に切る</option>
+          </select>
+        </label>
         <label>表示
           <select id="view">
             <option value="original" ${state.view === "original" ? "selected" : ""}>元画像</option>
@@ -346,6 +390,13 @@ function render(): void {
   document.getElementById("angle")?.addEventListener("change", (e) => {
     state.angleDeg = Number((e.target as HTMLSelectElement).value);
     recompute();
+  });
+  document.getElementById("trim")?.addEventListener("change", (e) => {
+    state.trimMode = (e.target as HTMLSelectElement).value as TrimMode;
+    recompute();
+  });
+  document.getElementById("reduce")?.addEventListener("click", () => {
+    runAutoReduce();
   });
   document.getElementById("view")?.addEventListener("change", (e) => {
     state.view = (e.target as HTMLSelectElement).value as ViewMode;

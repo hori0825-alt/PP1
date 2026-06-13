@@ -97,6 +97,27 @@ export function travelAlongRing(ring: RingGeom, sFrom: number, sTo: number): Poi
   return [ringPointAt(ring, from), ...via.map((v) => v.p), ringPointAt(ring, to)];
 }
 
+/** リング周上で点 p に最も近い位置を求める (Closest Join の入口/出口計算用) */
+export function nearestOnRing(ring: RingGeom, p: Point): { s: number; point: Point; dist: number } {
+  let best = { s: 0, point: ring.pts[0], dist: Infinity };
+  const n = ring.pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = ring.pts[i];
+    const b = ring.pts[(i + 1) % n];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 < 1e-12 ? 0 : ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const q = { x: a.x + dx * t, y: a.y + dy * t };
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < best.dist) {
+      best = { s: ring.prefix[i] + Math.sqrt(len2) * t, point: q, dist: d };
+    }
+  }
+  return best;
+}
+
 /**
  * 領域を角度 angleRad の平行線で走査する。
  * 返り値の座標は「回転済み空間」(走査線が水平になる向き)。

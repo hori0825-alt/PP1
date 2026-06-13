@@ -12,6 +12,7 @@
 import { mm } from "../core/constants";
 import {
   chaikinClosed,
+  polygonCentroid,
   pointInPolygon,
   selfIntersects,
   signedArea,
@@ -104,23 +105,6 @@ function traceLoops(map: LabelMap, color: number): Loop[] {
   return loops;
 }
 
-/** ポリゴンの重心 (穴の所属判定用) */
-function centroid(path: Point[]): Point {
-  let cx = 0;
-  let cy = 0;
-  let a = 0;
-  for (let i = 0; i < path.length; i++) {
-    const p = path[i];
-    const q = path[(i + 1) % path.length];
-    const cross = p.x * q.y - q.x * p.y;
-    cx += (p.x + q.x) * cross;
-    cy += (p.y + q.y) * cross;
-    a += cross;
-  }
-  if (Math.abs(a) < 1e-9) return path[0];
-  return { x: cx / (3 * a), y: cy / (3 * a) };
-}
-
 /**
  * ラベルマップから全色の Region を抽出する。
  * 出力座標は内部単位 (0.1mm)、原点はラベルマップ中心。
@@ -150,7 +134,7 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): Region[]
     const holeOf = new Map<Loop, Loop[]>();
     for (const o of outers) holeOf.set(o, []);
     for (const hole of holes) {
-      const c = centroid(hole.vertices);
+      const c = polygonCentroid(hole.vertices);
       let best: Loop | null = null;
       for (const o of outers) {
         if (o.area > (best?.area ?? Infinity)) continue;

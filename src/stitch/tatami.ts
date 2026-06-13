@@ -15,8 +15,9 @@
 
 import type { Region } from "../core/region";
 import type { Point, StitchRun } from "../core/types";
+import { mm } from "../core/constants";
 import type { CrossRef, Seg } from "./scanline";
-import { rotatePoint, scanRegion, travelAlongRing } from "./scanline";
+import { nearestOnRing, rotatePoint, scanRegion, travelAlongRing } from "./scanline";
 import type { GeneratorResult, TatamiParams } from "./types";
 
 interface Section {
@@ -59,10 +60,29 @@ function rowPoints(seg: Seg, leftToRight: boolean, parity: number, stitchLength:
   return pts;
 }
 
-export function tatamiFill(region: Region, params: TatamiParams): GeneratorResult {
+/**
+ * @param startNear 縫い始めをこの点 (デザイン座標) の近くにする。
+ *   前のオブジェクトの終点を渡すと Closest Point 接続になる。
+ *   開始点が走査の入口から遠い場合は、縁に沿った移動ステッチ
+ *   (Travel on Edge) を先頭に挿入して接続距離を最短化する。
+ * @param exitNear 縫い終わりをこの点の近くにする。
+ *   次のオブジェクトの位置を渡すと、縁に沿って出口まで移動してから
+ *   終わるため、次への渡り距離が最短になる (糸切り回避)。
+ */
+export function tatamiFill(
+  region: Region,
+  params: TatamiParams,
+  startNear: Point | null = null,
+  exitNear: Point | null = null,
+): GeneratorResult {
   const warnings: string[] = [];
   const angleRad = (params.angleDeg * Math.PI) / 180;
   const { rows, rings } = scanRegion(region, angleRad, params.rowSpacing);
+  // startNear / exitNear を走査空間 (回転済み座標) へ変換
+  const cosNeg = Math.cos(-angleRad);
+  const sinNeg = Math.sin(-angleRad);
+  const startRot = startNear ? rotatePoint(startNear, cosNeg, sinNeg) : null;
+  const exitRot = exitNear ? rotatePoint(exitNear, cosNeg, sinNeg) : null;
 
   const allSegs: Seg[] = rows.flat();
   if (allSegs.length === 0) {
@@ -147,6 +167,21 @@ export function tatamiFill(region: Region, params: TatamiParams): GeneratorResul
   const runs: StitchRun[] = [];
   const visited = new Set<Section>();
 
+  // セクションと点の最短距離 (端点4候補で近似)
+  const sectionDist = (sec: Section, p: Point): number => {
+    const first = sec.segs[0];
+    const last = sec.segs[sec.segs.length - 1];
+    let best = Infinity;
+    for (const seg of [first, last]) {
+      best = Math.min(
+        best,
+        Math.hypot(seg.x1 - p.x, seg.y - p.y),
+        Math.hypot(seg.x2 - p.x, seg.y - p.y),
+      );
+    }
+    return best;
+  };
+
   for (let comp = 0; comp < compCount; comp++) {
     const compSections = sections.filter((s) => s.component === comp);
     if (compSections.length === 0) continue;
@@ -162,7 +197,19 @@ export function tatamiFill(region: Region, params: TatamiParams): GeneratorResul
         if (!visited.has(nb)) dfs(nb);
       }
     };
-    dfs(compSections[0]);
+    // startNear が指定されていれば最も近いセクションから縫い始める
+    let root = compSections[0];
+    if (startRot) {
+      let bestD = Infinity;
+      for (const sec of compSections) {
+        const d = sectionDist(sec, startRot);
+        if (d < bestD) {
+          bestD = d;
+          root = sec;
+        }
+      }
+    }
+    dfs(root);
 
     const stitches: Point[] = [];
     let pos: Point | null = null;
@@ -181,10 +228,11 @@ export function tatamiFill(region: Region, params: TatamiParams): GeneratorResul
         candidates.push({ seg, fromTop, left: false, p: { x: seg.x2, y: seg.y }, ref: seg.c2 });
       }
       let entry = candidates[0];
-      if (pos !== null) {
+      const ref = pos ?? startRot;
+      if (ref !== null) {
         let best = Infinity;
         for (const c of candidates) {
-          const d = Math.hypot(c.p.x - pos.x, c.p.y - pos.y);
+          const d = Math.hypot(c.p.x - ref.x, c.p.y - ref.y);
           if (d < best) {
             best = d;
             entry = c;
@@ -202,6 +250,16 @@ export function tatamiFill(region: Region, params: TatamiParams): GeneratorResul
         const travel = resample(path, params.stitchLength);
         // 現在位置と重複する先頭は除く
         for (let i = 1; i < travel.length; i++) stitches.push(travel[i]);
+      } else if (startRot !== null) {
+        // 入口トラベル (Travel on Edge): 前のオブジェクトに最も近い境界点から
+        // 縁に沿って走査の入口まで移動する。接続距離が縮む場合のみ行う
+        const ring = rings[entry.ref.ring];
+        const near = nearestOnRing(ring, startRot);
+        const dDirect = Math.hypot(entry.p.x - startRot.x, entry.p.y - startRot.y);
+        if (near.dist + mm(1) < dDirect) {
+          const travel = resample(travelAlongRing(ring, near.s, entry.ref.s), params.stitchLength);
+          for (const p of travel) stitches.push(p);
+        }
       }
 
       // セクション本体をジグザグに縫う
@@ -218,6 +276,18 @@ export function tatamiFill(region: Region, params: TatamiParams): GeneratorResul
         pos = { x: leftToRight ? seg.x2 : seg.x1, y: seg.y };
         posRef = leftToRight ? seg.c2 : seg.c1;
         leftToRight = !leftToRight;
+      }
+    }
+
+    // 出口トラベル (Travel on Edge): 次のオブジェクトに最も近い境界点まで
+    // 縁に沿って移動してから終わる。渡り距離が縮む場合のみ行う
+    if (exitRot !== null && pos !== null && posRef !== null) {
+      const ring = rings[posRef.ring];
+      const near = nearestOnRing(ring, exitRot);
+      const dDirect = Math.hypot(exitRot.x - pos.x, exitRot.y - pos.y);
+      if (near.dist + mm(1) < dDirect) {
+        const travel = resample(travelAlongRing(ring, posRef.s, near.s), params.stitchLength);
+        for (let i = 1; i < travel.length; i++) stitches.push(travel[i]);
       }
     }
 
