@@ -163,85 +163,106 @@ export function digitizeRegions(
       const obj = objectOfRegion.get(source);
       // 安定 id があればそれを、なければ通し番号を使う
       const objectId = obj ? obj.id : objectIdCounter++;
-
-      let processed: StitchRun[];
-      let isBaked = false;
-      let underlayCount = 0;
-      let fillUsedSatin = false;
+      const exitNear =
+        doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
 
       const bakedRuns = obj?.baked?.filter((r) => r.stitches.length > 0);
+      // processed = このオブジェクトの本体ラン (接続決定前、stitchType 付き)
+      let processed: StitchRun[];
+
       if (bakedRuns && bakedRuns.length > 0) {
         // マニュアル編集済みオブジェクト: 再生成せず針列をそのまま使う (Phase 7 の土台)
-        isBaked = true;
         processed = bakedRuns.map((r) => ({
           stitches: r.stitches.slice(),
           connection: r.connection,
-          stitchType: r.stitchType,
+          stitchType: r.stitchType ?? "manual",
         }));
       } else {
-        // パーツ固有のステッチ角度 (未設定なら全体角度)。タタミ(面)の縫い目方向を決める。
+        // パーツ固有のステッチ角度 (未設定なら全体角度) と縫い方を解決
         const objectAngleDeg = source.angleDeg ?? params.angleDeg;
-        const objectSewRad = (objectAngleDeg * Math.PI) / 180;
-        // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
-        const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
-        const regionRuns: StitchRun[] = [];
-
-        // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
-        const regionParams: TatamiParams = {
-          ...params,
-          angleDeg: objectAngleDeg,
-          rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
-        };
-
-        // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
-        if (options.underlay && options.underlay.length > 0) {
-          const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
-          regionRuns.push(...u.runs);
-          underlayCount = u.runs.length;
-          warnings.push(...u.warnings);
-        }
-
-        const fillStart =
-          regionRuns.length > 0
-            ? regionRuns[regionRuns.length - 1].stitches[
-                regionRuns[regionRuns.length - 1].stitches.length - 1
-              ]
-            : currentEnd;
-        const exitNear =
-          doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-        // パーツ固有の fillType が設定されていればそれを優先する (補正後ではなく元領域から読む)
         const regionFillType = source.fillType ?? options.fillType ?? "tatami";
-        const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
-        regionRuns.push(...fill.runs);
-        warnings.push(...fill.warnings);
-        fillUsedSatin = fill.usedSatin;
-        processed = postprocessRuns(regionRuns);
+        // --- 差分再生成 (Phase 2): 形状・パラメータ・前後文脈が同じなら本体を再利用 ---
+        const paramsSig = JSON.stringify([
+          objectAngleDeg,
+          regionFillType,
+          params.rowSpacing,
+          params.stitchLength,
+          options.satinSpacing ?? 0,
+          (options.underlay ?? []).join("+"),
+          pull,
+          push,
+          autoDensity,
+        ]);
+        const ctxSig = `${currentEnd ? `${currentEnd.x},${currentEnd.y}` : "-"}|${
+          exitNear ? `${Math.round(exitNear.x)},${Math.round(exitNear.y)}` : "-"
+        }`;
+        const cache = obj?.cache;
+        if (
+          cache &&
+          cache.outerRef === source.outer &&
+          cache.paramsSig === paramsSig &&
+          cache.ctxSig === ctxSig
+        ) {
+          // 変更なし: 前回生成した本体をそのまま使い、この面は縫い直さない
+          processed = cache.runs;
+          warnings.push(...cache.warnings);
+        } else {
+          const objectSewRad = (objectAngleDeg * Math.PI) / 180;
+          // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
+          const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
+          const localWarnings: string[] = [];
+          const regionRuns: StitchRun[] = [];
+
+          // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
+          const regionParams: TatamiParams = {
+            ...params,
+            angleDeg: objectAngleDeg,
+            rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
+          };
+
+          // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)
+          if (options.underlay && options.underlay.length > 0) {
+            const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
+            for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
+            localWarnings.push(...u.warnings);
+          }
+
+          const fillStart =
+            regionRuns.length > 0
+              ? regionRuns[regionRuns.length - 1].stitches[
+                  regionRuns[regionRuns.length - 1].stitches.length - 1
+                ]
+              : currentEnd;
+          const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
+          const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
+          for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
+          localWarnings.push(...fill.warnings);
+
+          processed = postprocessRuns(regionRuns);
+          warnings.push(...localWarnings);
+          if (obj) obj.cache = { outerRef: source.outer, paramsSig, ctxSig, runs: processed, warnings: localWarnings };
+        }
       }
 
-      // --- 5./6. 接続決定 ---
+      // --- 接続決定 (常に最新の文脈で計算。キャッシュした本体ランは書き換えない) ---
+      const emitted: StitchRun[] = [];
       for (let i = 0; i < processed.length; i++) {
         // i === 0: 前の領域からの接続 (糸切り許可)。i > 0: 同一領域内 (糸切り禁止)
-        const prevRun = i === 0 ? (runs.length > 0 ? runs[runs.length - 1] : null) : processed[i - 1];
+        const prevRun = i === 0 ? (runs.length > 0 ? runs[runs.length - 1] : null) : emitted[i - 1];
         const from =
           prevRun && prevRun.stitches.length > 0
             ? prevRun.stitches[prevRun.stitches.length - 1]
             : i === 0
               ? currentEnd
               : null;
-        processed[i] = {
+        emitted.push({
           stitches: processed[i].stitches,
           connection: decideConnection(from, processed[i].stitches[0], i > 0, connectOptions),
           objectId,
-          stitchType: isBaked
-            ? (processed[i].stitchType ?? "manual")
-            : i < underlayCount
-              ? "underlay"
-              : fillUsedSatin
-                ? "satin"
-                : "tatami",
-        };
+          stitchType: processed[i].stitchType ?? "tatami",
+        });
       }
-      runs.push(...processed);
+      runs.push(...emitted);
       if (runs.length > 0) {
         const lastRun = runs[runs.length - 1];
         currentEnd = lastRun.stitches[lastRun.stitches.length - 1];

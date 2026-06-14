@@ -254,13 +254,18 @@ export function setRegionFill(state: AppState, idx: number, fill: FillType | nul
  * 選択パーツのステッチ角度を設定 (null で全体角度に戻す) して再生成する。
  * 面(タタミ)の縫い目方向を決める。
  */
-export function setRegionAngle(state: AppState, idx: number, deg: number | null): void {
+export function setRegionAngle(
+  state: AppState,
+  idx: number,
+  deg: number | null,
+  opts: { skipDerived?: boolean } = {},
+): void {
   const region = state.regions[idx];
   if (!region) return;
   if (deg === null) delete region.angleDeg;
   else region.angleDeg = ((Math.round(deg) % 180) + 180) % 180;
   state.project.regions = state.regions;
-  recomputeStitches(state);
+  recomputeStitches(state, opts);
 }
 
 /** パーツの実効ステッチ角度 (個別設定がなければ全体角度) */
@@ -347,8 +352,13 @@ export function recomputeRegions(state: AppState): void {
   recomputeStitches(state);
 }
 
-/** 領域からステッチを生成し直す (regions → plan → 診断) */
-export function recomputeStitches(state: AppState): void {
+/**
+ * 領域からステッチを生成し直す (regions → plan → 診断)。
+ * @param opts.skipDerived 診断・シーケンス・シミュレーションの再構築を省く
+ *   (方向ドラッグ中など、軽量に縫い直してキャンバスだけ更新したいとき)。
+ *   差分再生成 (オブジェクトキャッシュ) と併せて、ドラッグを軽快にする。
+ */
+export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean } = {}): void {
   const s = state.project.settings;
   if (state.regions.length === 0) {
     state.objects = [];
@@ -381,7 +391,7 @@ export function recomputeStitches(state: AppState): void {
   state.plan = result.plan;
   state.project.plan = result.plan;
   state.stitchWarnings = result.warnings;
-  refreshDerived(state);
+  if (!opts.skipDerived) refreshDerived(state);
   state.reduceApplied = [];
 }
 

@@ -808,9 +808,9 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
     const { sx, sy } = localXY(ev);
     const p = screenToDesign(viewport, canvas, sx, sy);
     const c = polygonCentroid(region.outer);
-    setRegionAngle(state, idx, angleDegFromVector(p.x - c.x, p.y - c.y));
+    // ドラッグ中は差分再生成 + 診断スキップで軽量に縫い直し、キャンバスだけ更新
+    setRegionAngle(state, idx, angleDegFromVector(p.x - c.x, p.y - c.y), { skipDerived: true });
     didDrag = true;
-    // ドラッグ中は軽量に再描画 (パネルのスライダー値はドラッグ終了時に更新)
     renderCanvas(canvas, viewport, state);
   });
 
@@ -818,7 +818,9 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
     if (!draggingAngle) return;
     draggingAngle = false;
     if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
-    render(); // パネルの角度表示を最終値に更新
+    // ドラッグ終了時に診断・シーケンス等を最新化し、パネルの角度表示も更新
+    recomputeStitches(state);
+    render();
   };
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
