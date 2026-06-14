@@ -3,6 +3,8 @@
 // UI コンポーネントはこの状態を読み、変更時に recompute() を呼ぶ。
 
 import { mm } from "../core/constants";
+import { reconcileObjects } from "../core/object";
+import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
 import type { Region } from "../core/region";
@@ -78,6 +80,11 @@ export interface AppState {
   raster: RasterImage | null;
   labelMap: LabelMap | null;
   regions: Region[];
+  /**
+   * 永続オブジェクト層 (Phase 1)。regions と同期し、安定 id と baked を持つ。
+   * recomputeStitches が regions から再構成する (その場編集では id を維持)。
+   */
+  objects: EmbroideryObject[];
   plan: StitchPlan | null;
   diagnostics: DiagnosticReport | null;
   sequence: SequenceModel | null;
@@ -131,6 +138,7 @@ export function createState(): AppState {
     raster: null,
     labelMap: null,
     regions: [],
+    objects: [],
     plan: null,
     diagnostics: null,
     sequence: null,
@@ -260,6 +268,43 @@ export function effectiveAngle(state: AppState, idx: number): number {
   return state.regions[idx]?.angleDeg ?? state.project.settings.angleDeg;
 }
 
+/** 安定 id でオブジェクトを探す */
+export function findObject(state: AppState, id: number): EmbroideryObject | undefined {
+  return state.objects.find((o) => o.id === id);
+}
+
+/**
+ * オブジェクトを「マニュアル化 (ベイク)」する。
+ * 現在の plan 上のそのオブジェクトの針列を baked として固定し、
+ * 以後は自動再生成せずこの針列を使う (個々の針編集 = Phase 7 の入口)。
+ * @returns ベイクできたら true
+ */
+export function bakeObject(state: AppState, id: number): boolean {
+  const obj = findObject(state, id);
+  if (!obj || !state.plan) return false;
+  const runs = state.plan.blocks
+    .flatMap((b) => b.runs)
+    .filter((r) => r.objectId === id && r.stitches.length > 0)
+    .map((r) => ({
+      stitches: r.stitches.map((p) => ({ x: p.x, y: p.y })),
+      connection: r.connection,
+      stitchType: "manual" as const,
+    }));
+  if (runs.length === 0) return false;
+  obj.baked = runs;
+  recomputeStitches(state);
+  return true;
+}
+
+/** マニュアル化を解除し、自動再生成に戻す */
+export function unbakeObject(state: AppState, id: number): void {
+  const obj = findObject(state, id);
+  if (obj?.baked) {
+    delete obj.baked;
+    recomputeStitches(state);
+  }
+}
+
 /** 装飾配置などで領域を差し替え、ステッチを再生成する */
 export function replaceRegions(state: AppState, regions: Region[]): void {
   state.regions = regions;
@@ -306,6 +351,7 @@ export function recomputeRegions(state: AppState): void {
 export function recomputeStitches(state: AppState): void {
   const s = state.project.settings;
   if (state.regions.length === 0) {
+    state.objects = [];
     state.plan = null;
     state.diagnostics = null;
     state.sequence = null;
@@ -313,18 +359,25 @@ export function recomputeStitches(state: AppState): void {
     state.stitchWarnings = [];
     return;
   }
+  // 永続オブジェクトを regions に同期 (その場編集では id を維持、構造変更では作り直す)
+  state.objects = reconcileObjects(state.objects, state.regions);
   // 布地レシピ由来の密度・補正・最小サイズを基礎にし、
   // 角度・糸切りモード・下縫いはユーザー設定 (ステッチタブ) で上書きする
   const recipe = getRecipe(s.fabricId);
-  const result = digitizeRegions(state.regions, designName(state), {
-    ...recipeToDigitizeOptions(recipe),
-    angleDeg: s.angleDeg,
-    trimMode: s.trimMode,
-    underlay: s.underlay as UnderlayType[],
-    fillType: state.puffy ? "satin" : state.fillType,
-    // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
-    satinSpacing: state.puffy ? mm(0.3) : undefined,
-  });
+  const result = digitizeRegions(
+    state.regions,
+    designName(state),
+    {
+      ...recipeToDigitizeOptions(recipe),
+      angleDeg: s.angleDeg,
+      trimMode: s.trimMode,
+      underlay: s.underlay as UnderlayType[],
+      fillType: state.puffy ? "satin" : state.fillType,
+      // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
+      satinSpacing: state.puffy ? mm(0.3) : undefined,
+    },
+    state.objects,
+  );
   state.plan = result.plan;
   state.project.plan = result.plan;
   state.stitchWarnings = result.warnings;

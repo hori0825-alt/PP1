@@ -13,6 +13,7 @@
 import { SATIN_DEFAULT, TATAMI_DEFAULT } from "../core/constants";
 export type { FillType } from "../core/types";
 import { polygonCentroid, signedArea } from "../core/geometry";
+import type { EmbroideryObject } from "../core/object";
 import type { Region } from "../core/region";
 import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
@@ -95,8 +96,13 @@ export function digitizeRegions(
   regions: Region[],
   name: string,
   options: DigitizeOptions = {},
+  objects?: readonly EmbroideryObject[],
 ): DigitizeResult {
   const warnings: string[] = [];
+  // 永続オブジェクトが渡されたら、領域→オブジェクトを引けるようにする。
+  // 安定 id (選択・縫い順の同一性) と baked (マニュアル編集済み針列) に使う。
+  const objectOfRegion = new Map<Region, EmbroideryObject>();
+  if (objects) for (const o of objects) objectOfRegion.set(o.region, o);
   const params: TatamiParams = {
     angleDeg: options.angleDeg ?? 45,
     rowSpacing: options.rowSpacing ?? TATAMI_DEFAULT.rowSpacing,
@@ -154,47 +160,65 @@ export function digitizeRegions(
     const runs: StitchRun[] = [];
     for (let idx = 0; idx < ordered.length; idx++) {
       const source = ordered[idx];
-      // パーツ固有のステッチ角度 (未設定なら全体角度)。タタミ(面)の縫い目方向を決める。
-      const objectAngleDeg = source.angleDeg ?? params.angleDeg;
-      const objectSewRad = (objectAngleDeg * Math.PI) / 180;
-      // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
-      const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
-      const objectId = objectIdCounter++;
-      const regionRuns: StitchRun[] = [];
+      const obj = objectOfRegion.get(source);
+      // 安定 id があればそれを、なければ通し番号を使う
+      const objectId = obj ? obj.id : objectIdCounter++;
+
+      let processed: StitchRun[];
+      let isBaked = false;
       let underlayCount = 0;
+      let fillUsedSatin = false;
 
-      // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
-      const regionParams: TatamiParams = {
-        ...params,
-        angleDeg: objectAngleDeg,
-        rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
-      };
+      const bakedRuns = obj?.baked?.filter((r) => r.stitches.length > 0);
+      if (bakedRuns && bakedRuns.length > 0) {
+        // マニュアル編集済みオブジェクト: 再生成せず針列をそのまま使う (Phase 7 の土台)
+        isBaked = true;
+        processed = bakedRuns.map((r) => ({
+          stitches: r.stitches.slice(),
+          connection: r.connection,
+          stitchType: r.stitchType,
+        }));
+      } else {
+        // パーツ固有のステッチ角度 (未設定なら全体角度)。タタミ(面)の縫い目方向を決める。
+        const objectAngleDeg = source.angleDeg ?? params.angleDeg;
+        const objectSewRad = (objectAngleDeg * Math.PI) / 180;
+        // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
+        const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
+        const regionRuns: StitchRun[] = [];
 
-      // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
-      if (options.underlay && options.underlay.length > 0) {
-        const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
-        regionRuns.push(...u.runs);
-        underlayCount = u.runs.length;
-        warnings.push(...u.warnings);
+        // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
+        const regionParams: TatamiParams = {
+          ...params,
+          angleDeg: objectAngleDeg,
+          rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
+        };
+
+        // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
+        if (options.underlay && options.underlay.length > 0) {
+          const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
+          regionRuns.push(...u.runs);
+          underlayCount = u.runs.length;
+          warnings.push(...u.warnings);
+        }
+
+        const fillStart =
+          regionRuns.length > 0
+            ? regionRuns[regionRuns.length - 1].stitches[
+                regionRuns[regionRuns.length - 1].stitches.length - 1
+              ]
+            : currentEnd;
+        const exitNear =
+          doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
+        // パーツ固有の fillType が設定されていればそれを優先する (補正後ではなく元領域から読む)
+        const regionFillType = source.fillType ?? options.fillType ?? "tatami";
+        const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
+        regionRuns.push(...fill.runs);
+        warnings.push(...fill.warnings);
+        fillUsedSatin = fill.usedSatin;
+        processed = postprocessRuns(regionRuns);
       }
 
-      const fillStart =
-        regionRuns.length > 0
-          ? regionRuns[regionRuns.length - 1].stitches[
-              regionRuns[regionRuns.length - 1].stitches.length - 1
-            ]
-          : currentEnd;
-      const exitNear =
-        doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      // パーツ固有の fillType が設定されていればそれを優先する (補正後ではなく元領域から読む)
-      const regionFillType = source.fillType ?? options.fillType ?? "tatami";
-      const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
-      regionRuns.push(...fill.runs);
-      warnings.push(...fill.warnings);
-      const fillUsedSatin = fill.usedSatin;
-
       // --- 5./6. 接続決定 ---
-      const processed = postprocessRuns(regionRuns);
       for (let i = 0; i < processed.length; i++) {
         // i === 0: 前の領域からの接続 (糸切り許可)。i > 0: 同一領域内 (糸切り禁止)
         const prevRun = i === 0 ? (runs.length > 0 ? runs[runs.length - 1] : null) : processed[i - 1];
@@ -208,7 +232,13 @@ export function digitizeRegions(
           stitches: processed[i].stitches,
           connection: decideConnection(from, processed[i].stitches[0], i > 0, connectOptions),
           objectId,
-          stitchType: i < underlayCount ? "underlay" : (fillUsedSatin ? "satin" : "tatami"),
+          stitchType: isBaked
+            ? (processed[i].stitchType ?? "manual")
+            : i < underlayCount
+              ? "underlay"
+              : fillUsedSatin
+                ? "satin"
+                : "tatami",
         };
       }
       runs.push(...processed);
