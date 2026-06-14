@@ -11,7 +11,7 @@
 // 既存の Region ベースのコードと共存できるよう、相互変換ヘルパーを用意する。
 
 import type { Region } from "./region";
-import type { StitchRun } from "./types";
+import type { Point, StitchRun } from "./types";
 
 export interface EmbroideryObject {
   /** 設計内で一意・不変の識別子。再生成・並べ替えでも変わらない */
@@ -23,6 +23,23 @@ export interface EmbroideryObject {
    * 自動再生成の対象から外れ、この針列がそのまま出力される (Phase 7 の土台)。
    */
   baked?: StitchRun[];
+  /**
+   * 差分再生成 (Phase 2) のための生成キャッシュ。
+   * 形状・パラメータ・前後の文脈が変わっていなければ、この本体ランを再利用し
+   * 縫い直しを省く。digitize が読み書きするため UI 層は触らない。
+   */
+  cache?: {
+    /** 形状の同一性判定 (outer 配列の参照。形状編集で参照が変わる) */
+    outerRef: Point[];
+    /** 生成パラメータのシグネチャ */
+    paramsSig: string;
+    /** 前後の文脈 (前オブジェクト終点・次オブジェクト位置) のシグネチャ */
+    ctxSig: string;
+    /** 生成済みの本体ラン (接続決定前、stitchType 付き) */
+    runs: StitchRun[];
+    /** このオブジェクトが出した品質警告 */
+    warnings: string[];
+  };
   /** 表示名 (任意) */
   name?: string;
   /** ロック: 編集・再生成の対象外にする (予約。未使用) */
