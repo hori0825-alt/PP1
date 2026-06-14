@@ -122,6 +122,17 @@ export function chaikinClosed(path: Point[], iterations = 1): Point[] {
   return pts;
 }
 
+/**
+ * 方向ベクトル (dx,dy) からステッチ角度 (度) を求める。
+ * ステッチの向きは 180° 周期 (逆向きでも縫い目は同じ) なので [0,180) に正規化する。
+ */
+export function angleDegFromVector(dx: number, dy: number): number {
+  if (dx === 0 && dy === 0) return 0;
+  let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  deg = ((deg % 180) + 180) % 180;
+  return deg;
+}
+
 /** ポリゴンの面積重心。退化時は先頭点を返す */
 export function polygonCentroid(path: Point[]): Point {
   let cx = 0;

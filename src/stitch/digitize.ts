@@ -111,7 +111,6 @@ export function digitizeRegions(
   const pull = options.pullCompensation ?? 0;
   const push = options.pushCompensation ?? 0;
   const autoDensity = options.autoDensity ?? false;
-  const sewAngleRad = (params.angleDeg * Math.PI) / 180;
 
   // --- 0. Small Object Protection: 短辺が閾値未満の小片を除外 ---
   const survivors =
@@ -154,21 +153,26 @@ export function digitizeRegions(
 
     const runs: StitchRun[] = [];
     for (let idx = 0; idx < ordered.length; idx++) {
-      // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する
-      const region = compensateRegion(ordered[idx], { pull, push, sewAngleRad });
+      const source = ordered[idx];
+      // パーツ固有のステッチ角度 (未設定なら全体角度)。タタミ(面)の縫い目方向を決める。
+      const objectAngleDeg = source.angleDeg ?? params.angleDeg;
+      const objectSewRad = (objectAngleDeg * Math.PI) / 180;
+      // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
+      const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
       const objectId = objectIdCounter++;
       const regionRuns: StitchRun[] = [];
       let underlayCount = 0;
 
-      // 密度補正: 小さい面では行間隔を広げる (Auto Density)
+      // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
       const regionParams: TatamiParams = {
         ...params,
+        angleDeg: objectAngleDeg,
         rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
       };
 
       // --- 4. 前の終点近くから縫い始め、次のオブジェクト方向で縫い終わる ---
       if (options.underlay && options.underlay.length > 0) {
-        const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: params.angleDeg });
+        const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
         regionRuns.push(...u.runs);
         underlayCount = u.runs.length;
         warnings.push(...u.warnings);
@@ -182,8 +186,8 @@ export function digitizeRegions(
           : currentEnd;
       const exitNear =
         doOptimize && idx + 1 < ordered.length ? polygonCentroid(ordered[idx + 1].outer) : null;
-      // パーツ固有の fillType が設定されていればそれを優先する
-      const regionFillType = region.fillType ?? options.fillType ?? "tatami";
+      // パーツ固有の fillType が設定されていればそれを優先する (補正後ではなく元領域から読む)
+      const regionFillType = source.fillType ?? options.fillType ?? "tatami";
       const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
       regionRuns.push(...fill.runs);
       warnings.push(...fill.warnings);

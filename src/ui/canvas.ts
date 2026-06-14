@@ -2,8 +2,45 @@
 // シミュレーター再生位置を描く。座標変換 (内部単位 ↔ 画面) も管理する。
 
 import { HOOP_HALF, HOOP_SIZE, UNIT_MM, mm } from "../core/constants";
+import { polygonCentroid } from "../core/geometry";
 import { fitUnitsPerPixel } from "../import/regions";
 import type { AppState } from "./state";
+
+/** 方向ハンドルの“つまみ”の画面半径 (ヒット判定に使う) */
+export const DIR_HANDLE_RADIUS = 8;
+
+/**
+ * 選択パーツの中心と、方向ハンドルのつまみ位置 (設計座標) を返す。
+ * 角度線をドラッグして向きを引くための当たり判定に使う。
+ */
+export function directionHandleGeometry(
+  state: AppState,
+): { center: { x: number; y: number }; knob: { x: number; y: number }; angleDeg: number } | null {
+  const idx = state.selectedRegionIndex;
+  if (idx === null || !state.regions[idx]) return null;
+  const region = state.regions[idx];
+  const center = polygonCentroid(region.outer);
+  const angleDeg = region.angleDeg ?? state.project.settings.angleDeg;
+  const rad = (angleDeg * Math.PI) / 180;
+  // パーツの大きさに応じてハンドル長を決める
+  const len = Math.max(mm(8), regionHalfSpan(region) * 0.9);
+  const knob = { x: center.x + Math.cos(rad) * len, y: center.y + Math.sin(rad) * len };
+  return { center, knob, angleDeg };
+}
+
+function regionHalfSpan(region: { outer: { x: number; y: number }[] }): number {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of region.outer) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return Math.max(maxX - minX, maxY - minY) / 2;
+}
 
 export interface Viewport {
   /** 画面ピクセル/内部単位 */
@@ -143,6 +180,45 @@ function drawVectorView(
   });
 }
 
+/** 選択パーツのステッチ方向線とドラッグ用つまみ (ベクタービュー) */
+function drawDirectionIndicator(
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+): void {
+  const geo = directionHandleGeometry(state);
+  if (!geo) return;
+  const [cx, cy] = toScreen(v, canvas, geo.center.x, geo.center.y);
+  const [kx, ky] = toScreen(v, canvas, geo.knob.x, geo.knob.y);
+  // 中心を通る両方向の方向線 (縫い目の向き)
+  ctx.strokeStyle = "#1a7fe8";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cx - (kx - cx), cy - (ky - cy));
+  ctx.lineTo(kx, ky);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 中心の点
+  ctx.fillStyle = "#1a7fe8";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+  // ドラッグ用つまみ
+  ctx.beginPath();
+  ctx.arc(kx, ky, DIR_HANDLE_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#1a7fe8";
+  ctx.stroke();
+  // 角度ラベル
+  ctx.fillStyle = "#1a7fe8";
+  ctx.font = "11px system-ui";
+  ctx.fillText(`${Math.round(geo.angleDeg)}°`, kx + 10, ky - 6);
+}
+
 function drawStitchView(
   ctx: CanvasRenderingContext2D,
   v: Viewport,
@@ -260,6 +336,7 @@ export function renderCanvas(canvas: HTMLCanvasElement, v: Viewport, state: AppS
     else drawVectorView(ctx, v, canvas, state);
   } else if (state.view === "vector") {
     drawVectorView(ctx, v, canvas, state);
+    drawDirectionIndicator(ctx, v, canvas, state);
   } else {
     drawStitchView(ctx, v, canvas, state);
     drawStartEndMarkers(ctx, v, canvas, state);
