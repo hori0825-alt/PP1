@@ -36,7 +36,7 @@ export interface StitchRun {
    */
   objectId?: number;
   /** ステッチタイプ (シーケンスビュー表示用。任意) */
-  stitchType?: "tatami" | "satin" | "running" | "underlay";
+  stitchType?: "tatami" | "satin" | "running" | "underlay" | "manual";
 }
 
 /** 糸色。PES 出力時は Brother 標準64色パレットの最近色に割り当てる。 */

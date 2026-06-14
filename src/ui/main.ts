@@ -28,10 +28,12 @@ import {
   applyAutoReduce,
   applyFabric,
   applyVectorEdit,
+  bakeObject,
   cancelVectorEdit,
   createState,
   enterVectorEdit,
   replaceRegions,
+  unbakeObject,
   recomputePhoto,
   recomputeRegions,
   recomputeStitches,
@@ -203,14 +205,17 @@ function stitchTab(): string {
   const selIdx = state.selectedRegionIndex;
   const selRegion = selIdx !== null ? state.regions[selIdx] : null;
 
+  const selObj = selIdx !== null ? state.objects[selIdx] : null;
+  const isBaked = !!selObj?.baked;
   const effAngle = selRegion ? (selRegion.angleDeg ?? s.angleDeg) : s.angleDeg;
   const angleOverridden = selRegion ? selRegion.angleDeg !== undefined : false;
   const selectedPanel = selRegion
     ? `<div class="region-panel">
         <div class="region-panel-title">
           <span class="swatch" style="background:rgb(${selRegion.color.r},${selRegion.color.g},${selRegion.color.b})"></span>
-          パーツ ${selIdx! + 1} の設定
+          パーツ ${selIdx! + 1} の設定${isBaked ? " 🔒" : ""}
         </div>
+        ${isBaked ? `<p class="note">🔒 マニュアル固定中。針はそのまま保持され、下の縫い方・方向の変更は反映されません。固定を外すと自動生成に戻ります。</p>` : `
         <label>縫い方
           <select id="region-fill">
             <option value="" ${!selRegion.fillType ? "selected" : ""}>全体設定に従う (${fillTypeLabel(state.fillType)})</option>
@@ -225,9 +230,10 @@ function stitchTab(): string {
         <div class="ve-tools">
           ${[0, 45, 90, 135].map((a) => `<button class="region-angle-q" data-angle="${a}">${a}°</button>`).join("")}
           <button id="region-angle-clear" class="secondary">全体角度に戻す</button>
-        </div>
+        </div>`}
+        <label class="bake-toggle"><input type="checkbox" id="region-bake" ${isBaked ? "checked" : ""}> このパーツの針を固定 (マニュアル化)</label>
         <button id="region-deselect" class="secondary">選択解除</button>
-        <p class="note">方向は面(タタミ)の縫い目向き。キャンバス(表示:ベクター)で青いつまみをドラッグしても向きを引けます。</p>
+        ${isBaked ? "" : `<p class="note">方向は面(タタミ)の縫い目向き。キャンバス(表示:ベクター)で青いつまみをドラッグしても向きを引けます。</p>`}
       </div>`
     : `<p class="note">「表示: ベクター」にしてパーツをクリックすると、縫い方と方向を個別に設定できます。</p>`;
 
@@ -644,6 +650,16 @@ function bindEvents(): void {
     const idx = state.selectedRegionIndex;
     if (idx === null) return;
     setRegionAngle(state, idx, null);
+    render();
+  });
+  // マニュアル固定 (ベイク) の切替: 選択パーツの針を固定/解除する
+  document.getElementById("region-bake")?.addEventListener("change", (e) => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    const obj = state.objects[idx];
+    if (!obj) return;
+    if ((e.target as HTMLInputElement).checked) bakeObject(state, obj.id);
+    else unbakeObject(state, obj.id);
     render();
   });
   document.getElementById("region-deselect")?.addEventListener("click", () => {
