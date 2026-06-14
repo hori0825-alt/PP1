@@ -639,3 +639,14 @@ textarea#txt-input {
   margin-bottom: 8px;
   color: #1a4fa0;
 }
+
+.note-inline {
+  font-weight: 400;
+  font-size: 11px;
+  color: #8a939e;
+}
+
+.region-angle-q {
+  width: auto;
+  padding: 3px 8px;
+}

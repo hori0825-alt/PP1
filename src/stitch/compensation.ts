@@ -52,6 +52,12 @@ export function regionMinExtent(region: Region): number {
  * y (直交方向) を pull ぶん広げる重心基準スケール。
  */
 export function compensateRegion(region: Region, params: CompensationParams): Region {
+  // パーツ固有プロパティ (fillType / angleDeg 等) を保ったまま輪郭だけ補正するための土台
+  const withGeometry = (outer: Point[], holes: Point[][]): Region => ({
+    ...region,
+    outer,
+    holes,
+  });
   if (params.pull <= 0 && params.push <= 0) return region;
 
   const c = polygonCentroid(region.outer);
@@ -87,12 +93,10 @@ export function compensateRegion(region: Region, params: CompensationParams): Re
     return { x: c.x + rx * cosB - ry * sinB, y: c.y + rx * sinB + ry * cosB };
   };
 
-  return {
-    outer: region.outer.map(transform),
-    holes: region.holes.map((h) => h.map(transform)),
-    color: region.color,
-    selfIntersecting: region.selfIntersecting,
-  };
+  return withGeometry(
+    region.outer.map(transform),
+    region.holes.map((h) => h.map(transform)),
+  );
 }
 
 /**

@@ -3,14 +3,22 @@
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
 import { UNIT_MM, mm } from "../core/constants";
-import { pointInPolygon } from "../core/geometry";
+import { angleDegFromVector, pointInPolygon, polygonCentroid } from "../core/geometry";
 import { countStitches, countTrims } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
 import { setNodeType } from "../vector/path";
 import type { NodeType } from "../vector/path";
-import { renderCanvas, createViewport, fitViewport, screenToDesign } from "./canvas";
+import {
+  renderCanvas,
+  createViewport,
+  fitViewport,
+  screenToDesign,
+  designToScreen,
+  directionHandleGeometry,
+  DIR_HANDLE_RADIUS,
+} from "./canvas";
 import type { Viewport } from "./canvas";
 import { decodeImageFile } from "./loadImage";
 import { renderSequence } from "./sequenceView";
@@ -29,6 +37,8 @@ import {
   recomputeStitches,
   refreshDerived,
   setPhotoMode,
+  setRegionAngle,
+  setRegionFill,
   setSourceImage,
   setSourceSvg,
   setTextRegions,
@@ -193,11 +203,13 @@ function stitchTab(): string {
   const selIdx = state.selectedRegionIndex;
   const selRegion = selIdx !== null ? state.regions[selIdx] : null;
 
+  const effAngle = selRegion ? (selRegion.angleDeg ?? s.angleDeg) : s.angleDeg;
+  const angleOverridden = selRegion ? selRegion.angleDeg !== undefined : false;
   const selectedPanel = selRegion
     ? `<div class="region-panel">
         <div class="region-panel-title">
           <span class="swatch" style="background:rgb(${selRegion.color.r},${selRegion.color.g},${selRegion.color.b})"></span>
-          パーツ ${selIdx! + 1} の縫い方
+          パーツ ${selIdx! + 1} の設定
         </div>
         <label>縫い方
           <select id="region-fill">
@@ -207,9 +219,17 @@ function stitchTab(): string {
             <option value="auto" ${selRegion.fillType === "auto" ? "selected" : ""}>自動 (固定)</option>
           </select>
         </label>
+        <label>ステッチ方向 ${Math.round(effAngle)}°${angleOverridden ? "" : " <span class='note-inline'>(全体)</span>"}
+          <input type="range" id="region-angle" min="0" max="175" step="5" value="${Math.round(effAngle)}">
+        </label>
+        <div class="ve-tools">
+          ${[0, 45, 90, 135].map((a) => `<button class="region-angle-q" data-angle="${a}">${a}°</button>`).join("")}
+          <button id="region-angle-clear" class="secondary">全体角度に戻す</button>
+        </div>
         <button id="region-deselect" class="secondary">選択解除</button>
+        <p class="note">方向は面(タタミ)の縫い目向き。キャンバス(表示:ベクター)で青いつまみをドラッグしても向きを引けます。</p>
       </div>`
-    : `<p class="note">ベクタービュー (表示: ベクター) でパーツをクリックすると個別に設定できます。</p>`;
+    : `<p class="note">「表示: ベクター」にしてパーツをクリックすると、縫い方と方向を個別に設定できます。</p>`;
 
   return `
     <h2>縫い方 (全体)</h2>
@@ -600,11 +620,30 @@ function bindEvents(): void {
   // 縫い方: 選択中パーツの個別設定
   document.getElementById("region-fill")?.addEventListener("change", (e) => {
     const idx = state.selectedRegionIndex;
-    if (idx === null || !state.regions[idx]) return;
+    if (idx === null) return;
     const val = (e.target as HTMLSelectElement).value;
-    if (val === "") delete state.regions[idx].fillType;
-    else state.regions[idx].fillType = val as FillType;
-    recomputeStitches(state);
+    setRegionFill(state, idx, val === "" ? null : (val as FillType));
+    render();
+  });
+  // 方向: スライダー / クイックボタン / クリア
+  document.getElementById("region-angle")?.addEventListener("input", (e) => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    setRegionAngle(state, idx, Number((e.target as HTMLInputElement).value));
+    render();
+  });
+  document.querySelectorAll<HTMLElement>(".region-angle-q").forEach((b) =>
+    b.addEventListener("click", () => {
+      const idx = state.selectedRegionIndex;
+      if (idx === null) return;
+      setRegionAngle(state, idx, Number(b.dataset.angle));
+      render();
+    }),
+  );
+  document.getElementById("region-angle-clear")?.addEventListener("click", () => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    setRegionAngle(state, idx, null);
     render();
   });
   document.getElementById("region-deselect")?.addEventListener("click", () => {
@@ -704,14 +743,79 @@ function bindEvents(): void {
   // 特殊 (装飾配置・アップリケ・パフィー)
   bindSpecialTab();
 
-  // キャンバス: クリックでオブジェクト/領域を選択 (編集中は無効)
+  // キャンバス: クリックで選択 / ベクタービューでは方向つまみをドラッグして向きを引く
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
-  canvas?.addEventListener("click", (ev) => {
+  if (canvas) bindCanvasPointer(canvas);
+
+  // ベクター編集中のノード操作ポインタを取り付け直す
+  syncVectorPointer();
+}
+
+/** カーソルが選択パーツの方向つまみの上にあるか (画面距離で判定) */
+function overDirectionKnob(canvas: HTMLCanvasElement, sx: number, sy: number): boolean {
+  const geo = directionHandleGeometry(state);
+  if (!geo) return false;
+  const [kx, ky] = designToScreen(viewport, canvas, geo.knob.x, geo.knob.y);
+  return Math.hypot(sx - kx, sy - ky) <= DIR_HANDLE_RADIUS + 4;
+}
+
+/**
+ * キャンバスのポインタ操作: 選択 / 方向つまみのドラッグ。
+ * ポインタキャプチャを使い、リスナーは canvas 要素に限定する
+ * (canvas は再描画ごとに作り直されるためリークしない)。
+ */
+function bindCanvasPointer(canvas: HTMLCanvasElement): void {
+  let draggingAngle = false;
+  let didDrag = false;
+
+  const localXY = (ev: PointerEvent): { sx: number; sy: number } => {
+    const rect = canvas.getBoundingClientRect();
+    return { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
+  };
+
+  canvas.addEventListener("pointerdown", (ev) => {
+    if (state.vectorEdit || state.view !== "vector") return;
+    const { sx, sy } = localXY(ev);
+    if (state.selectedRegionIndex !== null && overDirectionKnob(canvas, sx, sy)) {
+      draggingAngle = true;
+      didDrag = false;
+      canvas.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    }
+  });
+
+  canvas.addEventListener("pointermove", (ev) => {
+    if (!draggingAngle || state.selectedRegionIndex === null) return;
+    const idx = state.selectedRegionIndex;
+    const region = state.regions[idx];
+    if (!region) return;
+    const { sx, sy } = localXY(ev);
+    const p = screenToDesign(viewport, canvas, sx, sy);
+    const c = polygonCentroid(region.outer);
+    setRegionAngle(state, idx, angleDegFromVector(p.x - c.x, p.y - c.y));
+    didDrag = true;
+    // ドラッグ中は軽量に再描画 (パネルのスライダー値はドラッグ終了時に更新)
+    renderCanvas(canvas, viewport, state);
+  });
+
+  const endDrag = (ev: PointerEvent): void => {
+    if (!draggingAngle) return;
+    draggingAngle = false;
+    if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+    render(); // パネルの角度表示を最終値に更新
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  canvas.addEventListener("click", (ev) => {
     if (state.vectorEdit) return;
+    if (didDrag) {
+      didDrag = false;
+      return; // 方向ドラッグの直後はクリック選択を抑制
+    }
     const rect = canvas.getBoundingClientRect();
     const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
     if (state.view === "vector") {
-      // ベクタービュー: 領域をクリックして個別に縫い方を設定できる
       state.selectedRegionIndex = pickRegion(p);
       if (state.selectedRegionIndex !== null) state.tab = "stitch";
     } else if (state.view === "stitch" && state.plan) {
@@ -719,9 +823,6 @@ function bindEvents(): void {
     }
     render();
   });
-
-  // ベクター編集中のノード操作ポインタを取り付け直す
-  syncVectorPointer();
 }
 
 function bindTextTab(): void {

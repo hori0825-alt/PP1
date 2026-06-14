@@ -14,4 +14,9 @@ export interface Region {
   selfIntersecting?: boolean;
   /** このパーツ固有の縫い方。未設定時はデジタイズオプションの fillType を使う */
   fillType?: FillType;
+  /**
+   * このパーツ固有のステッチ角度 (度)。未設定時は全体角度 (settings.angleDeg) を使う。
+   * タタミ(面)の縫い目方向を決める。サテンは形状に沿うため影響しない。
+   */
+  angleDeg?: number;
 }

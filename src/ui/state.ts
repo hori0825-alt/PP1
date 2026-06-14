@@ -232,6 +232,34 @@ export function applyVectorEdit(state: AppState): void {
   state.vectorEdit = null;
 }
 
+/** 選択パーツの縫い方を設定 (null で全体設定に従う) して再生成する */
+export function setRegionFill(state: AppState, idx: number, fill: FillType | null): void {
+  const region = state.regions[idx];
+  if (!region) return;
+  if (fill === null) delete region.fillType;
+  else region.fillType = fill;
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/**
+ * 選択パーツのステッチ角度を設定 (null で全体角度に戻す) して再生成する。
+ * 面(タタミ)の縫い目方向を決める。
+ */
+export function setRegionAngle(state: AppState, idx: number, deg: number | null): void {
+  const region = state.regions[idx];
+  if (!region) return;
+  if (deg === null) delete region.angleDeg;
+  else region.angleDeg = ((Math.round(deg) % 180) + 180) % 180;
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/** パーツの実効ステッチ角度 (個別設定がなければ全体角度) */
+export function effectiveAngle(state: AppState, idx: number): number {
+  return state.regions[idx]?.angleDeg ?? state.project.settings.angleDeg;
+}
+
 /** 装飾配置などで領域を差し替え、ステッチを再生成する */
 export function replaceRegions(state: AppState, regions: Region[]): void {
   state.regions = regions;
