@@ -10,6 +10,7 @@ import {
   regionsOf,
 } from "../src/core/object";
 import type { EmbroideryObject } from "../src/core/object";
+import { deserializeProject, serializeProject } from "../src/core/project";
 import type { Region } from "../src/core/region";
 import type { Point, StitchPlan } from "../src/core/types";
 import { digitizeRegions } from "../src/stitch/digitize";
@@ -30,6 +31,9 @@ import {
   liveApplyVectorEdit,
   moveBakedStitch,
   recomputeStitches,
+  restoreObjectsFromProject,
+  setRegionAngle,
+  setRegionFill,
   startPenDraw,
   stitchEditObject,
   unbakeObject,
@@ -154,6 +158,63 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("保存対応: 編集が save/load で保持される", () => {
+  it("固定針(走り縫いの手動線)・パーツ別の縫い方/角度/方向線が往復する", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+    setRegionFill(state, 0, "satin");
+    setRegionAngle(state, 0, 30);
+    addRegionAngleLine(state, 0, { a: { x: -mm(6), y: -mm(6) }, b: { x: mm(6), y: mm(6) } });
+    addRegionAngleLine(state, 0, { a: { x: mm(6), y: -mm(6) }, b: { x: -mm(6), y: mm(6) } });
+
+    // 手動の線 (走り縫い = baked)
+    startPenDraw(state, "line");
+    addPenPoint(state, { x: -mm(15), y: mm(20) });
+    addPenPoint(state, { x: mm(15), y: mm(20) });
+    expect(finishPenDraw(state)).toBe(true);
+    expect(state.objects[1].baked).toBeDefined();
+
+    // 保存 → 別の state へ読み込み
+    const json = serializeProject(state.project);
+    const s2 = createState();
+    s2.project = deserializeProject(json);
+    s2.regions = s2.project.regions;
+    restoreObjectsFromProject(s2);
+    recomputeStitches(s2);
+
+    // パーツ設定が保持されている
+    expect(s2.regions[0].fillType).toBe("satin");
+    expect(s2.regions[0].angleDeg).toBe(30);
+    expect(s2.regions[0].angleLines?.length).toBe(2);
+    // 手動線の baked が保持され、走り縫いとして出力される
+    const lineObj = s2.objects[1];
+    expect(lineObj.baked).toBeDefined();
+    expect(lineObj.baked![0].stitchType).toBe("running");
+    const linePts = s2.plan!.blocks
+      .flatMap((b) => b.runs)
+      .filter((r) => r.objectId === lineObj.id)
+      .flatMap((r) => r.stitches);
+    expect(linePts.length).toBeGreaterThan(2);
+  });
+
+  it("古い形式 (objects なし) でも読み込める", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+    const json = serializeProject(state.project);
+    const parsed = JSON.parse(json);
+    delete parsed.objects; // 旧形式を模す
+    const s2 = createState();
+    s2.project = deserializeProject(JSON.stringify(parsed));
+    s2.regions = s2.project.regions;
+    restoreObjectsFromProject(s2); // フォールバックで作り直す
+    recomputeStitches(s2);
+    expect(s2.objects.length).toBe(1);
+    expect(s2.plan).not.toBeNull();
   });
 });
 

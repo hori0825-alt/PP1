@@ -9,7 +9,7 @@ import { planToSvg } from "../export/svgPreview";
 import { DesignLibrary } from "../library/store";
 import type { KeyValueStore, LibraryEntry } from "../library/store";
 import { planStats } from "../plan/stats";
-import { refreshDerived } from "./state";
+import { refreshDerived, restoreObjectsFromProject } from "./state";
 import type { AppState } from "./state";
 
 const localStorageAdapter: KeyValueStore = {
@@ -125,6 +125,7 @@ export function bindLibraryTab(state: AppState, rerender: () => void): void {
       try {
         state.project = deserializeProject(e.projectJson);
         state.regions = state.project.regions;
+        restoreObjectsFromProject(state); // 固定針・手動オブジェクト・id を復元
         state.plan = state.project.plan;
         state.raster = null;
         state.photoMode = false;

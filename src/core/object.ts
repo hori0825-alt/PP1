@@ -53,6 +53,11 @@ export function nextObjectId(): number {
   return idCounter++;
 }
 
+/** 読み込んだ id と衝突しないよう、id 採番カウンタを min 以上に進める */
+export function bumpObjectId(min: number): void {
+  if (min >= idCounter) idCounter = min + 1;
+}
+
 /** Region を新しいオブジェクトに包む (新しい id を発行) */
 export function makeObject(region: Region): EmbroideryObject {
   return { id: nextObjectId(), region };

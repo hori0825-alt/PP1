@@ -4,9 +4,9 @@
 // 再生成せずプレビューできるようにする。
 
 import type { Region } from "./region";
-import type { StitchPlan } from "./types";
+import type { StitchPlan, StitchRun } from "./types";
 
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 
 export type SourceKind = "image" | "svg" | "none";
 
@@ -37,6 +37,11 @@ export interface Project {
   settings: ProjectSettings;
   /** 抽出済みの領域 (再ステッチ生成用) */
   regions: Region[];
+  /**
+   * 永続オブジェクト層 (regions と添字で対応)。安定 id とマニュアル編集針列 (baked) を
+   * 保存し、再読込後も固定針・手動の線・選択の同一性を保つ。
+   */
+  objects?: { id: number; baked?: StitchRun[]; name?: string }[];
   /** 生成済みステッチ計画 (読み込み直後のプレビュー用) */
   plan: StitchPlan | null;
   /** 出力履歴 (形式と日時) */
@@ -68,6 +73,7 @@ export function createEmptyProject(name = "untitled"): Project {
       fabricId: "standard",
     },
     regions: [],
+    objects: [],
     plan: null,
     exportHistory: [],
     meta: { tags: [], favorite: false, note: "" },
@@ -102,6 +108,7 @@ export function deserializeProject(text: string): Project {
     meta: { ...base.meta, ...obj.meta },
     source: { ...base.source, ...obj.source },
     regions: obj.regions ?? [],
+    objects: obj.objects ?? [],
     plan: obj.plan ?? null,
     exportHistory: obj.exportHistory ?? [],
   } as Project;

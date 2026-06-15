@@ -46,6 +46,7 @@ import {
   liveApplyVectorEdit,
   moveBakedStitch,
   replaceRegions,
+  restoreObjectsFromProject,
   startPenDraw,
   stitchEditObject,
   unbakeObject,
@@ -842,9 +843,11 @@ function bindEvents(): void {
       try {
         state.project = deserializeProject(await file.text());
         state.regions = state.project.regions;
+        restoreObjectsFromProject(state); // 固定針・手動オブジェクト・id を復元
         state.plan = state.project.plan;
         state.raster = null;
         if (state.plan) refreshDerived(state);
+        else if (state.regions.length > 0) recomputeStitches(state);
         else recomputeRegions(state);
         render();
       } catch (err) {

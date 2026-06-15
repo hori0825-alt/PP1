@@ -4,7 +4,7 @@
 
 import { RUNNING_DEFAULT_LEN, mm } from "../core/constants";
 import { signedArea } from "../core/geometry";
-import { makeObject, reconcileObjects } from "../core/object";
+import { bumpObjectId, makeObject, nextObjectId, reconcileObjects } from "../core/object";
 import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
@@ -367,6 +367,30 @@ export function findObject(state: AppState, id: number): EmbroideryObject | unde
 }
 
 /**
+ * プロジェクト読み込み後にオブジェクト層 (id・baked) を復元する。
+ * project.objects が regions と添字対応していればそれを使い、固定針・手動の線・
+ * 選択の同一性を保つ。なければ regions から作り直す (前方互換)。
+ */
+export function restoreObjectsFromProject(state: AppState): void {
+  const meta = state.project.objects;
+  const regions = state.regions;
+  if (meta && meta.length === regions.length) {
+    state.objects = regions.map((region, i) => {
+      const m = meta[i];
+      const obj: EmbroideryObject = { id: m?.id ?? nextObjectId(), region };
+      if (m?.baked && m.baked.length > 0) obj.baked = m.baked;
+      if (m?.name) obj.name = m.name;
+      return obj;
+    });
+    let maxId = -1;
+    for (const o of state.objects) if (o.id > maxId) maxId = o.id;
+    if (maxId >= 0) bumpObjectId(maxId);
+  } else {
+    state.objects = reconcileObjects(state.objects, regions);
+  }
+}
+
+/**
  * オブジェクトを「マニュアル化 (ベイク)」する。
  * 現在の plan 上のそのオブジェクトの針列を baked として固定し、
  * 以後は自動再生成せずこの針列を使う (個々の針編集 = Phase 7 の入口)。
@@ -630,6 +654,9 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
   }
   // 永続オブジェクトを regions に同期 (その場編集では id を維持、構造変更では作り直す)
   state.objects = reconcileObjects(state.objects, state.regions);
+  // 保存用に領域とオブジェクト層 (id・baked) を常にプロジェクトへ反映
+  state.project.regions = state.regions;
+  state.project.objects = state.objects.map((o) => ({ id: o.id, baked: o.baked, name: o.name }));
   // 布地レシピ由来の密度・補正・最小サイズを基礎にし、
   // 角度・糸切りモード・下縫いはユーザー設定 (ステッチタブ) で上書きする
   const recipe = getRecipe(s.fabricId);
