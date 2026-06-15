@@ -215,7 +215,13 @@ function colorTab(): string {
 }
 
 function fillTypeLabel(f: FillType): string {
-  return f === "satin" ? "サテン縫い" : f === "tatami" ? "タタミ縫い" : "自動 (細→サテン / 広→タタミ)";
+  return f === "satin"
+    ? "サテン縫い"
+    : f === "tatami"
+      ? "タタミ縫い"
+      : f === "stroke"
+        ? "線 (中心線)"
+        : "自動 (細→サテン / 広→タタミ)";
 }
 
 function stitchEditPanel(): string {
@@ -271,6 +277,7 @@ function stitchTab(): string {
             <option value="" ${!selRegion.fillType ? "selected" : ""}>全体設定に従う (${fillTypeLabel(state.fillType)})</option>
             <option value="satin" ${selRegion.fillType === "satin" ? "selected" : ""}>サテン縫い (固定)</option>
             <option value="tatami" ${selRegion.fillType === "tatami" ? "selected" : ""}>タタミ縫い (固定)</option>
+            <option value="stroke" ${selRegion.fillType === "stroke" ? "selected" : ""}>線 (中心線サテン/ランニング)</option>
             <option value="auto" ${selRegion.fillType === "auto" ? "selected" : ""}>自動 (固定)</option>
           </select>
         </label>
@@ -301,7 +308,7 @@ function stitchTab(): string {
     <h2>縫い方 (全体)</h2>
     <label>デフォルト縫い方
       <select id="global-fill">
-        <option value="auto" ${state.fillType === "auto" ? "selected" : ""}>自動 (細→サテン / 広→タタミ)</option>
+        <option value="auto" ${state.fillType === "auto" ? "selected" : ""}>自動 (線→中心線 / 細→サテン / 広→タタミ)</option>
         <option value="satin" ${state.fillType === "satin" ? "selected" : ""}>すべてサテン縫い</option>
         <option value="tatami" ${state.fillType === "tatami" ? "selected" : ""}>すべてタタミ縫い</option>
       </select>

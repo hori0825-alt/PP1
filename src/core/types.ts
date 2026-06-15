@@ -6,8 +6,8 @@
 //   - 1つの面 (フィル領域) は必ず1本の連続した StitchRun として生成すること。
 //   - エクスポーターは StitchPlan を忠実に変換するだけで、最適化判断をしない。
 
-/** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする */
-export type FillType = "tatami" | "satin" | "auto";
+/** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする。stroke は線 (中心線サテン/ランニング) */
+export type FillType = "tatami" | "satin" | "auto" | "stroke";
 
 /** 内部座標 (0.1mm 単位の整数、原点はデザイン中心、+y 下) */
 export interface Point {
