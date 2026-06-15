@@ -14,7 +14,7 @@ import { SATIN_DEFAULT, TATAMI_DEFAULT } from "../core/constants";
 export type { FillType } from "../core/types";
 import { polygonCentroid, signedArea } from "../core/geometry";
 import type { EmbroideryObject } from "../core/object";
-import type { Region } from "../core/region";
+import type { DirectionLine, Region } from "../core/region";
 import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
@@ -23,6 +23,7 @@ import { compensateRegion, densityCompensatedSpacing, regionArea, regionMinExten
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
 import { tatamiFill } from "./tatami";
+import { turningFill } from "./turning";
 import { fillUnderlay } from "./underlay";
 import type { FillType } from "../core/types";
 import type { GeneratorResult, TatamiParams, UnderlayType } from "./types";
@@ -63,7 +64,7 @@ export interface DigitizeResult {
 
 /**
  * 領域の塗りを生成する。
- * - tatami: 常にタタミ
+ * - tatami: 常にタタミ (方向線が2本以上ならターニング = 流れる向き)
  * - satin: サテンを試み、分岐警告が出たらタタミにフォールバック
  *   (複雑なグリフでパーツが欠けるのを防ぐ)
  * - auto: 短辺が SATIN_DEFAULT.maxWidth 以下かつ穴なしならサテン、他はタタミ
@@ -75,6 +76,7 @@ function generateFill(
   startNear: Point | null,
   exitNear: Point | null,
   satinSpacing?: number,
+  angleLines?: DirectionLine[],
 ): GeneratorResult & { usedSatin: boolean } {
   const useSatin =
     fillType === "satin" ||
@@ -88,6 +90,11 @@ function generateFill(
     const branched = satin.warnings.some((w) => w.includes("分岐"));
     // 分岐や生成失敗時はタタミにフォールバック (パーツ欠けを防ぐ)
     if (!branched && satin.runs.length > 0) return { ...satin, usedSatin: true };
+  }
+  // 方向線が2本以上なら「流れる向き」(ターニング) を試みる。失敗時はタタミ。
+  if (angleLines && angleLines.length >= 2) {
+    const t = turningFill(region, params, angleLines, startNear, exitNear);
+    if (t.runs.length > 0) return { ...t, usedSatin: false };
   }
   return { ...tatamiFill(region, params, startNear, exitNear), usedSatin: false };
 }
@@ -181,6 +188,8 @@ export function digitizeRegions(
         // パーツ固有のステッチ角度 (未設定なら全体角度) と縫い方を解決
         const objectAngleDeg = source.angleDeg ?? params.angleDeg;
         const regionFillType = source.fillType ?? options.fillType ?? "tatami";
+        // 方向線 (ターニング): 2本以上で「流れる向き」になる
+        const angleLines = source.angleLines && source.angleLines.length >= 2 ? source.angleLines : undefined;
         // --- 差分再生成 (Phase 2): 形状・パラメータ・前後文脈が同じなら本体を再利用 ---
         const paramsSig = JSON.stringify([
           objectAngleDeg,
@@ -192,6 +201,9 @@ export function digitizeRegions(
           pull,
           push,
           autoDensity,
+          angleLines
+            ? angleLines.map((l) => `${Math.round(l.a.x)},${Math.round(l.a.y)},${Math.round(l.b.x)},${Math.round(l.b.y)}`).join(";")
+            : "",
         ]);
         const ctxSig = `${currentEnd ? `${currentEnd.x},${currentEnd.y}` : "-"}|${
           exitNear ? `${Math.round(exitNear.x)},${Math.round(exitNear.y)}` : "-"
@@ -233,7 +245,7 @@ export function digitizeRegions(
                   regionRuns[regionRuns.length - 1].stitches.length - 1
                 ]
               : currentEnd;
-          const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing);
+          const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing, angleLines);
           const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
           for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
           localWarnings.push(...fill.warnings);

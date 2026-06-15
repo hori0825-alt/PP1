@@ -219,6 +219,38 @@ function drawDirectionIndicator(
   ctx.fillText(`${Math.round(geo.angleDeg)}°`, kx + 10, ky - 6);
 }
 
+/** 選択パーツの方向線 (ターニング) を緑の矢印で描く */
+function drawAngleLines(
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+): void {
+  const idx = state.selectedRegionIndex;
+  if (idx === null) return;
+  const lines = state.regions[idx]?.angleLines;
+  if (!lines || lines.length === 0) return;
+  ctx.strokeStyle = "#13a35b";
+  ctx.fillStyle = "#13a35b";
+  ctx.lineWidth = 2.5;
+  for (const l of lines) {
+    const [ax, ay] = toScreen(v, canvas, l.a.x, l.a.y);
+    const [bx, by] = toScreen(v, canvas, l.b.x, l.b.y);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    // 終点に矢じり
+    const ang = Math.atan2(by - ay, bx - ax);
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - 9 * Math.cos(ang - 0.4), by - 9 * Math.sin(ang - 0.4));
+    ctx.lineTo(bx - 9 * Math.cos(ang + 0.4), by - 9 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
 function drawStitchView(
   ctx: CanvasRenderingContext2D,
   v: Viewport,
@@ -336,6 +368,7 @@ export function renderCanvas(canvas: HTMLCanvasElement, v: Viewport, state: AppS
     else drawVectorView(ctx, v, canvas, state);
   } else if (state.view === "vector") {
     drawVectorView(ctx, v, canvas, state);
+    drawAngleLines(ctx, v, canvas, state);
     drawDirectionIndicator(ctx, v, canvas, state);
   } else {
     drawStitchView(ctx, v, canvas, state);

@@ -14,7 +14,9 @@ import type { Region } from "../src/core/region";
 import type { Point, StitchPlan } from "../src/core/types";
 import { digitizeRegions } from "../src/stitch/digitize";
 import {
+  addRegionAngleLine,
   bakeObject,
+  clearRegionAngleLines,
   createState,
   findObject,
   recomputeStitches,
@@ -121,5 +123,24 @@ describe("state: bake / unbake で手編集が再生成に耐える", () => {
     unbakeObject(state, baked);
     expect(findObject(state, baked)?.baked).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, baked))).not.toBe(bakedBefore);
+  });
+});
+
+describe("state: 方向線 (ターニング) の追加・クリア", () => {
+  it("方向線を2本足すと縫い目が変わり、クリアで戻る", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+    const before = JSON.stringify(stitchesOf(state.plan!, state.objects[0].id));
+
+    addRegionAngleLine(state, 0, { a: { x: -mm(8), y: -mm(5) }, b: { x: mm(8), y: -mm(5) } });
+    addRegionAngleLine(state, 0, { a: { x: mm(5), y: -mm(8) }, b: { x: mm(5), y: mm(8) } });
+    expect(state.regions[0].angleLines?.length).toBe(2);
+    const turned = JSON.stringify(stitchesOf(state.plan!, state.objects[0].id));
+    expect(turned).not.toBe(before); // 流れる向きになった
+
+    clearRegionAngleLines(state, 0);
+    expect(state.regions[0].angleLines).toBeUndefined();
+    expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
   });
 });

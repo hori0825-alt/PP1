@@ -650,3 +650,17 @@ textarea#txt-input {
   width: auto;
   padding: 3px 8px;
 }
+
+/* --- ターニング (方向線) --- */
+.turning-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #eefaf2;
+  border: 1px solid #13a35b;
+  border-radius: 6px;
+}
+
+#region-line-draw.active {
+  background: #13a35b;
+  color: #fff;
+}
