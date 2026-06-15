@@ -2,7 +2,7 @@
 // 画像/SVG ソースから領域抽出 → デジタイズ → 診断までの再計算を集約する。
 // UI コンポーネントはこの状態を読み、変更時に recompute() を呼ぶ。
 
-import { RUNNING_DEFAULT_LEN, mm } from "../core/constants";
+import { RUNNING_DEFAULT_LEN, SATIN_DEFAULT, mm } from "../core/constants";
 import { signedArea } from "../core/geometry";
 import { bumpObjectId, makeObject, nextObjectId, reconcileObjects } from "../core/object";
 import type { EmbroideryObject } from "../core/object";
@@ -692,17 +692,30 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
   // 布地レシピ由来の密度・補正・最小サイズを基礎にし、
   // 角度・糸切りモード・下縫いはユーザー設定 (ステッチタブ) で上書きする
   const recipe = getRecipe(s.fabricId);
+  const recipeOpts = recipeToDigitizeOptions(recipe);
+  // 密度プリセット: 行間隔・サテン間隔に倍率を掛ける (省針数 ⇄ 高密度)
+  const densityScale = s.densityScale ?? 1.0;
+  const scaledRowSpacing =
+    densityScale !== 1.0 && recipeOpts.rowSpacing
+      ? Math.round(recipeOpts.rowSpacing * densityScale)
+      : recipeOpts.rowSpacing;
+  const scaledSatinSpacing = state.puffy
+    ? mm(0.3)
+    : densityScale !== 1.0
+      ? Math.round(SATIN_DEFAULT.spacing * densityScale)
+      : undefined;
   const result = digitizeRegions(
     state.regions,
     designName(state),
     {
-      ...recipeToDigitizeOptions(recipe),
+      ...recipeOpts,
+      rowSpacing: scaledRowSpacing,
       angleDeg: s.angleDeg,
       trimMode: s.trimMode,
       underlay: s.underlay as UnderlayType[],
       fillType: state.puffy ? "satin" : state.fillType,
       // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
-      satinSpacing: state.puffy ? mm(0.3) : undefined,
+      satinSpacing: scaledSatinSpacing,
       colorOrder: state.project.settings.colorOrder,
     },
     state.objects,

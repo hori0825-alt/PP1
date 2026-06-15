@@ -20,6 +20,11 @@ export interface ProjectSettings {
   /** 布地レシピ ID (src/fabric/recipes.ts) */
   fabricId: string;
   /**
+   * 密度スケール (針数プリセット)。フィル行間隔・サテン間隔に掛ける倍率。
+   * 1.0 = 標準 (レシピ既定)、>1 で粗く (省針数)、<1 で密に。未指定は 1.0。
+   */
+  densityScale?: number;
+  /**
    * 色 (糸) の縫い順の手動指定。"r,g,b" キーの並び。
    * 指定があれば digitize はこの順で色ブロックを縫う (なければ面積順=背景が先)。
    */
@@ -76,6 +81,7 @@ export function createEmptyProject(name = "untitled"): Project {
       trimMode: "auto",
       underlay: ["edge"],
       fabricId: "standard",
+      densityScale: 1.0,
     },
     regions: [],
     objects: [],
