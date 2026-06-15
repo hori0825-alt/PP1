@@ -9,7 +9,7 @@ import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
 import type { DirectionLine, Region } from "../core/region";
-import type { Point, StitchPlan } from "../core/types";
+import type { Point, StitchPlan, ThreadColor } from "../core/types";
 import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
@@ -316,6 +316,15 @@ export function setRegionFill(state: AppState, idx: number, fill: FillType | nul
   if (!region) return;
   if (fill === null) delete region.fillType;
   else region.fillType = fill;
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/** 選択パーツの糸色を設定して再生成する (色は縫い順グループのキーにもなる) */
+export function setRegionColor(state: AppState, idx: number, color: ThreadColor): void {
+  const region = state.regions[idx];
+  if (!region) return;
+  region.color = { ...color };
   state.project.regions = state.regions;
   recomputeStitches(state);
 }
