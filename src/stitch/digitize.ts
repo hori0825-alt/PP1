@@ -22,6 +22,7 @@ import { optimizeOrder } from "../plan/order";
 import { compensateRegion, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
+import { strokeStitch } from "./stroke";
 import { tatamiFill } from "./tatami";
 import { turningFill } from "./turning";
 import { fillUnderlay } from "./underlay";
@@ -244,36 +245,54 @@ export function digitizeRegions(
           processed = cache.runs;
           warnings.push(...cache.warnings);
         } else {
-          const objectSewRad = (objectAngleDeg * Math.PI) / 180;
-          // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
-          const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
           const localWarnings: string[] = [];
           const regionRuns: StitchRun[] = [];
 
-          // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
-          const regionParams: TatamiParams = {
-            ...params,
-            angleDeg: objectAngleDeg,
-            rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
-          };
+          // --- ストローク (線): 細長い領域は中心線サテン/ランニングで縫う ---
+          // リボン化した線画の二重縫いと針数増を解消する。stroke は明示指定、
+          // auto は自動判定 (細長さ+幅)。下縫いは付けない (細帯に不要・針数増の元)。
+          const strokeRes =
+            regionFillType === "stroke" || regionFillType === "auto"
+              ? strokeStitch(source, {
+                  force: regionFillType === "stroke",
+                  spacing: options.satinSpacing ?? SATIN_DEFAULT.spacing,
+                  runStitchLength: params.stitchLength,
+                })
+              : null;
 
-          // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)
-          if (options.underlay && options.underlay.length > 0) {
-            const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
-            for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
-            localWarnings.push(...u.warnings);
+          if (strokeRes && strokeRes.runs.length > 0) {
+            for (const r of strokeRes.runs) regionRuns.push({ ...r, stitchType: strokeRes.tag });
+            localWarnings.push(...strokeRes.warnings);
+          } else {
+            const objectSewRad = (objectAngleDeg * Math.PI) / 180;
+            // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
+            const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
+
+            // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
+            const regionParams: TatamiParams = {
+              ...params,
+              angleDeg: objectAngleDeg,
+              rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
+            };
+
+            // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)
+            if (options.underlay && options.underlay.length > 0) {
+              const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
+              for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
+              localWarnings.push(...u.warnings);
+            }
+
+            const fillStart =
+              regionRuns.length > 0
+                ? regionRuns[regionRuns.length - 1].stitches[
+                    regionRuns[regionRuns.length - 1].stitches.length - 1
+                  ]
+                : currentEnd;
+            const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing, angleLines);
+            const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
+            for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
+            localWarnings.push(...fill.warnings);
           }
-
-          const fillStart =
-            regionRuns.length > 0
-              ? regionRuns[regionRuns.length - 1].stitches[
-                  regionRuns[regionRuns.length - 1].stitches.length - 1
-                ]
-              : currentEnd;
-          const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing, angleLines);
-          const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
-          for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
-          localWarnings.push(...fill.warnings);
 
           processed = postprocessRuns(regionRuns);
           warnings.push(...localWarnings);
