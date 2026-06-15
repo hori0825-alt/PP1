@@ -55,6 +55,8 @@ export interface DigitizeOptions {
   autoDensity?: boolean;
   /** サテンの間隔 (内部単位)。3D/パフィーで詰める用 */
   satinSpacing?: number;
+  /** 色 (糸) の縫い順の手動指定 ("r,g,b" キーの並び)。縫い順編集で使う */
+  colorOrder?: string[];
 }
 
 export interface DigitizeResult {
@@ -153,9 +155,26 @@ export function digitizeRegions(
     }
   }
 
-  // --- 2. 色順: 総面積の大きい順 (背景が先) ---
+  // --- 2. 色順 ---
   const groupList = [...groups.values()];
-  if (doOptimize) groupList.sort((a, b) => b.area - a.area);
+  const colorKey = (c: Region["color"]): string => `${c.r},${c.g},${c.b}`;
+  if (options.colorOrder && options.colorOrder.length > 0) {
+    // 手動指定の色順を最優先 (未指定の色は面積順で後ろに回す)
+    const order = options.colorOrder;
+    const rank = (c: Region["color"]): number => {
+      const i = order.indexOf(colorKey(c));
+      return i < 0 ? Number.POSITIVE_INFINITY : i;
+    };
+    groupList.sort((a, b) => {
+      const ra = rank(a.color);
+      const rb = rank(b.color);
+      if (ra !== rb) return ra - rb;
+      return b.area - a.area;
+    });
+  } else if (doOptimize) {
+    // 総面積の大きい順 (背景が先)
+    groupList.sort((a, b) => b.area - a.area);
+  }
 
   const blocks: ColorBlock[] = [];
   let currentEnd: Point | null = null; // 直前に縫った位置 (色をまたいで引き継ぐ)

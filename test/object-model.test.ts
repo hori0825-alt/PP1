@@ -30,6 +30,7 @@ import {
   insertBakedStitch,
   liveApplyVectorEdit,
   moveBakedStitch,
+  moveColorBlock,
   recomputeStitches,
   restoreObjectsFromProject,
   setRegionAngle,
@@ -159,6 +160,37 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("縫い順編集: 色順 (フェーズ6)", () => {
+  it("色ブロックの順を入れ替え、保存・再生成でも保持される", () => {
+    const state = createState();
+    state.regions = [
+      { outer: rect(-mm(20), 0, mm(15), mm(15)), holes: [], color: { r: 255, g: 0, b: 0, name: "Red" } },
+      { outer: rect(mm(20), 0, mm(15), mm(15)), holes: [], color: { r: 0, g: 0, b: 255, name: "Blue" } },
+    ];
+    recomputeStitches(state);
+    expect(state.plan!.blocks.length).toBe(2);
+    const firstBefore = state.plan!.blocks[0].thread; // 面積同じ → 挿入順 (Red が先)
+
+    // 2番目の色を先頭へ
+    moveColorBlock(state, 1, 0);
+    expect(state.project.settings.colorOrder?.length).toBe(2);
+    const firstAfter = state.plan!.blocks[0].thread;
+    expect(firstAfter).not.toEqual(firstBefore); // 順が変わった
+
+    // 再生成しても色順は保持
+    recomputeStitches(state);
+    expect(state.plan!.blocks[0].thread).toEqual(firstAfter);
+
+    // 保存→読込でも保持 (colorOrder は settings に乗る)
+    const s2 = createState();
+    s2.project = deserializeProject(serializeProject(state.project));
+    s2.regions = s2.project.regions;
+    restoreObjectsFromProject(s2);
+    recomputeStitches(s2);
+    expect(s2.plan!.blocks[0].thread).toEqual(firstAfter);
   });
 });
 
