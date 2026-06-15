@@ -699,14 +699,16 @@ textarea#txt-input {
 }
 
 /* --- 縫い順の並べ替えボタン --- */
-.seq-reorder {
+.seq-reorder,
+.seq-objorder {
   display: inline-flex;
   flex-direction: column;
   gap: 1px;
   width: 18px;
 }
 
-.seq-reorder button {
+.seq-reorder button,
+.seq-objorder button {
   width: 18px;
   height: 13px;
   padding: 0;
@@ -720,7 +722,15 @@ textarea#txt-input {
   cursor: pointer;
 }
 
-.seq-reorder button:disabled {
+/* 同色内パーツ順は色を変えて色ブロック順ボタンと区別する */
+.seq-objorder button {
+  border-color: #c7d6ea;
+  background: #eef4fb;
+  color: #38598c;
+}
+
+.seq-reorder button:disabled,
+.seq-objorder button:disabled {
   opacity: 0.3;
   cursor: default;
 }

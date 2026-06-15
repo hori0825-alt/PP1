@@ -60,6 +60,8 @@ export interface DigitizeOptions {
   satinSpacing?: number;
   /** 色 (糸) の縫い順の手動指定 ("r,g,b" キーの並び)。縫い順編集で使う */
   colorOrder?: string[];
+  /** 同色内のオブジェクト縫い順の手動指定 (オブジェクト id の並び)。縫い順編集で使う */
+  objectOrder?: number[];
 }
 
 export interface DigitizeResult {
@@ -184,9 +186,19 @@ export function digitizeRegions(
   let objectIdCounter = 0; // オブジェクト (領域) 単位の通し番号
 
   for (const group of groupList) {
-    // --- 3. 同色内の巡回順最適化 (Closest Join) ---
+    // --- 3. 同色内の縫い順 ---
     let ordered = group.regions;
-    if (doOptimize && group.regions.length > 1) {
+    if (options.objectOrder && options.objectOrder.length > 0) {
+      // 手動指定: オブジェクト id の並び順 (未指定の id は後ろへ、元順を維持)
+      const objOrder = options.objectOrder;
+      const rank = (r: Region): number => {
+        const id = objectOfRegion.get(r)?.id;
+        const i = id != null ? objOrder.indexOf(id) : -1;
+        return i < 0 ? Number.POSITIVE_INFINITY : i;
+      };
+      ordered = [...group.regions].sort((a, b) => rank(a) - rank(b));
+    } else if (doOptimize && group.regions.length > 1) {
+      // 自動: 重心の貪欲法 + 2-opt (Closest Join)
       const centroids = group.regions.map((r) => polygonCentroid(r.outer));
       const order = optimizeOrder(centroids, currentEnd);
       ordered = order.map((i) => group.regions[i]);

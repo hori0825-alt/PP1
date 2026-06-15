@@ -400,6 +400,38 @@ export function moveColorBlock(state: AppState, fromBlockIndex: number, toBlockI
 }
 
 /**
+ * 同色グループ内でオブジェクトの縫い順を1つ前/後にずらす。
+ * dir < 0 = 先に縫う、dir > 0 = 後に縫う。色の境界は越えない (色順は moveColorBlock)。
+ * 現在の縫い順 (sequence) から各色グループのオブジェクト列を作り、対象色内で入れ替える。
+ */
+export function moveObjectInColor(state: AppState, objectId: number, dir: number): void {
+  if (!state.sequence) return;
+  // 縫い順どおりに色ブロックごとのオブジェクト id 列を作る (1 オブジェクトが
+  // 下縫い+本縫いで複数 Run = 複数エントリになるため、重複は除いて初出順を保つ)
+  const blocks = new Map<number, number[]>();
+  for (const e of state.sequence.entries) {
+    if (e.objectId == null) continue;
+    const arr = blocks.get(e.blockIndex) ?? [];
+    if (!arr.includes(e.objectId)) arr.push(e.objectId);
+    blocks.set(e.blockIndex, arr);
+  }
+  // 対象オブジェクトの色ブロックを特定
+  let targetBlock = -1;
+  for (const [bi, ids] of blocks) if (ids.includes(objectId)) targetBlock = bi;
+  if (targetBlock < 0) return;
+  const ids = blocks.get(targetBlock) as number[];
+  const i = ids.indexOf(objectId);
+  const j = i + dir;
+  if (j < 0 || j >= ids.length) return; // 同色内の端 (これ以上は動かせない)
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  // 全色ブロックを縫い順 (blockIndex 昇順) に連結して全体のオブジェクト順を作る
+  const order: number[] = [];
+  for (const bi of [...blocks.keys()].sort((a, b) => a - b)) order.push(...(blocks.get(bi) as number[]));
+  state.project.settings.objectOrder = order;
+  recomputeStitches(state);
+}
+
+/**
  * プロジェクト読み込み後にオブジェクト層 (id・baked) を復元する。
  * project.objects が regions と添字対応していればそれを使い、固定針・手動の線・
  * 選択の同一性を保つ。なければ regions から作り直す (前方互換)。
@@ -715,6 +747,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
             ? Math.round(SATIN_DEFAULT.spacing * scale)
             : undefined,
         colorOrder: state.project.settings.colorOrder,
+        objectOrder: state.project.settings.objectOrder,
       },
       state.objects,
     );
