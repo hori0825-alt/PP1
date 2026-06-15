@@ -59,13 +59,24 @@ describe("turningFill", () => {
     expect(turningFill(region, PARAMS, []).runs.length).toBe(0);
   });
 
-  it("穴あき領域は空 (タタミにフォールバック)", () => {
+  it("穴あき領域でもターニングが生成される (穴の周囲を避ける)", () => {
     const holed: Region = {
       outer: square(mm(15)),
       holes: [square(mm(4))],
       color: COLOR,
     };
-    expect(turningFill(holed, PARAMS, lines).runs.length).toBe(0);
+    const res = turningFill(holed, PARAMS, lines);
+    expect(res.runs.length).toBe(1);
+    const st = res.runs[0].stitches;
+    expect(st.length).toBeGreaterThan(20);
+    // ステッチが穴の内部を避けている (穴の中心付近にステッチが密集しない)
+    const holeCenter = { x: 0, y: 0 };
+    const holeHalf = mm(4);
+    const insideHole = st.filter(
+      (p) => Math.abs(p.x - holeCenter.x) < holeHalf * 0.6 && Math.abs(p.y - holeCenter.y) < holeHalf * 0.6,
+    );
+    // 穴の中心60%領域にステッチがほとんどないこと (渡り以外)
+    expect(insideHole.length).toBeLessThan(st.length * 0.1);
   });
 
   it("向きが流れる: 局所的なステッチ方向が場所によって変わる", () => {
@@ -82,6 +93,42 @@ describe("turningFill", () => {
     }
     const span = Math.max(...angles) - Math.min(...angles);
     expect(span).toBeGreaterThan(30); // 一定角タタミでは起きない広がり
+  });
+
+  it("凹面 (L字型) でもターニングが生成される", () => {
+    // L-shape: 右上を切り取った形
+    const lShape: Point[] = [
+      { x: 0, y: 0 },
+      { x: mm(20), y: 0 },
+      { x: mm(20), y: mm(10) },
+      { x: mm(10), y: mm(10) },
+      { x: mm(10), y: mm(20) },
+      { x: 0, y: mm(20) },
+    ];
+    const concaveRegion: Region = { outer: lShape, holes: [], color: COLOR };
+    const lLines: DirectionLine[] = [
+      { a: { x: 0, y: mm(5) }, b: { x: mm(20), y: mm(5) } },
+      { a: { x: mm(5), y: 0 }, b: { x: mm(5), y: mm(20) } },
+    ];
+    const res = turningFill(concaveRegion, PARAMS, lLines);
+    expect(res.runs.length).toBe(1);
+    expect(res.runs[0].stitches.length).toBeGreaterThan(20);
+  });
+
+  it("複数の穴でもターニングが生成される", () => {
+    const multiHole: Region = {
+      outer: square(mm(20)),
+      holes: [
+        // 左上の穴
+        [{ x: -mm(12), y: -mm(12) }, { x: -mm(6), y: -mm(12) }, { x: -mm(6), y: -mm(6) }, { x: -mm(12), y: -mm(6) }],
+        // 右下の穴
+        [{ x: mm(6), y: mm(6) }, { x: mm(12), y: mm(6) }, { x: mm(12), y: mm(12) }, { x: mm(6), y: mm(12) }],
+      ],
+      color: COLOR,
+    };
+    const res = turningFill(multiHole, PARAMS, lines);
+    expect(res.runs.length).toBe(1);
+    expect(res.runs[0].stitches.length).toBeGreaterThan(20);
   });
 });
 
@@ -100,5 +147,24 @@ describe("digitize 統合: 方向線でターニングになる", () => {
     ).plan;
     expect(allStitches(turned).length).toBeGreaterThan(0);
     expect(JSON.stringify(allStitches(turned))).not.toBe(JSON.stringify(allStitches(base)));
+  });
+
+  it("穴あり領域 + 方向線でターニングが使われる (タタミフォールバックしない)", () => {
+    const holed: Region = {
+      outer: square(mm(15)),
+      holes: [square(mm(4))],
+      color: COLOR,
+      angleLines: lines,
+    };
+    const result = digitizeRegions([holed], "T", { fillType: "tatami" });
+    const st = allStitches(result.plan);
+    expect(st.length).toBeGreaterThan(0);
+    // 穴なし+方向線なし (普通のタタミ) と違う結果 = ターニングが使われた
+    const plain = digitizeRegions(
+      [{ outer: square(mm(15)), holes: [square(mm(4))], color: COLOR }],
+      "T",
+      { fillType: "tatami" },
+    );
+    expect(JSON.stringify(st)).not.toBe(JSON.stringify(allStitches(plain.plan)));
   });
 });
