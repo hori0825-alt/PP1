@@ -10,6 +10,7 @@ import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
 import { setNodeType } from "../vector/path";
 import type { NodeType } from "../vector/path";
+import { BROTHER_PALETTE, nearestBrotherThread } from "../export/brotherPalette";
 import {
   renderCanvas,
   createViewport,
@@ -47,6 +48,7 @@ import {
   moveBakedStitch,
   replaceRegions,
   restoreObjectsFromProject,
+  setRegionColor,
   startPenDraw,
   stitchEditObject,
   unbakeObject,
@@ -243,6 +245,13 @@ function stitchTab(): string {
 
   const selObj = selIdx !== null ? state.objects[selIdx] : null;
   const isBaked = !!selObj?.baked;
+  const colorThread = selRegion ? nearestBrotherThread(selRegion.color) : null;
+  const threadGrid = colorThread
+    ? BROTHER_PALETTE.map(
+        (th) =>
+          `<button class="thread-sw ${th.pecIndex === colorThread.pecIndex ? "active" : ""}" data-pec="${th.pecIndex}" title="${th.name}" style="background:rgb(${th.r},${th.g},${th.b})"></button>`,
+      ).join("")
+    : "";
   const turnCount = selRegion?.angleLines?.length ?? 0;
   const effAngle = selRegion ? (selRegion.angleDeg ?? s.angleDeg) : s.angleDeg;
   const angleOverridden = selRegion ? selRegion.angleDeg !== undefined : false;
@@ -251,6 +260,10 @@ function stitchTab(): string {
         <div class="region-panel-title">
           <span class="swatch" style="background:rgb(${selRegion.color.r},${selRegion.color.g},${selRegion.color.b})"></span>
           パーツ ${selIdx! + 1} の設定${isBaked ? " 🔒" : ""}
+        </div>
+        <div class="region-color">
+          <div class="note">糸色: ${colorThread?.name ?? ""}（縫うとこの色になります）</div>
+          <div class="thread-grid">${threadGrid}</div>
         </div>
         ${isBaked ? `<p class="note">🔒 マニュアル固定中。針はそのまま保持され、下の縫い方・方向の変更は反映されません。固定を外すと自動生成に戻ります。</p>` : `
         <label>縫い方
@@ -694,6 +707,17 @@ function bindEvents(): void {
     recomputeStitches(state);
     render();
   });
+  // 糸色: パレットのスウォッチで選択パーツの色を変更
+  document.querySelectorAll<HTMLElement>(".thread-sw").forEach((b) =>
+    b.addEventListener("click", () => {
+      const idx = state.selectedRegionIndex;
+      if (idx === null) return;
+      const pec = Number(b.dataset.pec);
+      const th = BROTHER_PALETTE.find((t) => t.pecIndex === pec);
+      if (th) setRegionColor(state, idx, { r: th.r, g: th.g, b: th.b, name: th.name, code: th.code });
+      render();
+    }),
+  );
   // 縫い方: 選択中パーツの個別設定
   document.getElementById("region-fill")?.addEventListener("change", (e) => {
     const idx = state.selectedRegionIndex;

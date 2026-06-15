@@ -671,3 +671,29 @@ textarea#txt-input {
   background: #e8632a;
   color: #fff;
 }
+
+/* --- 糸色パレット (パーツ別) --- */
+.region-color { margin-bottom: 8px; }
+
+.thread-grid {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.thread-sw {
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  margin: 0;
+  border: 1px solid #cdd3da;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.thread-sw.active {
+  outline: 2px solid #1a7fe8;
+  outline-offset: 1px;
+  border-color: #1a7fe8;
+}

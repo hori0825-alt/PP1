@@ -33,6 +33,7 @@ import {
   recomputeStitches,
   restoreObjectsFromProject,
   setRegionAngle,
+  setRegionColor,
   setRegionFill,
   startPenDraw,
   stitchEditObject,
@@ -158,6 +159,25 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("色の編集", () => {
+  it("パーツの糸色を変えると plan のブロック色も変わり、保存で残る", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+    setRegionColor(state, 0, { r: 255, g: 255, b: 0, name: "Yellow", code: "13" });
+    expect(state.regions[0].color.name).toBe("Yellow");
+    // plan のブロックがその色になっている
+    expect(state.plan!.blocks.some((b) => b.thread.r === 255 && b.thread.g === 255 && b.thread.b === 0)).toBe(true);
+    // 保存→読込で残る (色は Region 上なので regions に乗る)
+    const s2 = createState();
+    s2.project = deserializeProject(serializeProject(state.project));
+    s2.regions = s2.project.regions;
+    restoreObjectsFromProject(s2);
+    recomputeStitches(s2);
+    expect(s2.regions[0].color.name).toBe("Yellow");
   });
 });
 
