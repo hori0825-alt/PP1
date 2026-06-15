@@ -5,7 +5,7 @@
 
 import { UNIT_MM } from "../core/constants";
 import type { SequenceEntry } from "../plan/sequence";
-import { moveColorBlock } from "./state";
+import { moveColorBlock, moveObjectInColor } from "./state";
 import type { AppState } from "./state";
 
 export type SeqFilter = "all" | "color" | "object" | "trims" | "warnings";
@@ -17,7 +17,37 @@ const typeLabels: Record<string, string> = {
   underlay: "下縫い",
 };
 
-function entryRow(e: SequenceEntry, state: AppState, isBlockStart: boolean, blockCount: number): string {
+/** 同色ブロック内でのオブジェクト位置 (先頭/末尾判定・並べ替え可否に使う) */
+interface ObjPos {
+  first: boolean;
+  last: boolean;
+  count: number;
+}
+
+/** 全エントリ (フィルタ前) から、各オブジェクトの同色ブロック内位置を求める */
+function computeObjPositions(entries: readonly SequenceEntry[]): Map<number, ObjPos> {
+  // 1 オブジェクトが複数 Run (下縫い+本縫い等) で複数エントリになるため、重複除去で初出順
+  const byBlock = new Map<number, number[]>();
+  for (const e of entries) {
+    if (e.objectId == null) continue;
+    const arr = byBlock.get(e.blockIndex) ?? [];
+    if (!arr.includes(e.objectId)) arr.push(e.objectId);
+    byBlock.set(e.blockIndex, arr);
+  }
+  const pos = new Map<number, ObjPos>();
+  for (const ids of byBlock.values()) {
+    ids.forEach((id, i) => pos.set(id, { first: i === 0, last: i === ids.length - 1, count: ids.length }));
+  }
+  return pos;
+}
+
+function entryRow(
+  e: SequenceEntry,
+  state: AppState,
+  isBlockStart: boolean,
+  blockCount: number,
+  objPos: Map<number, ObjPos>,
+): string {
   const c = e.thread;
   const hidden = e.objectId !== null && state.hiddenObjectIds.has(e.objectId);
   const selected = e.objectId !== null && e.objectId === state.selectedObjectId;
@@ -35,10 +65,20 @@ function entryRow(e: SequenceEntry, state: AppState, isBlockStart: boolean, bloc
          <button class="seq-down" data-block="${e.blockIndex}" title="この色を後に縫う" ${e.blockIndex >= blockCount - 1 ? "disabled" : ""}>▼</button>
        </span>`
     : '<span class="seq-reorder"></span>';
+  // 同色内に複数オブジェクトがあるときだけ、パーツ単位の縫い順ボタンを出す
+  const op = e.objectId !== null ? objPos.get(e.objectId) : undefined;
+  const objReorder =
+    op && op.count > 1
+      ? `<span class="seq-objorder">
+           <button class="obj-up" data-object="${e.objectId}" title="このパーツを同色内で先に縫う" ${op.first ? "disabled" : ""}>↑</button>
+           <button class="obj-down" data-object="${e.objectId}" title="このパーツを同色内で後に縫う" ${op.last ? "disabled" : ""}>↓</button>
+         </span>`
+      : '<span class="seq-objorder"></span>';
   return `
     <div class="seq-row ${selected ? "selected" : ""} ${hidden ? "hidden" : ""}" data-block="${e.blockIndex}" data-object="${e.objectId ?? ""}" draggable="true">
       <span class="seq-num">${e.order + 1}</span>
       ${reorder}
+      ${objReorder}
       <span class="swatch" style="background:rgb(${c.r},${c.g},${c.b})"></span>
       <span class="seq-type">${typeLabels[e.stitchType] ?? e.stitchType}</span>
       <span class="seq-count">${e.stitchCount}針</span>
@@ -57,12 +97,13 @@ export function renderSequence(container: HTMLElement, state: AppState, filter: 
   if (filter === "warnings") entries = entries.filter((e) => e.travel > 100 || e.trim);
 
   const blockCount = state.plan ? state.plan.blocks.length : 0;
+  const objPos = computeObjPositions(state.sequence.entries);
   const summary = `
     <div class="seq-summary">
       計 ${state.sequence.entries.length} オブジェクト /
       糸切り ${state.sequence.entries.filter((e) => e.trim).length} 回 /
       色替え ${state.sequence.entries.filter((e) => e.colorChange).length} 回
-      <div class="note">▲▼ または行のドラッグで色の縫い順を変えられます (保存されます)。</div>
+      <div class="note">▲▼ で色の縫い順、↑↓ で同色内のパーツ順を変えられます (保存されます)。</div>
     </div>`;
   // フィルタ後の並びで「各色ブロックの先頭行」を判定する
   let prevBlock = -1;
@@ -70,7 +111,7 @@ export function renderSequence(container: HTMLElement, state: AppState, filter: 
     .map((e) => {
       const isStart = e.blockIndex !== prevBlock;
       prevBlock = e.blockIndex;
-      return entryRow(e, state, isStart, blockCount);
+      return entryRow(e, state, isStart, blockCount, objPos);
     })
     .join("");
   container.innerHTML = summary + rowsHtml;
@@ -89,6 +130,22 @@ export function renderSequence(container: HTMLElement, state: AppState, filter: 
       ev.stopPropagation();
       const bi = Number(b.dataset.block);
       moveColorBlock(state, bi, bi + 1);
+      state.onChange?.();
+    }),
+  );
+
+  // 同色内 パーツ順 上下ボタン
+  container.querySelectorAll<HTMLElement>(".obj-up").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      moveObjectInColor(state, Number(b.dataset.object), -1);
+      state.onChange?.();
+    }),
+  );
+  container.querySelectorAll<HTMLElement>(".obj-down").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      moveObjectInColor(state, Number(b.dataset.object), 1);
       state.onChange?.();
     }),
   );

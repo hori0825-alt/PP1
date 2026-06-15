@@ -34,6 +34,12 @@ export interface ProjectSettings {
    * 指定があれば digitize はこの順で色ブロックを縫う (なければ面積順=背景が先)。
    */
   colorOrder?: string[];
+  /**
+   * 同色内のオブジェクト縫い順の手動指定 (オブジェクト id の並び)。
+   * 指定があれば digitize は同色グループ内をこの順で縫う (なければ Closest Join 最適化)。
+   * 色をまたぐ順序は colorOrder が優先し、本配列は各色グループ内の相対順だけ使う。
+   */
+  objectOrder?: number[];
 }
 
 export interface Project {
