@@ -2,8 +2,9 @@
 // 画像/SVG ソースから領域抽出 → デジタイズ → 診断までの再計算を集約する。
 // UI コンポーネントはこの状態を読み、変更時に recompute() を呼ぶ。
 
-import { mm } from "../core/constants";
-import { reconcileObjects } from "../core/object";
+import { RUNNING_DEFAULT_LEN, mm } from "../core/constants";
+import { signedArea } from "../core/geometry";
+import { makeObject, reconcileObjects } from "../core/object";
 import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
@@ -82,6 +83,12 @@ export interface StitchEditState {
   sel: { run: number; idx: number } | null;
 }
 
+/** 手動デジタイズ (ペン作図) の状態 (フェーズ8)。クリックで点を置いて面/線を作る */
+export interface PenDrawState {
+  kind: "fill" | "line";
+  points: Point[];
+}
+
 export interface AppState {
   mode: Mode;
   tab: Tab;
@@ -120,6 +127,9 @@ export interface AppState {
 
   /** 針 (ステッチ点) 編集 (フェーズ7。アクティブな間のみ非 null) */
   stitchEdit: StitchEditState | null;
+
+  /** 手動デジタイズ (ペン作図) (フェーズ8。作図中のみ非 null) */
+  penDraw: PenDrawState | null;
 
   // 文字刺繍
   textSettings: TextSettings;
@@ -169,6 +179,7 @@ export function createState(): AppState {
     simPlaying: false,
     vectorEdit: null,
     stitchEdit: null,
+    penDraw: null,
     textSettings: {
       text: "",
       fontFamily: "sans-serif",
@@ -462,6 +473,85 @@ export function deleteBakedStitch(state: AppState, run: number, idx: number): vo
   if (!obj) return;
   editBakedRun(obj, run, (s) => (s.length > 2 ? s.filter((_, i) => i !== idx) : s));
   recomputeStitches(state);
+}
+
+// --- 手動デジタイズ (ペン作図, フェーズ8) ---
+
+/** 折れ線を step 間隔で再サンプル (走り縫いの針列を作る) */
+function resamplePolyline(pts: Point[], step: number): Point[] {
+  if (pts.length === 0) return [];
+  const out: Point[] = [{ x: Math.round(pts[0].x), y: Math.round(pts[0].y) }];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.round(len / step));
+    for (let k = 1; k <= n; k++) {
+      out.push({ x: Math.round(a.x + ((b.x - a.x) * k) / n), y: Math.round(a.y + ((b.y - a.y) * k) / n) });
+    }
+  }
+  return out;
+}
+
+/** ペン作図を開始する (面 or 線)。他の編集モードは解除する */
+export function startPenDraw(state: AppState, kind: "fill" | "line"): void {
+  state.vectorEdit = null;
+  state.stitchEdit = null;
+  state.angleLineDraw = false;
+  state.penDraw = { kind, points: [] };
+}
+
+/** 作図中の点を1つ追加する */
+export function addPenPoint(state: AppState, p: Point): void {
+  if (state.penDraw) state.penDraw.points.push({ x: Math.round(p.x), y: Math.round(p.y) });
+}
+
+/** 作図を取り消す */
+export function cancelPenDraw(state: AppState): void {
+  state.penDraw = null;
+}
+
+/**
+ * 作図を確定して新しいオブジェクトを作る。
+ * - fill: 閉じた面 → 既存のフィルパイプライン (縫い方/角度/ターニング/編集が効く)
+ * - line: 開いた線 → 走り縫いを baked として持つオブジェクト
+ * @returns 作成できたら true
+ */
+export function finishPenDraw(state: AppState): boolean {
+  const pd = state.penDraw;
+  if (!pd) return false;
+  const color = { r: 0, g: 0, b: 0, name: "Black" };
+  if (pd.kind === "fill") {
+    if (pd.points.length < 3) {
+      state.penDraw = null;
+      return false;
+    }
+    // 外周は signedArea が正 (時計回り) になるよう正規化
+    const outer = signedArea(pd.points) < 0 ? pd.points.slice().reverse() : pd.points.slice();
+    const region: Region = { outer, holes: [], color };
+    state.regions = [...state.regions, region];
+    state.project.regions = state.regions;
+    state.penDraw = null;
+    recomputeStitches(state);
+    state.selectedRegionIndex = state.regions.length - 1;
+    return true;
+  }
+  // line
+  if (pd.points.length < 2) {
+    state.penDraw = null;
+    return false;
+  }
+  const region: Region = { outer: pd.points.slice(), holes: [], color };
+  const obj = makeObject(region);
+  obj.baked = [{ stitches: resamplePolyline(pd.points, RUNNING_DEFAULT_LEN), connection: "trim", stitchType: "running" }];
+  // 領域とオブジェクトを同時に追加 (reconcile が参照一致で baked 付きオブジェクトを保つ)
+  state.regions = [...state.regions, region];
+  state.objects = [...state.objects, obj];
+  state.project.regions = state.regions;
+  state.penDraw = null;
+  recomputeStitches(state);
+  state.selectedRegionIndex = state.regions.length - 1;
+  return true;
 }
 
 /** 装飾配置などで領域を差し替え、ステッチを再生成する */

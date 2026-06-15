@@ -3,7 +3,7 @@
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
 import { UNIT_MM, mm } from "../core/constants";
-import { angleDegFromVector, pointInPolygon, polygonCentroid } from "../core/geometry";
+import { angleDegFromVector, pointInPolygon, pointSegmentDistance, polygonCentroid } from "../core/geometry";
 import { countStitches, countTrims } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
@@ -33,16 +33,20 @@ import {
   applyVectorEdit,
   bakeObject,
   cancelVectorEdit,
+  addPenPoint,
+  cancelPenDraw,
   clearRegionAngleLines,
   createState,
   deleteBakedStitch,
   enterStitchEdit,
   enterVectorEdit,
   exitStitchEdit,
+  finishPenDraw,
   insertBakedStitch,
   liveApplyVectorEdit,
   moveBakedStitch,
   replaceRegions,
+  startPenDraw,
   stitchEditObject,
   unbakeObject,
   recomputePhoto,
@@ -423,9 +427,33 @@ function libraryTab(): string {
   return libraryTabContent();
 }
 
+function penPanel(): string {
+  const pd = state.penDraw;
+  if (pd) {
+    const need = pd.kind === "fill" ? 3 : 2;
+    const ready = pd.points.length >= need;
+    return `
+      <h2>手動デジタイズ (作図中)</h2>
+      <p class="note">${pd.kind === "fill" ? "面" : "線"}を作図中 — キャンバスをクリックで点を追加。${pd.points.length} 点。</p>
+      <div class="ve-tools">
+        <button id="pen-finish" ${ready ? "" : "disabled"}>確定 (ダブルクリックでも可)</button>
+        <button id="pen-cancel" class="secondary">取消</button>
+      </div>
+      <p class="note">${pd.kind === "fill" ? "3点以上で面になります。始点へ自動で閉じます。" : "2点以上で走り縫いになります。"}</p>`;
+  }
+  return `
+    <h2>手動デジタイズ (ペン)</h2>
+    <div class="ve-tools">
+      <button id="pen-fill">面を描く (フィル)</button>
+      <button id="pen-line">線を描く (走り縫い)</button>
+    </div>
+    <p class="note">キャンバスをクリックして点を置き、ダブルクリックで確定。描いた面はサテン/タタミ・方向・編集がそのまま使えます。線は走り縫い (針編集で微調整可)。</p>`;
+}
+
 function specialTab(): string {
   const hasRegions = state.regions.length > 0;
   return `
+    ${penPanel()}
     <h2>装飾配置</h2>
     ${hasRegions ? `
       <div class="ve-tools">
@@ -881,6 +909,7 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   };
 
   canvas.addEventListener("pointerdown", (ev) => {
+    if (state.penDraw) return; // ペン作図はクリックで点を置く (ドラッグ操作を抑止)
     // --- 針編集モード (フェーズ7) ---
     if (state.stitchEdit && state.view === "stitch") {
       const { sx, sy } = localXY(ev);
@@ -990,14 +1019,28 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
 
+  // ペン作図: ダブルクリックで確定
+  canvas.addEventListener("dblclick", () => {
+    if (state.penDraw) {
+      finishPenDraw(state);
+      render();
+    }
+  });
+
   canvas.addEventListener("click", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
+    if (state.penDraw) {
+      // 手動デジタイズ: クリックで点を追加
+      addPenPoint(state, p);
+      render();
+      return;
+    }
     if (state.vectorEdit || state.stitchEdit) return; // 針編集中は選択を無効化
     if (didDrag) {
       didDrag = false;
       return; // ドラッグ (方向つまみ/方向線) の直後はクリック選択を抑制
     }
-    const rect = canvas.getBoundingClientRect();
-    const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
     if (state.view === "vector") {
       state.selectedRegionIndex = pickRegion(p);
       if (state.selectedRegionIndex !== null) state.tab = "stitch";
@@ -1079,6 +1122,26 @@ function bindSpecialTab(): void {
     const el = document.getElementById("arr-count") as HTMLInputElement | null;
     return el ? Math.max(2, Math.min(16, Number(el.value))) : 6;
   };
+  // 手動デジタイズ (ペン)
+  document.getElementById("pen-fill")?.addEventListener("click", () => {
+    startPenDraw(state, "fill");
+    state.view = "vector";
+    render();
+  });
+  document.getElementById("pen-line")?.addEventListener("click", () => {
+    startPenDraw(state, "line");
+    state.view = "vector";
+    render();
+  });
+  document.getElementById("pen-finish")?.addEventListener("click", () => {
+    finishPenDraw(state);
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("pen-cancel")?.addEventListener("click", () => {
+    cancelPenDraw(state);
+    render();
+  });
   document.getElementById("arr-mx")?.addEventListener("click", () => {
     replaceRegions(state, makeMirror(state.regions, "x", 0));
     state.view = "stitch";
@@ -1191,7 +1254,20 @@ function pickRegion(p: { x: number; y: number }): number | null {
       if (!inHole) return i;
     }
   }
-  return null;
+  // 面に当たらなければ、輪郭線の近く (手動の線オブジェクト等) を拾う
+  let best: number | null = null;
+  let bestD = mm(2);
+  for (let i = state.regions.length - 1; i >= 0; i--) {
+    const outer = state.regions[i].outer;
+    for (let j = 0; j + 1 < outer.length; j++) {
+      const d = pointSegmentDistance(p, outer[j], outer[j + 1]);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  }
+  return best;
 }
 
 /** クリック位置に最も近いオブジェクトの始点/ステッチを探す */

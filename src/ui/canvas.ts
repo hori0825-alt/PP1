@@ -458,8 +458,46 @@ export function renderCanvas(canvas: HTMLCanvasElement, v: Viewport, state: AppS
     drawStitchEditOverlay(ctx, v, canvas, state);
   }
 
+  if (state.penDraw) drawPenOverlay(ctx, v, canvas, state);
+
   // 実寸ラベル (左下)
   ctx.fillStyle = "#8a939e";
   ctx.font = "11px system-ui";
   ctx.fillText(`100mm 枠 / 1マス ${(mm(10) * UNIT_MM).toFixed(0)}mm`, 8, canvas.height - 8);
+}
+
+/** 手動デジタイズ (ペン作図) の途中経過を描く */
+function drawPenOverlay(
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+): void {
+  const pd = state.penDraw;
+  if (!pd || pd.points.length === 0) return;
+  const pts = pd.points.map((p) => toScreen(v, canvas, p.x, p.y));
+  ctx.strokeStyle = "#7b2ff7";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.stroke();
+  // 面は始点へ閉じる線を点線で予告
+  if (pd.kind === "fill" && pts.length >= 2) {
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // 各点
+  pts.forEach(([x, y], i) => {
+    ctx.beginPath();
+    ctx.arc(x, y, i === 0 ? 5 : 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? "#7b2ff7" : "#ffffff";
+    ctx.fill();
+    ctx.strokeStyle = "#7b2ff7";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
 }
