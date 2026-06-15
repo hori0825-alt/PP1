@@ -7,7 +7,7 @@ import { reconcileObjects } from "../core/object";
 import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
-import type { Region } from "../core/region";
+import type { DirectionLine, Region } from "../core/region";
 import type { StitchPlan } from "../core/types";
 import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
@@ -95,6 +95,8 @@ export interface AppState {
   selectedObjectId: number | null;
   /** ベクタービューでクリックして選択した領域インデックス (state.regions のインデックス) */
   selectedRegionIndex: number | null;
+  /** 方向線(ターニング)の作図モード。ON のときキャンバスのドラッグで方向線を引く */
+  angleLineDraw: boolean;
   hiddenObjectIds: Set<number>;
   reduceApplied: string[];
 
@@ -146,6 +148,7 @@ export function createState(): AppState {
     stitchWarnings: [],
     selectedObjectId: null,
     selectedRegionIndex: null,
+    angleLineDraw: false,
     hiddenObjectIds: new Set(),
     reduceApplied: [],
     simFrame: 0,
@@ -271,6 +274,24 @@ export function setRegionAngle(
 /** パーツの実効ステッチ角度 (個別設定がなければ全体角度) */
 export function effectiveAngle(state: AppState, idx: number): number {
   return state.regions[idx]?.angleDeg ?? state.project.settings.angleDeg;
+}
+
+/** 選択パーツに方向線(ターニング)を1本追加して再生成する */
+export function addRegionAngleLine(state: AppState, idx: number, line: DirectionLine): void {
+  const region = state.regions[idx];
+  if (!region) return;
+  region.angleLines = [...(region.angleLines ?? []), line];
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/** 選択パーツの方向線をすべて消して再生成する */
+export function clearRegionAngleLines(state: AppState, idx: number): void {
+  const region = state.regions[idx];
+  if (!region) return;
+  delete region.angleLines;
+  state.project.regions = state.regions;
+  recomputeStitches(state);
 }
 
 /** 安定 id でオブジェクトを探す */

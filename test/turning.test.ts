@@ -1,0 +1,104 @@
+// Phase 4: ターニングステッチ (流れる方向) のテスト。
+// 2本以上の方向線から、領域を覆う1本の連続 Run を作ることを検証する。
+
+import { describe, expect, it } from "vitest";
+import { mm } from "../src/core/constants";
+import type { DirectionLine, Region } from "../src/core/region";
+import type { Point, StitchPlan } from "../src/core/types";
+import { digitizeRegions } from "../src/stitch/digitize";
+import { turningFill } from "../src/stitch/turning";
+import type { TatamiParams } from "../src/stitch/types";
+
+const COLOR = { r: 50, g: 150, b: 50 };
+const PARAMS: TatamiParams = { angleDeg: 0, rowSpacing: mm(0.4), stitchLength: mm(3) };
+
+function square(half: number): Point[] {
+  return [
+    { x: -half, y: -half },
+    { x: half, y: -half },
+    { x: half, y: half },
+    { x: -half, y: half },
+  ];
+}
+
+function bbox(pts: Point[]): { w: number; h: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+  return { w: maxX - minX, h: maxY - minY };
+}
+
+const region: Region = { outer: square(mm(15)), holes: [], color: COLOR };
+// 下側に水平・右側に垂直の方向線 → 向きが流れる
+const lines: DirectionLine[] = [
+  { a: { x: -mm(15), y: -mm(8) }, b: { x: mm(15), y: -mm(8) } },
+  { a: { x: mm(8), y: -mm(15) }, b: { x: mm(8), y: mm(15) } },
+];
+
+describe("turningFill", () => {
+  it("2本の方向線から1本の連続 Run を作り、領域を覆う", () => {
+    const res = turningFill(region, PARAMS, lines);
+    expect(res.runs.length).toBe(1);
+    const st = res.runs[0].stitches;
+    expect(st.length).toBeGreaterThan(50);
+    // 全座標が有限の整数
+    for (const p of st) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+      expect(Number.isInteger(p.x) && Number.isInteger(p.y)).toBe(true);
+    }
+    // ステッチ群のバウンディングが領域の大半 (≥66%) を覆う
+    const b = bbox(st);
+    expect(b.w).toBeGreaterThan(mm(20));
+    expect(b.h).toBeGreaterThan(mm(20));
+  });
+
+  it("方向線が1本以下なら空 (呼び出し側がタタミにフォールバック)", () => {
+    expect(turningFill(region, PARAMS, [lines[0]]).runs.length).toBe(0);
+    expect(turningFill(region, PARAMS, []).runs.length).toBe(0);
+  });
+
+  it("穴あき領域は空 (タタミにフォールバック)", () => {
+    const holed: Region = {
+      outer: square(mm(15)),
+      holes: [square(mm(4))],
+      color: COLOR,
+    };
+    expect(turningFill(holed, PARAMS, lines).runs.length).toBe(0);
+  });
+
+  it("向きが流れる: 局所的なステッチ方向が場所によって変わる", () => {
+    const st = turningFill(region, PARAMS, lines).runs[0].stitches;
+    // 連続ステッチの向き (mod 180) を集め、十分な広がりがあることを確認
+    const angles: number[] = [];
+    for (let i = 1; i < st.length; i++) {
+      const dx = st[i].x - st[i - 1].x;
+      const dy = st[i].y - st[i - 1].y;
+      if (Math.hypot(dx, dy) < mm(1)) continue;
+      let a = (Math.atan2(dy, dx) * 180) / Math.PI;
+      a = ((a % 180) + 180) % 180;
+      angles.push(a);
+    }
+    const span = Math.max(...angles) - Math.min(...angles);
+    expect(span).toBeGreaterThan(30); // 一定角タタミでは起きない広がり
+  });
+});
+
+describe("digitize 統合: 方向線でターニングになる", () => {
+  function allStitches(plan: StitchPlan): Point[] {
+    return plan.blocks.flatMap((b) => b.runs).flatMap((r) => r.stitches);
+  }
+  it("方向線ありの面は方向線なし(直線タタミ)と異なる縫い目になる", () => {
+    const base = digitizeRegions([{ outer: square(mm(15)), holes: [], color: COLOR }], "T", {
+      fillType: "tatami",
+    }).plan;
+    const turned = digitizeRegions(
+      [{ outer: square(mm(15)), holes: [], color: COLOR, angleLines: lines }],
+      "T",
+      { fillType: "tatami" },
+    ).plan;
+    expect(allStitches(turned).length).toBeGreaterThan(0);
+    expect(JSON.stringify(allStitches(turned))).not.toBe(JSON.stringify(allStitches(base)));
+  });
+});

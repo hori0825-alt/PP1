@@ -27,9 +27,11 @@ import {
   applyApplique,
   applyAutoReduce,
   applyFabric,
+  addRegionAngleLine,
   applyVectorEdit,
   bakeObject,
   cancelVectorEdit,
+  clearRegionAngleLines,
   createState,
   enterVectorEdit,
   replaceRegions,
@@ -207,6 +209,7 @@ function stitchTab(): string {
 
   const selObj = selIdx !== null ? state.objects[selIdx] : null;
   const isBaked = !!selObj?.baked;
+  const turnCount = selRegion?.angleLines?.length ?? 0;
   const effAngle = selRegion ? (selRegion.angleDeg ?? s.angleDeg) : s.angleDeg;
   const angleOverridden = selRegion ? selRegion.angleDeg !== undefined : false;
   const selectedPanel = selRegion
@@ -230,6 +233,14 @@ function stitchTab(): string {
         <div class="ve-tools">
           ${[0, 45, 90, 135].map((a) => `<button class="region-angle-q" data-angle="${a}">${a}°</button>`).join("")}
           <button id="region-angle-clear" class="secondary">全体角度に戻す</button>
+        </div>
+        <div class="turning-box">
+          <div class="region-panel-title">流れる方向 (ターニング) ${turnCount >= 2 ? "✓" : ""}</div>
+          <div class="ve-tools">
+            <button id="region-line-draw" class="${state.angleLineDraw ? "active" : ""}">${state.angleLineDraw ? "作図中… (ドラッグで線)" : "方向線を引く"}</button>
+            <button id="region-line-clear" class="secondary">クリア</button>
+          </div>
+          <p class="note">方向線 ${turnCount} 本${turnCount >= 2 ? "（流れる向きが有効）" : "（2本以上で流れる向きになる）"}。葉・花弁などに。穴あき面は対象外。</p>
         </div>`}
         <label class="bake-toggle"><input type="checkbox" id="region-bake" ${isBaked ? "checked" : ""}> このパーツの針を固定 (マニュアル化)</label>
         <button id="region-deselect" class="secondary">選択解除</button>
@@ -662,8 +673,21 @@ function bindEvents(): void {
     else unbakeObject(state, obj.id);
     render();
   });
+  // ターニング: 方向線の作図モード切替 / クリア
+  document.getElementById("region-line-draw")?.addEventListener("click", () => {
+    state.angleLineDraw = !state.angleLineDraw;
+    if (state.angleLineDraw) state.view = "vector"; // 作図はベクタービューで
+    render();
+  });
+  document.getElementById("region-line-clear")?.addEventListener("click", () => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    clearRegionAngleLines(state, idx);
+    render();
+  });
   document.getElementById("region-deselect")?.addEventListener("click", () => {
     state.selectedRegionIndex = null;
+    state.angleLineDraw = false;
     render();
   });
 
@@ -782,6 +806,9 @@ function overDirectionKnob(canvas: HTMLCanvasElement, sx: number, sy: number): b
  */
 function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   let draggingAngle = false;
+  let drawingLine = false;
+  let lineStart: { x: number; y: number } | null = null;
+  let lineEnd: { x: number; y: number } | null = null;
   let didDrag = false;
 
   const localXY = (ev: PointerEvent): { sx: number; sy: number } => {
@@ -790,9 +817,17 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   };
 
   canvas.addEventListener("pointerdown", (ev) => {
-    if (state.vectorEdit || state.view !== "vector") return;
+    if (state.vectorEdit || state.view !== "vector" || state.selectedRegionIndex === null) return;
     const { sx, sy } = localXY(ev);
-    if (state.selectedRegionIndex !== null && overDirectionKnob(canvas, sx, sy)) {
+    if (state.angleLineDraw) {
+      // 方向線の作図: ドラッグの始点を記録
+      drawingLine = true;
+      didDrag = false;
+      lineStart = screenToDesign(viewport, canvas, sx, sy);
+      lineEnd = lineStart;
+      canvas.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    } else if (overDirectionKnob(canvas, sx, sy)) {
       draggingAngle = true;
       didDrag = false;
       canvas.setPointerCapture(ev.pointerId);
@@ -801,11 +836,19 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   });
 
   canvas.addEventListener("pointermove", (ev) => {
+    const { sx, sy } = localXY(ev);
+    if (drawingLine) {
+      lineEnd = screenToDesign(viewport, canvas, sx, sy);
+      didDrag = true;
+      // プレビュー線を重ねて描く
+      renderCanvas(canvas, viewport, state);
+      if (lineStart && lineEnd) drawPreviewLine(canvas, lineStart, lineEnd);
+      return;
+    }
     if (!draggingAngle || state.selectedRegionIndex === null) return;
     const idx = state.selectedRegionIndex;
     const region = state.regions[idx];
     if (!region) return;
-    const { sx, sy } = localXY(ev);
     const p = screenToDesign(viewport, canvas, sx, sy);
     const c = polygonCentroid(region.outer);
     // ドラッグ中は差分再生成 + 診断スキップで軽量に縫い直し、キャンバスだけ更新
@@ -815,12 +858,25 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   });
 
   const endDrag = (ev: PointerEvent): void => {
-    if (!draggingAngle) return;
-    draggingAngle = false;
     if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
-    // ドラッグ終了時に診断・シーケンス等を最新化し、パネルの角度表示も更新
-    recomputeStitches(state);
-    render();
+    if (drawingLine) {
+      drawingLine = false;
+      const idx = state.selectedRegionIndex;
+      // 一定以上の長さがあれば方向線として確定
+      if (idx !== null && lineStart && lineEnd && Math.hypot(lineEnd.x - lineStart.x, lineEnd.y - lineStart.y) > mm(2)) {
+        addRegionAngleLine(state, idx, { a: lineStart, b: lineEnd });
+      }
+      lineStart = null;
+      lineEnd = null;
+      render();
+      return;
+    }
+    if (draggingAngle) {
+      draggingAngle = false;
+      // ドラッグ終了時に診断・シーケンス等を最新化し、パネルの角度表示も更新
+      recomputeStitches(state);
+      render();
+    }
   };
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
@@ -829,7 +885,7 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
     if (state.vectorEdit) return;
     if (didDrag) {
       didDrag = false;
-      return; // 方向ドラッグの直後はクリック選択を抑制
+      return; // ドラッグ (方向つまみ/方向線) の直後はクリック選択を抑制
     }
     const rect = canvas.getBoundingClientRect();
     const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
@@ -841,6 +897,20 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
     }
     render();
   });
+}
+
+/** 方向線の作図プレビューをキャンバスに重ねて描く */
+function drawPreviewLine(canvas: HTMLCanvasElement, a: { x: number; y: number }, b: { x: number; y: number }): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const [ax, ay] = designToScreen(viewport, canvas, a.x, a.y);
+  const [bx, by] = designToScreen(viewport, canvas, b.x, b.y);
+  ctx.strokeStyle = "#13a35b";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
 }
 
 function bindTextTab(): void {

@@ -4,6 +4,15 @@
 
 import type { FillType, Point, ThreadColor } from "./types";
 
+/**
+ * ステッチ方向を示す方向線 (ターニングステッチ用)。線分の向きが局所的な
+ * 縫い目方向を表す。1領域に2本以上引くと、その間を補間して向きが流れる。
+ */
+export interface DirectionLine {
+  a: Point;
+  b: Point;
+}
+
 export interface Region {
   /** 外周 (時計回り = signedArea 正) */
   outer: Point[];
@@ -19,4 +28,9 @@ export interface Region {
    * タタミ(面)の縫い目方向を決める。サテンは形状に沿うため影響しない。
    */
   angleDeg?: number;
+  /**
+   * 方向線 (ターニングステッチ)。2本以上あると角度を空間補間して
+   * 縫い目が流れる。タタミ(面)のみ対象。1本以下なら angleDeg を使う。
+   */
+  angleLines?: DirectionLine[];
 }
