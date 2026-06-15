@@ -49,6 +49,29 @@ describe("UI state ロジック", () => {
     expect(state.sequence?.entries.length).toBeGreaterThanOrEqual(2);
     expect(state.simulation?.totalStitches).toBeGreaterThan(0);
   });
+
+  it("目標針数を設定すると密度を自動で粗くして収める", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(60), mm(60)), holes: [], color: RED }];
+    recomputeStitches(state);
+    const full = state.simulation!.totalStitches;
+    expect(full).toBeGreaterThan(2000);
+
+    // 目標を全体の半分強に設定 → 自動調整で目標以内に収まる
+    const target = Math.floor(full * 0.6);
+    state.project.settings.targetStitchCount = target;
+    recomputeStitches(state);
+    expect(state.simulation!.totalStitches).toBeLessThanOrEqual(target);
+    // 調整した旨が診断 (reduceApplied) に出る
+    expect(state.reduceApplied.some((s) => s.includes("密度を自動調整"))).toBe(true);
+  });
+
+  it("目標針数なしなら密度は変えない (reduceApplied 空)", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(40), mm(40)), holes: [], color: RED }];
+    recomputeStitches(state);
+    expect(state.reduceApplied.length).toBe(0);
+  });
 });
 
 describe("シーケンスビュー描画 (jsdom)", () => {

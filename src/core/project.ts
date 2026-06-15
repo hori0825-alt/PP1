@@ -25,6 +25,11 @@ export interface ProjectSettings {
    */
   densityScale?: number;
   /**
+   * 目標針数。設定すると、超過時に密度を自動で粗くして目標内に収める
+   * (先回り autoReduce)。未指定/0 = 上限なし。
+   */
+  targetStitchCount?: number;
+  /**
    * 色 (糸) の縫い順の手動指定。"r,g,b" キーの並び。
    * 指定があれば digitize はこの順で色ブロックを縫う (なければ面積順=背景が先)。
    */

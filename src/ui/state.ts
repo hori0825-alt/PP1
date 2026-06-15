@@ -6,6 +6,7 @@ import { RUNNING_DEFAULT_LEN, SATIN_DEFAULT, mm } from "../core/constants";
 import { signedArea } from "../core/geometry";
 import { bumpObjectId, makeObject, nextObjectId, reconcileObjects } from "../core/object";
 import type { EmbroideryObject } from "../core/object";
+import { countStitches } from "../core/plan";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
 import type { DirectionLine, Region } from "../core/region";
@@ -693,38 +694,62 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
   // 角度・糸切りモード・下縫いはユーザー設定 (ステッチタブ) で上書きする
   const recipe = getRecipe(s.fabricId);
   const recipeOpts = recipeToDigitizeOptions(recipe);
-  // 密度プリセット: 行間隔・サテン間隔に倍率を掛ける (省針数 ⇄ 高密度)
   const densityScale = s.densityScale ?? 1.0;
-  const scaledRowSpacing =
-    densityScale !== 1.0 && recipeOpts.rowSpacing
-      ? Math.round(recipeOpts.rowSpacing * densityScale)
-      : recipeOpts.rowSpacing;
-  const scaledSatinSpacing = state.puffy
-    ? mm(0.3)
-    : densityScale !== 1.0
-      ? Math.round(SATIN_DEFAULT.spacing * densityScale)
-      : undefined;
-  const result = digitizeRegions(
-    state.regions,
-    designName(state),
-    {
-      ...recipeOpts,
-      rowSpacing: scaledRowSpacing,
-      angleDeg: s.angleDeg,
-      trimMode: s.trimMode,
-      underlay: s.underlay as UnderlayType[],
-      fillType: state.puffy ? "satin" : state.fillType,
-      // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
-      satinSpacing: scaledSatinSpacing,
-      colorOrder: state.project.settings.colorOrder,
-    },
-    state.objects,
-  );
+  // 密度プリセット: 行間隔・サテン間隔に倍率を掛ける (省針数 ⇄ 高密度)。
+  // scale = densityScale (ユーザー) × auto (目標針数に収める先回り倍率)
+  const generate = (scale: number): ReturnType<typeof digitizeRegions> =>
+    digitizeRegions(
+      state.regions,
+      designName(state),
+      {
+        ...recipeOpts,
+        rowSpacing: recipeOpts.rowSpacing ? Math.round(recipeOpts.rowSpacing * scale) : recipeOpts.rowSpacing,
+        angleDeg: s.angleDeg,
+        trimMode: s.trimMode,
+        underlay: s.underlay as UnderlayType[],
+        fillType: state.puffy ? "satin" : state.fillType,
+        // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)。それ以外は密度倍率を適用
+        satinSpacing: state.puffy
+          ? mm(0.3)
+          : scale !== 1.0
+            ? Math.round(SATIN_DEFAULT.spacing * scale)
+            : undefined,
+        colorOrder: state.project.settings.colorOrder,
+      },
+      state.objects,
+    );
+
+  let result = generate(densityScale);
+  const autoNotes: string[] = [];
+
+  // --- 目標針数への自動密度調整 (先回り autoReduce) ---
+  // ドラッグ中 (skipDerived) は重い再生成を避け、現在密度のまま。
+  const target = s.targetStitchCount ?? 0;
+  if (!opts.skipDerived && target > 0 && countStitches(result.plan) > target) {
+    const before = countStitches(result.plan);
+    // densityScale の上に追加倍率を掛けて段階的に粗くする
+    const steps = [1.15, 1.3, 1.5, 1.75, 2.0];
+    let applied = 1.0;
+    for (const m of steps) {
+      if (countStitches(result.plan) <= target) break;
+      result = generate(densityScale * m);
+      applied = m;
+    }
+    const after = countStitches(result.plan);
+    if (after > target) {
+      autoNotes.push(
+        `目標 ${target} 針に未達 (${after} 針)。密度を上げきりました。サイズ縮小か手動の自動針数削減を検討してください`,
+      );
+    } else if (applied > 1.0) {
+      autoNotes.push(`目標 ${target} 針に収めるため密度を自動調整しました (×${applied.toFixed(2)}、${before}→${after} 針)`);
+    }
+  }
+
   state.plan = result.plan;
   state.project.plan = result.plan;
   state.stitchWarnings = result.warnings;
   if (!opts.skipDerived) refreshDerived(state);
-  state.reduceApplied = [];
+  state.reduceApplied = autoNotes;
 }
 
 /** plan から診断・シーケンス・シミュレーションを作り直す */
