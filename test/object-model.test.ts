@@ -19,10 +19,16 @@ import {
   cancelVectorEdit,
   clearRegionAngleLines,
   createState,
+  deleteBakedStitch,
+  enterStitchEdit,
   enterVectorEdit,
+  exitStitchEdit,
   findObject,
+  insertBakedStitch,
   liveApplyVectorEdit,
+  moveBakedStitch,
   recomputeStitches,
+  stitchEditObject,
   unbakeObject,
 } from "../src/ui/state";
 
@@ -145,6 +151,45 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("針 (ステッチ点) 編集 (フェーズ7)", () => {
+  it("ベイクして針を移動/追加/削除でき、plan に反映される", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+
+    expect(enterStitchEdit(state, 0)).toBe(true);
+    expect(state.stitchEdit).not.toBeNull();
+    const obj = stitchEditObject(state)!;
+    expect(obj.baked).toBeDefined();
+    const before = obj.baked!.reduce((n, r) => n + r.stitches.length, 0);
+    expect(before).toBeGreaterThan(2);
+
+    // 追加 (run0 の先頭の後ろ)
+    insertBakedStitch(state, 0, 0, { x: 5, y: 5 });
+    const afterAdd = stitchEditObject(state)!.baked!.reduce((n, r) => n + r.stitches.length, 0);
+    expect(afterAdd).toBe(before + 1);
+
+    // 移動
+    moveBakedStitch(state, 0, 1, { x: 123, y: 45 });
+    expect(stitchEditObject(state)!.baked![0].stitches[1]).toEqual({ x: 123, y: 45 });
+    // plan にも出ている
+    const id = state.stitchEdit!.objectId;
+    const planPts = state.plan!.blocks
+      .flatMap((b) => b.runs)
+      .filter((r) => r.objectId === id)
+      .flatMap((r) => r.stitches);
+    expect(planPts.some((p) => p.x === 123 && p.y === 45)).toBe(true);
+
+    // 削除
+    deleteBakedStitch(state, 0, 0);
+    const afterDel = stitchEditObject(state)!.baked!.reduce((n, r) => n + r.stitches.length, 0);
+    expect(afterDel).toBe(afterAdd - 1);
+
+    exitStitchEdit(state);
+    expect(state.stitchEdit).toBeNull();
   });
 });
 

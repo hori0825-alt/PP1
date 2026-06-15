@@ -4,6 +4,7 @@
 import { HOOP_HALF, HOOP_SIZE, UNIT_MM, mm } from "../core/constants";
 import { polygonCentroid } from "../core/geometry";
 import { fitUnitsPerPixel } from "../import/regions";
+import { findObject } from "./state";
 import type { AppState } from "./state";
 
 /** 方向ハンドルの“つまみ”の画面半径 (ヒット判定に使う) */
@@ -357,6 +358,87 @@ function drawStartEndMarkers(
   ctx.fillRect(ex - 4, ey - 4, 8, 8);
 }
 
+/** 針編集オーバーレイ: 編集対象オブジェクトの各針を編集ハンドルとして描く */
+function drawStitchEditOverlay(
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+): void {
+  const se = state.stitchEdit;
+  if (!se) return;
+  const obj = findObject(state, se.objectId);
+  if (!obj?.baked) return;
+  obj.baked.forEach((run, ri) => {
+    run.stitches.forEach((p, i) => {
+      const [x, y] = toScreen(v, canvas, p.x, p.y);
+      const sel = se.sel?.run === ri && se.sel?.idx === i;
+      ctx.beginPath();
+      ctx.arc(x, y, sel ? 5 : 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = sel ? "#e8632a" : "#ffffff";
+      ctx.fill();
+      ctx.strokeStyle = "#e8632a";
+      ctx.lineWidth = sel ? 2 : 1;
+      ctx.stroke();
+    });
+  });
+}
+
+/** 針編集: クリック位置に最も近い針 (run, idx) を画面距離 tol(px) 以内で探す */
+export function pickBakedStitch(
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+  sx: number,
+  sy: number,
+  tol = 8,
+): { run: number; idx: number } | null {
+  const se = state.stitchEdit;
+  if (!se) return null;
+  const obj = findObject(state, se.objectId);
+  if (!obj?.baked) return null;
+  let best: { run: number; idx: number } | null = null;
+  let bestD = tol;
+  obj.baked.forEach((run, ri) => {
+    run.stitches.forEach((p, i) => {
+      const [x, y] = toScreen(v, canvas, p.x, p.y);
+      const d = Math.hypot(x - sx, y - sy);
+      if (d < bestD) {
+        bestD = d;
+        best = { run: ri, idx: i };
+      }
+    });
+  });
+  return best;
+}
+
+/** 針編集: クリック位置に最も近い線分の (run, afterIdx) を返す (追加位置決め用) */
+export function nearestBakedSegment(
+  state: AppState,
+  p: { x: number; y: number },
+): { run: number; afterIdx: number } | null {
+  const se = state.stitchEdit;
+  if (!se) return null;
+  const obj = findObject(state, se.objectId);
+  if (!obj?.baked) return null;
+  let best: { run: number; afterIdx: number } | null = null;
+  let bestD = Infinity;
+  obj.baked.forEach((run, ri) => {
+    for (let i = 0; i + 1 < run.stitches.length; i++) {
+      const a = run.stitches[i];
+      const b = run.stitches[i + 1];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const d = Math.hypot(mx - p.x, my - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = { run: ri, afterIdx: i };
+      }
+    }
+  });
+  return best;
+}
+
 export function renderCanvas(canvas: HTMLCanvasElement, v: Viewport, state: AppState): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -373,6 +455,7 @@ export function renderCanvas(canvas: HTMLCanvasElement, v: Viewport, state: AppS
   } else {
     drawStitchView(ctx, v, canvas, state);
     drawStartEndMarkers(ctx, v, canvas, state);
+    drawStitchEditOverlay(ctx, v, canvas, state);
   }
 
   // 実寸ラベル (左下)

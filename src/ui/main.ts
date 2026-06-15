@@ -18,6 +18,8 @@ import {
   designToScreen,
   directionHandleGeometry,
   DIR_HANDLE_RADIUS,
+  pickBakedStitch,
+  nearestBakedSegment,
 } from "./canvas";
 import type { Viewport } from "./canvas";
 import { decodeImageFile } from "./loadImage";
@@ -33,9 +35,15 @@ import {
   cancelVectorEdit,
   clearRegionAngleLines,
   createState,
+  deleteBakedStitch,
+  enterStitchEdit,
   enterVectorEdit,
+  exitStitchEdit,
+  insertBakedStitch,
   liveApplyVectorEdit,
+  moveBakedStitch,
   replaceRegions,
+  stitchEditObject,
   unbakeObject,
   recomputePhoto,
   recomputeRegions,
@@ -203,7 +211,27 @@ function fillTypeLabel(f: FillType): string {
   return f === "satin" ? "サテン縫い" : f === "tatami" ? "タタミ縫い" : "自動 (細→サテン / 広→タタミ)";
 }
 
+function stitchEditPanel(): string {
+  const obj = stitchEditObject(state);
+  const total = obj?.baked?.reduce((n, r) => n + r.stitches.length, 0) ?? 0;
+  const se = state.stitchEdit!;
+  const tools: [typeof se.tool, string][] = [["move", "移動"], ["add", "追加"], ["delete", "削除"]];
+  return `
+    <h2>針の編集</h2>
+    <div class="ve-tools">
+      ${tools.map(([t, label]) => `<button class="se-tool ${se.tool === t ? "active" : ""}" data-setool="${t}">${label}</button>`).join("")}
+    </div>
+    <p class="note">
+      ${se.tool === "move" ? "針をドラッグして動かします。" : se.tool === "add" ? "縫い目の線の上をクリックすると針を1つ足します。" : "針をクリックすると削除します。"}
+    </p>
+    <p class="note">このパーツの針数: ${total}${se.sel ? ` ／ 選択中: ${se.sel.idx + 1} 本目` : ""}</p>
+    <button id="se-done">針の編集を終了</button>
+    <p class="note">編集した針は固定 (マニュアル) され、自動再生成では変わりません。</p>
+  `;
+}
+
 function stitchTab(): string {
+  if (state.stitchEdit) return stitchEditPanel();
   const s = state.project.settings;
   const selIdx = state.selectedRegionIndex;
   const selRegion = selIdx !== null ? state.regions[selIdx] : null;
@@ -243,7 +271,8 @@ function stitchTab(): string {
           </div>
           <p class="note">方向線 ${turnCount} 本${turnCount >= 2 ? "（流れる向きが有効）" : "（2本以上で流れる向きになる）"}。葉・花弁などに。穴あき面は対象外。</p>
         </div>
-        <button id="region-edit-outline">輪郭を編集 (形を直す)</button>`}
+        <button id="region-edit-outline">輪郭を編集 (形を直す)</button>
+        <button id="region-edit-stitches">針を編集 (1針ずつ直す)</button>`}
         <label class="bake-toggle"><input type="checkbox" id="region-bake" ${isBaked ? "checked" : ""}> このパーツの針を固定 (マニュアル化)</label>
         <button id="region-deselect" class="secondary">選択解除</button>
         ${isBaked ? "" : `<p class="note">方向は面(タタミ)の縫い目向き。キャンバス(表示:ベクター)で青いつまみをドラッグしても向きを引けます。</p>`}
@@ -680,9 +709,31 @@ function bindEvents(): void {
     const idx = state.selectedRegionIndex;
     if (idx === null) return;
     state.angleLineDraw = false;
+    state.stitchEdit = null;
     state.view = "stitch"; // 縫い目の変化を見ながらノードを動かせる
     state.tab = "vector";
     enterVectorEdit(state, idx);
+    render();
+  });
+  // 針を編集: 選択パーツをベイクして針編集モードへ
+  document.getElementById("region-edit-stitches")?.addEventListener("click", () => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    state.angleLineDraw = false;
+    state.vectorEdit = null;
+    state.view = "stitch";
+    if (enterStitchEdit(state, idx)) state.tab = "stitch";
+    render();
+  });
+  // 針編集: ツール切替 / 終了
+  document.querySelectorAll<HTMLElement>(".se-tool").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (state.stitchEdit) state.stitchEdit.tool = b.dataset.setool as "move" | "add" | "delete";
+      render();
+    }),
+  );
+  document.getElementById("se-done")?.addEventListener("click", () => {
+    exitStitchEdit(state);
     render();
   });
   // ターニング: 方向線の作図モード切替 / クリア
@@ -822,6 +873,7 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   let lineStart: { x: number; y: number } | null = null;
   let lineEnd: { x: number; y: number } | null = null;
   let didDrag = false;
+  let draggingStitch: { run: number; idx: number } | null = null;
 
   const localXY = (ev: PointerEvent): { sx: number; sy: number } => {
     const rect = canvas.getBoundingClientRect();
@@ -829,6 +881,37 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   };
 
   canvas.addEventListener("pointerdown", (ev) => {
+    // --- 針編集モード (フェーズ7) ---
+    if (state.stitchEdit && state.view === "stitch") {
+      const { sx, sy } = localXY(ev);
+      const se = state.stitchEdit;
+      if (se.tool === "move") {
+        const hit = pickBakedStitch(viewport, canvas, state, sx, sy);
+        se.sel = hit;
+        if (hit) {
+          draggingStitch = hit;
+          canvas.setPointerCapture(ev.pointerId);
+          ev.preventDefault();
+        }
+        render();
+      } else if (se.tool === "delete") {
+        const hit = pickBakedStitch(viewport, canvas, state, sx, sy);
+        if (hit) {
+          deleteBakedStitch(state, hit.run, hit.idx);
+          se.sel = null;
+          render();
+        }
+      } else if (se.tool === "add") {
+        const p = screenToDesign(viewport, canvas, sx, sy);
+        const seg = nearestBakedSegment(state, p);
+        if (seg) {
+          insertBakedStitch(state, seg.run, seg.afterIdx, p);
+          se.sel = { run: seg.run, idx: seg.afterIdx + 1 };
+          render();
+        }
+      }
+      return;
+    }
     if (state.vectorEdit || state.view !== "vector" || state.selectedRegionIndex === null) return;
     const { sx, sy } = localXY(ev);
     if (state.angleLineDraw) {
@@ -849,6 +932,12 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
 
   canvas.addEventListener("pointermove", (ev) => {
     const { sx, sy } = localXY(ev);
+    if (draggingStitch && state.stitchEdit) {
+      const p = screenToDesign(viewport, canvas, sx, sy);
+      moveBakedStitch(state, draggingStitch.run, draggingStitch.idx, p, { skipDerived: true });
+      renderCanvas(canvas, viewport, state);
+      return;
+    }
     if (drawingLine) {
       lineEnd = screenToDesign(viewport, canvas, sx, sy);
       didDrag = true;
@@ -871,6 +960,14 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
 
   const endDrag = (ev: PointerEvent): void => {
     if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+    if (draggingStitch && state.stitchEdit) {
+      const { sx, sy } = localXY(ev);
+      const p = screenToDesign(viewport, canvas, sx, sy);
+      moveBakedStitch(state, draggingStitch.run, draggingStitch.idx, p); // 確定 (診断も更新)
+      draggingStitch = null;
+      render();
+      return;
+    }
     if (drawingLine) {
       drawingLine = false;
       const idx = state.selectedRegionIndex;
@@ -894,7 +991,7 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   canvas.addEventListener("pointercancel", endDrag);
 
   canvas.addEventListener("click", (ev) => {
-    if (state.vectorEdit) return;
+    if (state.vectorEdit || state.stitchEdit) return; // 針編集中は選択を無効化
     if (didDrag) {
       didDrag = false;
       return; // ドラッグ (方向つまみ/方向線) の直後はクリック選択を抑制
