@@ -12,8 +12,9 @@
 //      レベル k·rowSpacing の等高線を抽出する (= 行間隔 rowSpacing の縫い目行)。
 //   3. 各行を stitchLength で再サンプルし、行から行へ縁を渡って 1本の連続 Run にする。
 //
-// 重要: 1領域は必ず1本の連続 Run。穴あき領域や退化時は呼び出し側でタタミに
-// フォールバックする (この関数は runs が空/警告を返すことがある)。
+// 穴あき領域: 穴の部分は insideRegion で除外されるため、等高線は穴を避けて
+// 自然に分断される。分断されたフラグメントは最近傍順で繋いで1本の Run にする。
+// 退化時は呼び出し側でタタミにフォールバックする。
 
 import { polygonCentroid, pointInPolygon, pointSegmentDistance } from "../core/geometry";
 import type { DirectionLine, Region } from "../core/region";
@@ -67,8 +68,8 @@ export function turningFill(
   exitNear: Point | null = null,
 ): GeneratorResult {
   const warnings: string[] = [];
-  if (lines.length < 2 || region.holes.length > 0) {
-    return { runs: [], warnings: ["ターニング: 2本以上の方向線かつ穴なし領域が必要"] };
+  if (lines.length < 2) {
+    return { runs: [], warnings: ["ターニング: 2本以上の方向線が必要"] };
   }
 
   const C = polygonCentroid(region.outer);
@@ -190,12 +191,14 @@ export function turningFill(
 
   if (rows.length === 0) return { runs: [], warnings: ["ターニング: 行を生成できません"] };
 
-  // --- 行を縫う順に並べ、1本の連続 Run にする ---
-  // 各行を stitchLength で再サンプル。前の終点に近い端から縫う (ジグザグ)。
+  // --- 行を最近傍順に並べ替え、1本の連続 Run にする ---
+  // 穴や凹面で等高線が分断された場合、レベル昇順だと遠い行に飛ぶ。
+  // 最近傍貪欲法で並べ替えると渡り距離を大幅に削減できる。
+  const orderedRows = reorderByNearest(rows, startNear);
+
   const stitches: Point[] = [];
   let cur: Point | null = startNear;
-  // rows はレベル昇順。行内の連結は phase レベル順なので隣接行は近い。
-  for (const poly of rows) {
+  for (const poly of orderedRows) {
     const sampled = resample(poly, params.stitchLength);
     if (sampled.length === 0) continue;
     const head = sampled[0];
@@ -224,6 +227,51 @@ export function turningFill(
 
   const rounded = stitches.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
   return { runs: [{ stitches: rounded, connection: "trim" }], warnings };
+}
+
+/** 行フラグメント群を最近傍貪欲法で並べ替える。穴・凹面での渡り距離を短縮する */
+function reorderByNearest(rows: Point[][], startNear: Point | null): Point[][] {
+  if (rows.length <= 1) return rows;
+  const n = rows.length;
+  const used = new Uint8Array(n);
+  const ordered: Point[][] = [];
+
+  // startNear に最も近い行を最初に選ぶ
+  let bestIdx = 0;
+  if (startNear) {
+    let bestDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      const h = rows[i][0];
+      const t = rows[i][rows[i].length - 1];
+      const d = Math.min(
+        (h.x - startNear.x) ** 2 + (h.y - startNear.y) ** 2,
+        (t.x - startNear.x) ** 2 + (t.y - startNear.y) ** 2,
+      );
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+  }
+  used[bestIdx] = 1;
+  ordered.push(rows[bestIdx]);
+
+  for (let iter = 1; iter < n; iter++) {
+    const last = ordered[ordered.length - 1];
+    const tail = last[last.length - 1];
+    let bestDist = Infinity;
+    let bestI = 0;
+    for (let i = 0; i < n; i++) {
+      if (used[i]) continue;
+      const h = rows[i][0];
+      const t = rows[i][rows[i].length - 1];
+      const d = Math.min(
+        (h.x - tail.x) ** 2 + (h.y - tail.y) ** 2,
+        (t.x - tail.x) ** 2 + (t.y - tail.y) ** 2,
+      );
+      if (d < bestDist) { bestDist = d; bestI = i; }
+    }
+    used[bestI] = 1;
+    ordered.push(rows[bestI]);
+  }
+  return ordered;
 }
 
 /** セグメント群を端点一致で連結して折れ線にする (tol 以内を同一点とみなす) */
