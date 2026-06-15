@@ -18,6 +18,11 @@ export interface QuantizeOptions {
   smoothingPasses?: number;
   /** これ未満の連結成分は周囲の色に統合する (ピクセル数) */
   minComponentPixels?: number;
+  /**
+   * 小特徴保護のコントラスト閾値 (Lab ΔE)。統合先/多数決色とこれ以上違う色の
+   * 小領域は、統合・平滑化で消さない (白目・ハイライト・瞳の光など)。既定 25。
+   */
+  featureContrast?: number;
 }
 
 interface Lab {
@@ -52,6 +57,11 @@ function labDist2(a: Lab, b: Lab): number {
   const db = a.b - b.b;
   return dl * dl + da * da + db * db;
 }
+
+/** 小特徴として保護する既定コントラスト (Lab ΔE)。白×黒は ~75、肌の濃淡は ~10 程度 */
+const MIN_FEATURE_CONTRAST = 25;
+/** これ以下の画素数の連結成分はコントラストに関わらず統合する (単画素スペックル除去) */
+const NOISE_FLOOR_PIXELS = 2;
 
 /** k-means++ 風の初期中心選択 (決定的: 乱数を使わず最遠点を選ぶ) */
 function initialCenters(samples: Lab[], k: number): Lab[] {
@@ -124,8 +134,20 @@ function kmeans(pixels: Lab[], k: number, maxIter = 16): { centers: Lab[]; assig
   return { centers, assign: nearest };
 }
 
-/** 近傍多数決によるラベル平滑化 (3×3)。AA 由来の孤立画素・ギザギザを統合する */
-function smoothLabels(labels: Int16Array, w: number, h: number, passes: number): void {
+/**
+ * 近傍多数決によるラベル平滑化 (3×3)。AA 由来の孤立画素・ギザギザを統合する。
+ * エッジ保存: 元の色と多数決色が高コントラスト (contrast2 超) なら変えない。
+ * AA 画素は隣接色と中間=低コントラストなので平滑化され、白目のような高コントラスト
+ * の小特徴はその場に残る。
+ */
+function smoothLabels(
+  labels: Int16Array,
+  w: number,
+  h: number,
+  passes: number,
+  centers: Lab[],
+  contrast2: number,
+): void {
   const counts = new Map<number, number>();
   for (let pass = 0; pass < passes; pass++) {
     const src = labels.slice();
@@ -150,14 +172,36 @@ function smoothLabels(labels: Int16Array, w: number, h: number, passes: number):
             best = v;
           }
         }
-        labels[i] = best;
+        // エッジ保存: 元の色と多数決色が大きく違うなら平滑化しない (小特徴を守る)
+        if (
+          best !== src[i] &&
+          src[i] >= 0 &&
+          best >= 0 &&
+          labDist2(centers[src[i]], centers[best]) > contrast2
+        ) {
+          labels[i] = src[i];
+        } else {
+          labels[i] = best;
+        }
       }
     }
   }
 }
 
-/** 小さすぎる連結成分 (4近傍) を、隣接する最頻ラベルへ統合する */
-function mergeSmallComponents(labels: Int16Array, w: number, h: number, minPixels: number): void {
+/**
+ * 小さすぎる連結成分 (4近傍) を、隣接する最頻ラベルへ統合する。
+ * コントラスト保存: 統合先と高コントラスト (contrast2 超) な小領域は統合しない
+ * (白目・ハイライト等の小特徴を守る)。NOISE_FLOOR_PIXELS 以下は単画素スペックル
+ * とみなしコントラストに関わらず統合する。
+ */
+function mergeSmallComponents(
+  labels: Int16Array,
+  w: number,
+  h: number,
+  minPixels: number,
+  centers: Lab[],
+  contrast2: number,
+): void {
   const comp = new Int32Array(w * h).fill(-1);
   let compCount = 0;
   const stack: number[] = [];
@@ -209,7 +253,13 @@ function mergeSmallComponents(labels: Int16Array, w: number, h: number, minPixel
         best = v;
       }
     }
-    if (best !== label) {
+    // コントラスト保存: 統合先と大きく違う色の小領域 (白目・ハイライト等) は残す。
+    // ただし NOISE_FLOOR_PIXELS 以下の極小は単画素スペックルとみなし統合する。
+    const highContrast =
+      best >= 0 &&
+      members.length > NOISE_FLOOR_PIXELS &&
+      labDist2(centers[label], centers[best]) > contrast2;
+    if (best !== label && !highContrast) {
       for (const i of members) labels[i] = best;
     }
   }
@@ -253,8 +303,10 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
     cnt[c]++;
   }
 
-  smoothLabels(labels, w, h, options.smoothingPasses ?? 2);
-  mergeSmallComponents(labels, w, h, options.minComponentPixels ?? 16);
+  // 小特徴保護のコントラスト閾値 (Lab ΔE → 二乗距離)
+  const contrast2 = (options.featureContrast ?? MIN_FEATURE_CONTRAST) ** 2;
+  smoothLabels(labels, w, h, options.smoothingPasses ?? 2, centers, contrast2);
+  mergeSmallComponents(labels, w, h, options.minComponentPixels ?? 16, centers, contrast2);
 
   // 統合後に残った色だけでパレットを作り、ラベルを詰め直す
   const used = new Map<number, number>();
