@@ -52,6 +52,8 @@ export interface DigitizeOptions {
   pushCompensation?: number;
   /** 最小オブジェクト短辺 (内部単位)。これ未満は除外 (Small Object Protection) */
   minObjectExtent?: number;
+  /** 下縫いを付ける最小短辺 (内部単位)。これ未満の細い面は下縫いを省く。デフォルト 2.5mm */
+  underlayMinExtent?: number;
   /** 小さい面の密度を自動で下げる */
   autoDensity?: boolean;
   /** サテンの間隔 (内部単位)。3D/パフィーで詰める用 */
@@ -275,8 +277,15 @@ export function digitizeRegions(
               rowSpacing: densityCompensatedSpacing(regionArea(region), params.rowSpacing, autoDensity),
             };
 
-            // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)
-            if (options.underlay && options.underlay.length > 0) {
+            // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)。
+            // 選択的下縫い: 短辺が下縫い閾値未満の細い面は edge 下縫いの内側オフセットが
+            // 潰れて無意味なうえ針数増の原因なので、下縫いをスキップする。
+            const underlayMinExtent = options.underlayMinExtent ?? 25; // 2.5mm
+            if (
+              options.underlay &&
+              options.underlay.length > 0 &&
+              regionMinExtent(region) >= underlayMinExtent
+            ) {
               const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
               for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
               localWarnings.push(...u.warnings);

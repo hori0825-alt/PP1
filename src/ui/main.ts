@@ -324,6 +324,25 @@ function stitchTab(): string {
     <label>角度
       <select id="angle">${[0, 45, 90, 135].map((v) => `<option value="${v}" ${v === s.angleDeg ? "selected" : ""}>${v}°</option>`).join("")}</select>
     </label>
+    <h2>密度 (針数)</h2>
+    <label>プリセット
+      <select id="density">
+        ${(
+          [
+            [0.9, "高密度 (しっかり / 針数増)"],
+            [1.0, "標準"],
+            [1.25, "省針数 (-20%目安)"],
+            [1.5, "最省針数 (-33%目安)"],
+          ] as [number, string][]
+        )
+          .map(
+            ([v, label]) =>
+              `<option value="${v}" ${Math.abs((s.densityScale ?? 1) - v) < 0.01 ? "selected" : ""}>${label}</option>`,
+          )
+          .join("")}
+      </select>
+    </label>
+    <p class="note">フィルの行間隔・サテン間隔を調整します。粗くすると針数が減ります (線・細部は影響小)。</p>
     <h2>下縫い</h2>
     ${(["edge", "tatami"] as const)
       .map((u) => `<label><input type="checkbox" class="underlay" value="${u}" ${s.underlay.includes(u) ? "checked" : ""}> ${u === "edge" ? "エッジ下縫い" : "タタミ下縫い"}</label>`)
@@ -681,6 +700,11 @@ function bindEvents(): void {
   });
   document.getElementById("trim")?.addEventListener("change", (e) => {
     state.project.settings.trimMode = (e.target as HTMLSelectElement).value as AppState["project"]["settings"]["trimMode"];
+    recomputeStitches(state);
+    render();
+  });
+  document.getElementById("density")?.addEventListener("change", (e) => {
+    state.project.settings.densityScale = Number((e.target as HTMLSelectElement).value);
     recomputeStitches(state);
     render();
   });
