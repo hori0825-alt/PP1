@@ -16,9 +16,12 @@ import { digitizeRegions } from "../src/stitch/digitize";
 import {
   addRegionAngleLine,
   bakeObject,
+  cancelVectorEdit,
   clearRegionAngleLines,
   createState,
+  enterVectorEdit,
   findObject,
+  liveApplyVectorEdit,
   recomputeStitches,
   unbakeObject,
 } from "../src/ui/state";
@@ -141,6 +144,34 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
 
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
+    expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("輪郭ノード編集の統合 (フェーズ5)", () => {
+  it("ライブ編集でオブジェクトidを保ち、破棄で元に戻る", () => {
+    const state = createState();
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: COLOR }];
+    recomputeStitches(state);
+    const id = state.objects[0].id;
+    const before = JSON.stringify(stitchesOf(state.plan!, id));
+
+    enterVectorEdit(state, 0);
+    expect(state.vectorEdit).not.toBeNull();
+    // 外周の角ノードを外側へ動かす
+    const ve = state.vectorEdit!;
+    const node = ve.shapes[0].outer.nodes[0];
+    ve.shapes[0].outer.nodes[0] = { ...node, x: -mm(40), y: -mm(40) };
+    liveApplyVectorEdit(state, { skipDerived: true });
+
+    // 同じオブジェクト (id 不変) で、形が変わって縫い直された
+    expect(state.objects[0].id).toBe(id);
+    expect(JSON.stringify(stitchesOf(state.plan!, id))).not.toBe(before);
+
+    // 破棄で開始時の形状・縫い目に戻る
+    cancelVectorEdit(state);
+    expect(state.vectorEdit).toBeNull();
+    expect(state.objects[0].id).toBe(id);
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
   });
 });

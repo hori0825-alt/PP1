@@ -34,6 +34,7 @@ import {
   clearRegionAngleLines,
   createState,
   enterVectorEdit,
+  liveApplyVectorEdit,
   replaceRegions,
   unbakeObject,
   recomputePhoto,
@@ -241,7 +242,8 @@ function stitchTab(): string {
             <button id="region-line-clear" class="secondary">クリア</button>
           </div>
           <p class="note">方向線 ${turnCount} 本${turnCount >= 2 ? "（流れる向きが有効）" : "（2本以上で流れる向きになる）"}。葉・花弁などに。穴あき面は対象外。</p>
-        </div>`}
+        </div>
+        <button id="region-edit-outline">輪郭を編集 (形を直す)</button>`}
         <label class="bake-toggle"><input type="checkbox" id="region-bake" ${isBaked ? "checked" : ""}> このパーツの針を固定 (マニュアル化)</label>
         <button id="region-deselect" class="secondary">選択解除</button>
         ${isBaked ? "" : `<p class="note">方向は面(タタミ)の縫い目向き。キャンバス(表示:ベクター)で青いつまみをドラッグしても向きを引けます。</p>`}
@@ -673,6 +675,16 @@ function bindEvents(): void {
     else unbakeObject(state, obj.id);
     render();
   });
+  // 輪郭を編集: 選択パーツに絞ってベクター編集を開始 (ドラッグでライブ再生成)
+  document.getElementById("region-edit-outline")?.addEventListener("click", () => {
+    const idx = state.selectedRegionIndex;
+    if (idx === null) return;
+    state.angleLineDraw = false;
+    state.view = "stitch"; // 縫い目の変化を見ながらノードを動かせる
+    state.tab = "vector";
+    enterVectorEdit(state, idx);
+    render();
+  });
   // ターニング: 方向線の作図モード切替 / クリア
   document.getElementById("region-line-draw")?.addEventListener("click", () => {
     state.angleLineDraw = !state.angleLineDraw;
@@ -1044,14 +1056,17 @@ function bindVectorTab(): void {
     const newPath = setNodeType(path, ve.selectedNode, next);
     if (ve.activePath === "outer") shape.outer = newPath;
     else shape.holes[ve.activePath] = newPath;
+    liveApplyVectorEdit(state);
     render();
   });
   document.getElementById("ve-all-smooth")?.addEventListener("click", () => {
     vectorSetAllType(state, "smooth");
+    liveApplyVectorEdit(state);
     render();
   });
   document.getElementById("ve-all-corner")?.addEventListener("click", () => {
     vectorSetAllType(state, "corner");
+    liveApplyVectorEdit(state);
     render();
   });
   document.getElementById("ve-apply")?.addEventListener("click", () => {

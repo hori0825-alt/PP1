@@ -8,6 +8,7 @@ import type { EditPath } from "../vector/path";
 import { snapToArtwork } from "../vector/snap";
 import { designToScreen, screenToDesign } from "./canvas";
 import type { Viewport } from "./canvas";
+import { liveApplyVectorEdit } from "./state";
 import type { AppState, VectorEditState } from "./state";
 
 function activePath(ve: VectorEditState): EditPath {
@@ -126,6 +127,7 @@ export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, stat
       if (hit !== null) {
         setActivePath(ve, deleteNode(activePath(ve), hit));
         ve.selectedNode = null;
+        liveApplyVectorEdit(state); // 形状変更を即反映 (このパーツのみ縫い直す)
         state.onChange?.();
       }
       return;
@@ -136,6 +138,7 @@ export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, stat
       const segIdx = nearestSegmentIndex(path, p);
       setActivePath(ve, addNode(path, segIdx, p));
       ve.selectedNode = segIdx + 1;
+      liveApplyVectorEdit(state);
       state.onChange?.();
       return;
     }
@@ -157,6 +160,8 @@ export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, stat
     let p = toDesign(ev);
     if (ve.snapEnabled) p = snapToArtwork(p, snapRefs(state), mm(1.5));
     setActivePath(ve, moveNode(activePath(ve), dragging, p));
+    // ドラッグ中もライブ再生成 (このパーツのみ・診断は省いて軽量に)
+    liveApplyVectorEdit(state, { skipDerived: true });
     redraw();
   };
 
@@ -168,6 +173,7 @@ export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, stat
       } catch {
         // capture 未設定なら無視
       }
+      liveApplyVectorEdit(state); // 最終確定 (診断・縫い順も更新)
       state.onChange?.();
     }
   };
