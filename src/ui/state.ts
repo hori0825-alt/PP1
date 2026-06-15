@@ -376,6 +376,29 @@ export function findObject(state: AppState, id: number): EmbroideryObject | unde
 }
 
 /**
+ * 色ブロックの縫い順を入れ替える (縫い順編集)。現在の plan のブロック並びから
+ * 色キー列を作り、from→to に動かして settings.colorOrder に保存する。
+ * 再生成しても色順が保持される。
+ */
+export function moveColorBlock(state: AppState, fromBlockIndex: number, toBlockIndex: number): void {
+  if (!state.plan) return;
+  const keys = state.plan.blocks.map((b) => `${b.thread.r},${b.thread.g},${b.thread.b}`);
+  if (
+    fromBlockIndex < 0 ||
+    fromBlockIndex >= keys.length ||
+    toBlockIndex < 0 ||
+    toBlockIndex >= keys.length ||
+    fromBlockIndex === toBlockIndex
+  ) {
+    return;
+  }
+  const [moved] = keys.splice(fromBlockIndex, 1);
+  keys.splice(toBlockIndex, 0, moved);
+  state.project.settings.colorOrder = keys;
+  recomputeStitches(state);
+}
+
+/**
  * プロジェクト読み込み後にオブジェクト層 (id・baked) を復元する。
  * project.objects が regions と添字対応していればそれを使い、固定針・手動の線・
  * 選択の同一性を保つ。なければ regions から作り直す (前方互換)。
@@ -680,6 +703,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
       fillType: state.puffy ? "satin" : state.fillType,
       // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)
       satinSpacing: state.puffy ? mm(0.3) : undefined,
+      colorOrder: state.project.settings.colorOrder,
     },
     state.objects,
   );

@@ -19,6 +19,11 @@ export interface ProjectSettings {
   underlay: string[];
   /** 布地レシピ ID (src/fabric/recipes.ts) */
   fabricId: string;
+  /**
+   * 色 (糸) の縫い順の手動指定。"r,g,b" キーの並び。
+   * 指定があれば digitize はこの順で色ブロックを縫う (なければ面積順=背景が先)。
+   */
+  colorOrder?: string[];
 }
 
 export interface Project {
