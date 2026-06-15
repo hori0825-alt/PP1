@@ -8,7 +8,7 @@ import type { EmbroideryObject } from "../core/object";
 import { createEmptyProject, generateId } from "../core/project";
 import type { Project } from "../core/project";
 import type { DirectionLine, Region } from "../core/region";
-import type { StitchPlan } from "../core/types";
+import type { Point, StitchPlan } from "../core/types";
 import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
@@ -69,6 +69,8 @@ export interface VectorEditState {
   selectedNode: number | null;
   tool: VectorTool;
   snapEnabled: boolean;
+  /** 開始時の領域形状スナップショット (破棄時に復元する) */
+  original: { outer: Point[]; holes: Point[][] }[];
 }
 
 export interface AppState {
@@ -218,26 +220,67 @@ export function applyFabric(state: AppState, fabricId: string): void {
   recomputeStitches(state);
 }
 
-/** ベクター編集を開始: 現在の領域を編集可能形状に変換する */
-export function enterVectorEdit(state: AppState): void {
+/**
+ * ベクター編集を開始: 現在の領域を編集可能形状に変換する。
+ * @param focus 最初に編集対象にする領域インデックス (選択パーツの輪郭を直接編集する用)
+ */
+export function enterVectorEdit(state: AppState, focus = 0): void {
   if (state.regions.length === 0) {
     state.vectorEdit = null;
     return;
   }
   state.vectorEdit = {
     shapes: state.regions.map((r) => regionToEditShape(r)),
-    activeShape: 0,
+    activeShape: Math.max(0, Math.min(state.regions.length - 1, focus)),
     activePath: "outer",
     selectedNode: null,
     tool: "select",
     snapEnabled: true,
+    // 破棄時に戻せるよう、開始時の形状を控える
+    original: state.regions.map((r) => ({
+      outer: r.outer.map((p) => ({ x: p.x, y: p.y })),
+      holes: r.holes.map((h) => h.map((p) => ({ x: p.x, y: p.y }))),
+    })),
   };
 }
 
-/** ベクター編集を確定: 編集形状を領域へ戻してステッチを再生成 */
+/**
+ * 編集中の形状を「元の領域オブジェクトに上書き」する (参照は維持し、輪郭配列だけ
+ * 新しくする)。これによりオブジェクトの id・色・縫い方・方向は保たれ、
+ * 形状が変わったパーツだけがキャッシュ無効化されて縫い直される (差分再生成)。
+ */
+function writeShapeToRegion(state: AppState, shapeIndex: number): void {
+  const ve = state.vectorEdit;
+  if (!ve) return;
+  const region = state.regions[shapeIndex];
+  if (!region) return;
+  const r = editShapeToRegion(ve.shapes[shapeIndex]);
+  region.outer = r.outer; // 新しい配列参照 → このパーツのキャッシュだけ無効化
+  region.holes = r.holes;
+}
+
+/**
+ * ベクター編集の現在状態をライブ反映する (ドラッグ中も縫い目が追従)。
+ * @param opts.skipDerived ドラッグ中は診断等を省いて軽量に
+ * @param shapeIndex 指定があればその形状のみ書き戻す (既定は活性形状)
+ */
+export function liveApplyVectorEdit(
+  state: AppState,
+  opts: { skipDerived?: boolean } = {},
+  shapeIndex?: number,
+): void {
+  const ve = state.vectorEdit;
+  if (!ve) return;
+  const idx = shapeIndex ?? ve.activeShape;
+  writeShapeToRegion(state, idx);
+  state.project.regions = state.regions;
+  recomputeStitches(state, opts);
+}
+
+/** ベクター編集を確定: 全形状を領域へ書き戻してステッチを再生成 */
 export function applyVectorEdit(state: AppState): void {
   if (!state.vectorEdit) return;
-  state.regions = state.vectorEdit.shapes.map((s) => editShapeToRegion(s));
+  for (let i = 0; i < state.vectorEdit.shapes.length; i++) writeShapeToRegion(state, i);
   state.project.regions = state.regions;
   recomputeStitches(state);
   state.vectorEdit = null;
@@ -349,9 +392,24 @@ export function applyApplique(state: AppState, satinWidthMm: number): void {
   state.reduceApplied = [];
 }
 
-/** ベクター編集を破棄 */
+/** ベクター編集を破棄: ライブ反映していた形状を開始時に戻す */
 export function cancelVectorEdit(state: AppState): void {
-  state.vectorEdit = null;
+  const ve = state.vectorEdit;
+  if (ve) {
+    let changed = false;
+    ve.original.forEach((snap, i) => {
+      const region = state.regions[i];
+      if (!region) return;
+      region.outer = snap.outer.map((p) => ({ x: p.x, y: p.y }));
+      region.holes = snap.holes.map((h) => h.map((p) => ({ x: p.x, y: p.y })));
+      changed = true;
+    });
+    state.vectorEdit = null;
+    if (changed) {
+      state.project.regions = state.regions;
+      recomputeStitches(state);
+    }
+  }
 }
 
 /** 設定から領域抽出をやり直す (ソース → regions) */
