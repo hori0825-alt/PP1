@@ -343,6 +343,24 @@ function stitchTab(): string {
       </select>
     </label>
     <p class="note">フィルの行間隔・サテン間隔を調整します。粗くすると針数が減ります (線・細部は影響小)。</p>
+    <label>目標針数 (自動調整)
+      <select id="target-stitches">
+        ${(
+          [
+            [0, "なし (上限なし)"],
+            [8000, "8,000 針以内"],
+            [6000, "6,000 針以内"],
+            [4000, "4,000 針以内"],
+          ] as [number, string][]
+        )
+          .map(
+            ([v, label]) =>
+              `<option value="${v}" ${(s.targetStitchCount ?? 0) === v ? "selected" : ""}>${label}</option>`,
+          )
+          .join("")}
+      </select>
+    </label>
+    <p class="note">目標を超えたら密度を自動で粗くして収めます。結果は診断タブに表示されます。</p>
     <h2>下縫い</h2>
     ${(["edge", "tatami"] as const)
       .map((u) => `<label><input type="checkbox" class="underlay" value="${u}" ${s.underlay.includes(u) ? "checked" : ""}> ${u === "edge" ? "エッジ下縫い" : "タタミ下縫い"}</label>`)
@@ -705,6 +723,12 @@ function bindEvents(): void {
   });
   document.getElementById("density")?.addEventListener("change", (e) => {
     state.project.settings.densityScale = Number((e.target as HTMLSelectElement).value);
+    recomputeStitches(state);
+    render();
+  });
+  document.getElementById("target-stitches")?.addEventListener("change", (e) => {
+    const v = Number((e.target as HTMLSelectElement).value);
+    state.project.settings.targetStitchCount = v > 0 ? v : undefined;
     recomputeStitches(state);
     render();
   });
