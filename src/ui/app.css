@@ -664,3 +664,10 @@ textarea#txt-input {
   background: #13a35b;
   color: #fff;
 }
+
+#region-edit-stitches { margin-top: 4px; }
+
+.se-tool.active {
+  background: #e8632a;
+  color: #fff;
+}

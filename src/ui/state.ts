@@ -73,6 +73,15 @@ export interface VectorEditState {
   original: { outer: Point[]; holes: Point[][] }[];
 }
 
+/** 個々の針 (ステッチ点) 編集の状態 (フェーズ7)。baked オブジェクトの針列を直接編集する */
+export interface StitchEditState {
+  /** 編集対象オブジェクトの安定 id (baked 必須) */
+  objectId: number;
+  tool: "move" | "add" | "delete";
+  /** 選択中の針 (run 内 index) */
+  sel: { run: number; idx: number } | null;
+}
+
 export interface AppState {
   mode: Mode;
   tab: Tab;
@@ -108,6 +117,9 @@ export interface AppState {
 
   /** ベクター編集 (ベクタータブを開いている間のみ) */
   vectorEdit: VectorEditState | null;
+
+  /** 針 (ステッチ点) 編集 (フェーズ7。アクティブな間のみ非 null) */
+  stitchEdit: StitchEditState | null;
 
   // 文字刺繍
   textSettings: TextSettings;
@@ -156,6 +168,7 @@ export function createState(): AppState {
     simFrame: 0,
     simPlaying: false,
     vectorEdit: null,
+    stitchEdit: null,
     textSettings: {
       text: "",
       fontFamily: "sans-serif",
@@ -372,6 +385,83 @@ export function unbakeObject(state: AppState, id: number): void {
     delete obj.baked;
     recomputeStitches(state);
   }
+}
+
+// --- 個々の針 (ステッチ点) 編集 (フェーズ7) ---
+
+/** 針編集を開始する。未ベイクなら先にベイクしてから編集モードに入る */
+export function enterStitchEdit(state: AppState, regionIndex: number): boolean {
+  const obj = state.objects[regionIndex];
+  if (!obj) return false;
+  if (!obj.baked || obj.baked.length === 0) {
+    if (!bakeObject(state, obj.id)) return false;
+  }
+  state.stitchEdit = { objectId: obj.id, tool: "move", sel: null };
+  return true;
+}
+
+/** 針編集を終了する */
+export function exitStitchEdit(state: AppState): void {
+  state.stitchEdit = null;
+}
+
+/** 編集中の baked オブジェクトを返す */
+export function stitchEditObject(state: AppState): EmbroideryObject | undefined {
+  return state.stitchEdit ? findObject(state, state.stitchEdit.objectId) : undefined;
+}
+
+/** baked の指定 run の針列を関数で書き換える (新しい配列で差し替え) */
+function editBakedRun(
+  obj: EmbroideryObject,
+  run: number,
+  fn: (stitches: Point[]) => Point[],
+): void {
+  if (!obj.baked) return;
+  const r = obj.baked[run];
+  if (!r) return;
+  const runs = obj.baked.slice();
+  runs[run] = {
+    stitches: fn(r.stitches.map((p) => ({ x: p.x, y: p.y }))),
+    connection: r.connection,
+    stitchType: r.stitchType,
+  };
+  obj.baked = runs;
+}
+
+/** 針を移動する (ドラッグ中は skipDerived で軽量に) */
+export function moveBakedStitch(
+  state: AppState,
+  run: number,
+  idx: number,
+  p: Point,
+  opts: { skipDerived?: boolean } = {},
+): void {
+  const obj = stitchEditObject(state);
+  if (!obj) return;
+  editBakedRun(obj, run, (s) => {
+    if (idx >= 0 && idx < s.length) s[idx] = { x: Math.round(p.x), y: Math.round(p.y) };
+    return s;
+  });
+  recomputeStitches(state, opts);
+}
+
+/** 針を afterIdx の後ろに挿入する */
+export function insertBakedStitch(state: AppState, run: number, afterIdx: number, p: Point): void {
+  const obj = stitchEditObject(state);
+  if (!obj) return;
+  editBakedRun(obj, run, (s) => {
+    s.splice(afterIdx + 1, 0, { x: Math.round(p.x), y: Math.round(p.y) });
+    return s;
+  });
+  recomputeStitches(state);
+}
+
+/** 針を削除する (run あたり最低2点は残す) */
+export function deleteBakedStitch(state: AppState, run: number, idx: number): void {
+  const obj = stitchEditObject(state);
+  if (!obj) return;
+  editBakedRun(obj, run, (s) => (s.length > 2 ? s.filter((_, i) => i !== idx) : s));
+  recomputeStitches(state);
 }
 
 /** 装飾配置などで領域を差し替え、ステッチを再生成する */
