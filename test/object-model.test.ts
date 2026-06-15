@@ -14,6 +14,7 @@ import type { Region } from "../src/core/region";
 import type { Point, StitchPlan } from "../src/core/types";
 import { digitizeRegions } from "../src/stitch/digitize";
 import {
+  addPenPoint,
   addRegionAngleLine,
   bakeObject,
   cancelVectorEdit,
@@ -24,10 +25,12 @@ import {
   enterVectorEdit,
   exitStitchEdit,
   findObject,
+  finishPenDraw,
   insertBakedStitch,
   liveApplyVectorEdit,
   moveBakedStitch,
   recomputeStitches,
+  startPenDraw,
   stitchEditObject,
   unbakeObject,
 } from "../src/ui/state";
@@ -151,6 +154,44 @@ describe("state: 方向線 (ターニング) の追加・クリア", () => {
     clearRegionAngleLines(state, 0);
     expect(state.regions[0].angleLines).toBeUndefined();
     expect(JSON.stringify(stitchesOf(state.plan!, state.objects[0].id))).toBe(before);
+  });
+});
+
+describe("手動デジタイズ (ペン, フェーズ8)", () => {
+  it("面を描くとフィルの新規オブジェクトができる", () => {
+    const state = createState();
+    startPenDraw(state, "fill");
+    addPenPoint(state, { x: -mm(10), y: -mm(10) });
+    addPenPoint(state, { x: mm(10), y: -mm(10) });
+    addPenPoint(state, { x: mm(10), y: mm(10) });
+    addPenPoint(state, { x: -mm(10), y: mm(10) });
+    expect(finishPenDraw(state)).toBe(true);
+    expect(state.penDraw).toBeNull();
+    expect(state.regions.length).toBe(1);
+    const cnt = state.plan!.blocks.flatMap((b) => b.runs).reduce((n, r) => n + r.stitches.length, 0);
+    expect(cnt).toBeGreaterThan(10); // フィルの針が出ている
+  });
+
+  it("線を描くと走り縫いの baked オブジェクトができる", () => {
+    const state = createState();
+    startPenDraw(state, "line");
+    addPenPoint(state, { x: -mm(20), y: 0 });
+    addPenPoint(state, { x: mm(20), y: 0 });
+    expect(finishPenDraw(state)).toBe(true);
+    expect(state.regions.length).toBe(1);
+    const obj = state.objects[0];
+    expect(obj.baked).toBeDefined();
+    expect(obj.baked![0].stitchType).toBe("running");
+    const pts = state.plan!.blocks.flatMap((b) => b.runs).flatMap((r) => r.stitches);
+    expect(pts.length).toBeGreaterThan(2); // 走り縫いが再サンプルされている
+  });
+
+  it("点が足りなければ作成しない", () => {
+    const state = createState();
+    startPenDraw(state, "fill");
+    addPenPoint(state, { x: 0, y: 0 });
+    expect(finishPenDraw(state)).toBe(false);
+    expect(state.regions.length).toBe(0);
   });
 });
 

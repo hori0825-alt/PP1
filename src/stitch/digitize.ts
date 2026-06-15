@@ -126,8 +126,14 @@ export function digitizeRegions(
   const autoDensity = options.autoDensity ?? false;
 
   // --- 0. Small Object Protection: 短辺が閾値未満の小片を除外 ---
+  // ただし baked (マニュアル針列・手動の線など) を持つオブジェクトは常に残す。
   const survivors =
-    minExtent > 0 ? regions.filter((r) => regionMinExtent(r) >= minExtent) : regions;
+    minExtent > 0
+      ? regions.filter(
+          (r) =>
+            regionMinExtent(r) >= minExtent || (objectOfRegion.get(r)?.baked?.length ?? 0) > 0,
+        )
+      : regions;
   const dropped = regions.length - survivors.length;
   if (dropped > 0) warnings.push(`小さすぎる ${dropped} 個のオブジェクトを除外しました`);
 
