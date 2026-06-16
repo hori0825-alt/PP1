@@ -63,6 +63,22 @@ const MIN_FEATURE_CONTRAST = 25;
 /** これ以下の画素数の連結成分はコントラストに関わらず統合する (単画素スペックル除去) */
 const NOISE_FLOOR_PIXELS = 2;
 
+/** 最近中心のインデックスを返す関数を作る */
+function makeNearest(centers: Lab[]): (p: Lab) => number {
+  return (p: Lab): number => {
+    let bi = 0;
+    let bd = Infinity;
+    for (let c = 0; c < centers.length; c++) {
+      const d = labDist2(p, centers[c]);
+      if (d < bd) {
+        bd = d;
+        bi = c;
+      }
+    }
+    return bi;
+  };
+}
+
 /** k-means++ 風の初期中心選択 (決定的: 乱数を使わず最遠点を選ぶ) */
 function initialCenters(samples: Lab[], k: number): Lab[] {
   const centers: Lab[] = [samples[0]];
@@ -89,26 +105,15 @@ function initialCenters(samples: Lab[], k: number): Lab[] {
  * Lab 空間 k-means。サンプル数を抑えるため画素を間引いて学習し、
  * 全画素は最近中心に割り当てる。
  */
-function kmeans(pixels: Lab[], k: number, maxIter = 16): { centers: Lab[]; assign: (p: Lab) => number } {
+function kmeans(pixels: Lab[], k: number, maxIter = 16): Lab[] {
   const step = Math.max(1, Math.floor(pixels.length / 20000));
   const samples: Lab[] = [];
   for (let i = 0; i < pixels.length; i += step) samples.push(pixels[i]);
 
   let centers = initialCenters(samples, Math.min(k, samples.length));
-  const nearest = (p: Lab): number => {
-    let bi = 0;
-    let bd = Infinity;
-    for (let c = 0; c < centers.length; c++) {
-      const d = labDist2(p, centers[c]);
-      if (d < bd) {
-        bd = d;
-        bi = c;
-      }
-    }
-    return bi;
-  };
 
   for (let it = 0; it < maxIter; it++) {
+    const nearest = makeNearest(centers);
     const sum = centers.map(() => ({ l: 0, a: 0, b: 0, n: 0 }));
     for (const s of samples) {
       const c = nearest(s);
@@ -131,7 +136,103 @@ function kmeans(pixels: Lab[], k: number, maxIter = 16): { centers: Lab[]; assig
     centers = next;
     if (moved < 0.01) break;
   }
-  return { centers, assign: nearest };
+  return centers;
+}
+
+/**
+ * k-means が取りこぼした「小さく高コントラストな特徴」を追加パレット色として復活させる。
+ *
+ * 問題: 学習画素の間引き (kmeans の step) と少ない目標色数のため、白目・ハイライト等の
+ * 小領域は専用クラスタを得られず、最近の暗い中心へ吸収される。下流のコントラスト保護は
+ * 「既存ラベル」を守るだけなので、そもそもラベルが生成されなければ無力。
+ *
+ * 対策: 全前景画素を現中心へ仮割り当てし、割り当て先と高コントラスト (contrast2 超) な
+ * 画素を「表現漏れ」とみなす。それらを 4 近傍 + 色一貫性で連結し、十分な大きさ
+ * (FEATURE_MIN_PIXELS 以上) かつ既存色から離れた塊の平均色を新中心として追加する。
+ * 大きい塊を優先し、最大 FEATURE_MAX_EXTRA 色まで追加する (色数爆発の抑制)。
+ */
+const FEATURE_MIN_PIXELS = 4;
+const FEATURE_MAX_EXTRA = 4;
+
+function promoteFeatures(
+  fgIndex: number[],
+  fgLab: Lab[],
+  w: number,
+  h: number,
+  centers: Lab[],
+  contrast2: number,
+): Lab[] {
+  const nearest = makeNearest(centers);
+  const fgOrder = new Int32Array(w * h).fill(-1);
+  const poor = new Uint8Array(fgIndex.length);
+  for (let n = 0; n < fgIndex.length; n++) {
+    fgOrder[fgIndex[n]] = n;
+    if (labDist2(fgLab[n], centers[nearest(fgLab[n])]) > contrast2) poor[n] = 1;
+  }
+
+  const visited = new Uint8Array(fgIndex.length);
+  const stack: number[] = [];
+  const blobs: { mean: Lab; count: number }[] = [];
+
+  for (let start = 0; start < fgIndex.length; start++) {
+    if (poor[start] === 0 || visited[start]) continue;
+    const seed = fgLab[start];
+    visited[start] = 1;
+    stack.length = 0;
+    stack.push(start);
+    let sl = 0;
+    let sa = 0;
+    let sb = 0;
+    let count = 0;
+    while (stack.length > 0) {
+      const n = stack.pop() as number;
+      const lab = fgLab[n];
+      sl += lab.l;
+      sa += lab.a;
+      sb += lab.b;
+      count++;
+      const pix = fgIndex[n];
+      const x = pix % w;
+      const y = (pix / w) | 0;
+      const tryN = (px: number): void => {
+        const m = fgOrder[px];
+        if (m < 0 || visited[m] || poor[m] === 0) return;
+        if (labDist2(fgLab[m], seed) > contrast2) return; // 色一貫性 (グラデで割れるのを防ぐ)
+        visited[m] = 1;
+        stack.push(m);
+      };
+      if (x > 0) tryN(pix - 1);
+      if (x < w - 1) tryN(pix + 1);
+      if (y > 0) tryN(pix - w);
+      if (y < h - 1) tryN(pix + w);
+    }
+    if (count < FEATURE_MIN_PIXELS) continue;
+    const mean = { l: sl / count, a: sa / count, b: sb / count };
+    let far = true;
+    for (const c of centers) {
+      if (labDist2(mean, c) <= contrast2) {
+        far = false;
+        break;
+      }
+    }
+    if (far) blobs.push({ mean, count });
+  }
+
+  if (blobs.length === 0) return centers;
+  blobs.sort((a, b) => b.count - a.count);
+  const result = centers.slice();
+  for (const blob of blobs) {
+    if (result.length - centers.length >= FEATURE_MAX_EXTRA) break;
+    let ok = true;
+    for (let j = centers.length; j < result.length; j++) {
+      if (labDist2(blob.mean, result[j]) <= contrast2) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) result.push(blob.mean);
+  }
+  return result;
 }
 
 /**
@@ -288,7 +389,14 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
     return { width: w, height: h, labels, palette: [] };
   }
 
-  const { centers, assign } = kmeans(fgLab, k);
+  // 小特徴保護のコントラスト閾値 (Lab ΔE → 二乗距離)
+  const contrast2 = (options.featureContrast ?? MIN_FEATURE_CONTRAST) ** 2;
+
+  // k-means で中心を学習 → 取りこぼした高コントラスト小特徴を専用色として復活
+  const trained = kmeans(fgLab, k);
+  const centers = promoteFeatures(fgIndex, fgLab, w, h, trained, contrast2);
+  const assign = makeNearest(centers);
+
   const sumR = new Float64Array(centers.length);
   const sumG = new Float64Array(centers.length);
   const sumB = new Float64Array(centers.length);
@@ -303,8 +411,6 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
     cnt[c]++;
   }
 
-  // 小特徴保護のコントラスト閾値 (Lab ΔE → 二乗距離)
-  const contrast2 = (options.featureContrast ?? MIN_FEATURE_CONTRAST) ** 2;
   smoothLabels(labels, w, h, options.smoothingPasses ?? 2, centers, contrast2);
   mergeSmallComponents(labels, w, h, options.minComponentPixels ?? 16, centers, contrast2);
 

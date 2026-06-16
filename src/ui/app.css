@@ -785,3 +785,87 @@ textarea#txt-input {
 .excluded-restore:hover {
   background: #ffe0b0;
 }
+
+/* --- モバイル / 狭幅レイアウト --- */
+/* 既定は横並び (キャンバス + 320px サイドバー) だが、狭幅では
+   サイドバーに圧迫されてプレビューが極端に小さくなる。
+   縦積みに切り替え、プレビューを画面幅いっぱい・大きく見せる。 */
+@media (max-width: 820px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
+  #app {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  header {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 12px;
+  }
+
+  header h1 {
+    font-size: 15px;
+  }
+
+  .chips {
+    order: 3;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* 縦積み: 上にキャンバス、下にプロパティ */
+  .workspace {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .canvas-area {
+    padding: 8px;
+    /* プレビューに大きな高さを確保 */
+    min-height: 68vh;
+  }
+
+  canvas#preview {
+    /* 正方形比を保ったまま、幅いっぱい・縦画面の大半まで拡大
+       (max-* のみ指定で replaced 要素の縦横比を維持) */
+    max-width: 100%;
+    max-height: 66vh;
+  }
+
+  .sim-bar {
+    max-width: 100%;
+  }
+
+  /* プロパティパネルは全幅の下段に */
+  .props {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid #e3e7ec;
+  }
+
+  .tab-body {
+    /* 縦積みでも操作しやすい高さを確保しつつ内部スクロール */
+    max-height: 60vh;
+  }
+}
+
+/* スマホ縦持ち: さらに詰める */
+@media (max-width: 480px) {
+  .canvas-area {
+    min-height: 60vh;
+    padding: 6px;
+  }
+
+  canvas#preview {
+    max-height: 62vh;
+  }
+
+  .modes {
+    margin-left: auto;
+  }
+}
