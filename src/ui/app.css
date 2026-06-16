@@ -734,3 +734,54 @@ textarea#txt-input {
   opacity: 0.3;
   cursor: default;
 }
+
+/* --- 除外領域パネル --- */
+.excluded-panel {
+  margin-top: 12px;
+  padding: 10px;
+  background: #fff8f0;
+  border: 1px solid #f0c87a;
+  border-radius: 6px;
+}
+
+.excluded-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #b06e1a;
+  margin-bottom: 6px;
+}
+
+.excluded-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.excluded-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.excluded-area {
+  flex: 1;
+  color: #6e5030;
+}
+
+.excluded-restore {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid #e09030;
+  background: #fff3e0;
+  color: #b06e1a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.excluded-restore:hover {
+  background: #ffe0b0;
+}

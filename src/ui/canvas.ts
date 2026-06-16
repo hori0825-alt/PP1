@@ -179,6 +179,33 @@ function drawVectorView(
     ctx.lineWidth = selected ? 2.5 : region.selfIntersecting ? 2 : 0.7;
     ctx.stroke(path);
   });
+  drawExcludedRegions(ctx, v, canvas, state);
+}
+
+/** 面積不足で除外された小領域をオレンジ破線で描く (復元可能であることを示す) */
+function drawExcludedRegions(
+  ctx: CanvasRenderingContext2D,
+  v: Viewport,
+  canvas: HTMLCanvasElement,
+  state: AppState,
+): void {
+  if (state.excludedRegions.length === 0) return;
+  for (const ex of state.excludedRegions) {
+    const path = new Path2D();
+    ex.outer.forEach((p, i) => {
+      const [x, y] = toScreen(v, canvas, p.x, p.y);
+      if (i === 0) path.moveTo(x, y);
+      else path.lineTo(x, y);
+    });
+    path.closePath();
+    ctx.fillStyle = `rgba(${ex.color.r},${ex.color.g},${ex.color.b},0.25)`;
+    ctx.fill(path);
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = "#e8832a";
+    ctx.lineWidth = 1.5;
+    ctx.stroke(path);
+    ctx.setLineDash([]);
+  }
 }
 
 /** 選択パーツのステッチ方向線とドラッグ用つまみ (ベクタービュー) */

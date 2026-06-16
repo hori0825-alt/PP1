@@ -56,6 +56,8 @@ import {
   recomputeRegions,
   recomputeStitches,
   refreshDerived,
+  restoreAllExcluded,
+  restoreExcludedRegion,
   setPhotoMode,
   setRegionAngle,
   setRegionFill,
@@ -173,6 +175,7 @@ function designTab(): string {
         .join("")}
     </div>` : `<p class="note">PNG / JPG / SVG を読み込むと自動で刺繍化されます。</p>`}
     ${state.project.source.kind === "image" ? photoSection() : ""}
+    ${excludedPanel()}
   `;
 }
 
@@ -189,6 +192,29 @@ function photoSection(): string {
       <p class="note">明暗をステッチ密度に変換します。針数が多い場合は自動で行間隔を広げます。</p>
     ` : ""}
   `;
+}
+
+function excludedPanel(): string {
+  const n = state.excludedRegions.length;
+  if (n === 0) return "";
+  return `
+    <div class="excluded-panel">
+      <div class="excluded-title">除外された小領域: ${n} 個</div>
+      <div class="excluded-list">
+        ${state.excludedRegions
+          .map(
+            (ex, i) =>
+              `<div class="excluded-item">
+                <span class="swatch" style="background:rgb(${ex.color.r},${ex.color.g},${ex.color.b})"></span>
+                <span class="excluded-area">${ex.areaMm2.toFixed(1)}mm²</span>
+                <button class="excluded-restore" data-idx="${i}">復元</button>
+              </div>`,
+          )
+          .join("")}
+      </div>
+      ${n > 1 ? '<button id="restore-all-excluded" class="secondary">すべて復元</button>' : ""}
+      <p class="note">表示:ベクターでオレンジ破線の輪郭が見えます。復元すると刺繍パーツに含めます。</p>
+    </div>`;
 }
 
 function colorTab(): string {
@@ -859,6 +885,18 @@ function bindEvents(): void {
   document.getElementById("region-deselect")?.addEventListener("click", () => {
     state.selectedRegionIndex = null;
     state.angleLineDraw = false;
+    render();
+  });
+
+  // 除外領域の復元
+  document.querySelectorAll<HTMLElement>(".excluded-restore").forEach((b) =>
+    b.addEventListener("click", () => {
+      restoreExcludedRegion(state, Number(b.dataset.idx));
+      render();
+    }),
+  );
+  document.getElementById("restore-all-excluded")?.addEventListener("click", () => {
+    restoreAllExcluded(state);
     render();
   });
 

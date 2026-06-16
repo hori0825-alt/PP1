@@ -114,7 +114,7 @@ describe("extractRegions", () => {
     paintCircle(img, 60, 60, 45, RED);
     paintCircle(img, 60, 60, 20, [0, 0, 0, 0]); // 中心をくり抜く
     const map = quantize(img, { colorCount: 2, removeWhiteBackground: false });
-    const regions = extractRegions(map, opts(120));
+    const { regions } = extractRegions(map, opts(120));
     expect(regions.length).toBe(1);
     expect(regions[0].holes.length).toBe(1);
     // 外周は正、穴は負の符号付き面積
@@ -131,7 +131,7 @@ describe("extractRegions", () => {
     paintRect(img, 10, 10, 50, 50, BLUE);
     paintRect(img, 70, 70, 110, 110, BLUE);
     const map = quantize(img, { colorCount: 2, removeWhiteBackground: false });
-    const regions = extractRegions(map, opts(120));
+    const { regions } = extractRegions(map, opts(120));
     expect(regions.length).toBe(2);
   });
 
@@ -146,7 +146,7 @@ describe("extractRegions", () => {
       minComponentPixels: 1, // 量子化での統合は無効にして領域フィルタを検証
       smoothingPasses: 0,
     });
-    const regions = extractRegions(map, opts(120));
+    const { regions } = extractRegions(map, opts(120));
     expect(regions.length).toBe(1);
   });
 
@@ -154,7 +154,7 @@ describe("extractRegions", () => {
     const img = makeImage(100, 100, [0, 0, 0, 0]);
     paintCircle(img, 50, 50, 40, GREEN);
     const map = quantize(img, { colorCount: 2, removeWhiteBackground: false });
-    const regions = extractRegions(map, opts(100));
+    const { regions } = extractRegions(map, opts(100));
     expect(regions.length).toBe(1);
     const outer = regions[0].outer;
     // ピクセル境界そのままなら数百点。スムージング後は大幅に減る
