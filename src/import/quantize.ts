@@ -25,7 +25,7 @@ export interface QuantizeOptions {
   featureContrast?: number;
 }
 
-interface Lab {
+export interface Lab {
   l: number;
   a: number;
   b: number;
@@ -51,7 +51,7 @@ export function rgbToLab(r: number, g: number, b: number): Lab {
   return { l: 116 * y - 16, a: 500 * (x - y), b: 200 * (y - z) };
 }
 
-function labDist2(a: Lab, b: Lab): number {
+export function labDist2(a: Lab, b: Lab): number {
   const dl = a.l - b.l;
   const da = a.a - b.a;
   const db = a.b - b.b;

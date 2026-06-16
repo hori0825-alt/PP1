@@ -16,6 +16,7 @@ import { polygonCentroid, signedArea } from "../core/geometry";
 import type { EmbroideryObject } from "../core/object";
 import type { DirectionLine, Region } from "../core/region";
 import type { ColorBlock, Point, StitchPlan, StitchRun } from "../core/types";
+import { rgbToLab, labDist2 } from "../import/quantize";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
 import { optimizeOrder } from "../plan/order";
@@ -70,11 +71,39 @@ export interface DigitizeResult {
 }
 
 /**
+ * 極小領域のフォールバック: 外周輪郭に沿った走り縫いを生成する。
+ * サテンもタタミも走査行が通らない小領域 (白目・ハイライト等) を救う。
+ */
+function microFill(region: Region, stitchLength: number): Point[] {
+  const outer = region.outer;
+  if (outer.length < 3) return [];
+  const stitches: Point[] = [{ x: Math.round(outer[0].x), y: Math.round(outer[0].y) }];
+  let accum = 0;
+  for (let i = 1; i <= outer.length; i++) {
+    const a = outer[i - 1];
+    const b = outer[i % outer.length];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    accum += d;
+    if (accum >= stitchLength || i === outer.length) {
+      stitches.push({ x: Math.round(b.x), y: Math.round(b.y) });
+      accum = 0;
+    }
+  }
+  const first = stitches[0];
+  const last = stitches[stitches.length - 1];
+  if (stitches.length >= 2 && Math.hypot(last.x - first.x, last.y - first.y) > 1) {
+    stitches.push({ x: first.x, y: first.y });
+  }
+  return stitches.length >= 2 ? stitches : [];
+}
+
+/**
  * 領域の塗りを生成する。
  * - tatami: 常にタタミ (方向線が2本以上ならターニング = 流れる向き)
  * - satin: サテンを試み、分岐警告が出たらタタミにフォールバック
  *   (複雑なグリフでパーツが欠けるのを防ぐ)
  * - auto: 短辺が SATIN_DEFAULT.maxWidth 以下かつ穴なしならサテン、他はタタミ
+ * 全て空なら microFill (輪郭走り縫い) にフォールバック。
  */
 function generateFill(
   region: Region,
@@ -95,15 +124,26 @@ function generateFill(
       maxWidth: SATIN_DEFAULT.maxWidth,
     });
     const branched = satin.warnings.some((w) => w.includes("分岐"));
-    // 分岐や生成失敗時はタタミにフォールバック (パーツ欠けを防ぐ)
     if (!branched && satin.runs.length > 0) return { ...satin, usedSatin: true };
   }
-  // 方向線が2本以上なら「流れる向き」(ターニング) を試みる。失敗時はタタミ。
   if (angleLines && angleLines.length >= 2) {
     const t = turningFill(region, params, angleLines, startNear, exitNear);
     if (t.runs.length > 0) return { ...t, usedSatin: false };
   }
-  return { ...tatamiFill(region, params, startNear, exitNear), usedSatin: false };
+  const tatami = tatamiFill(region, params, startNear, exitNear);
+  if (tatami.runs.length > 0 && tatami.runs.some((r) => r.stitches.length > 0)) {
+    return { ...tatami, usedSatin: false };
+  }
+  // マイクロフィル: サテンもタタミも空なら輪郭に沿った走り縫いにフォールバック
+  const micro = microFill(region, params.stitchLength);
+  if (micro.length >= 2) {
+    return {
+      runs: [{ stitches: micro, connection: "continuous" as const }],
+      warnings: [],
+      usedSatin: false,
+    };
+  }
+  return { ...tatami, usedSatin: false };
 }
 
 export function digitizeRegions(
@@ -133,12 +173,25 @@ export function digitizeRegions(
   const autoDensity = options.autoDensity ?? false;
 
   // --- 0. Small Object Protection: 短辺が閾値未満の小片を除外 ---
-  // ただし baked (マニュアル針列・手動の線など) を持つオブジェクトは常に残す。
+  // ただし baked を持つオブジェクトと、高コントラストな小特徴は常に残す。
+  const FEATURE_CONTRAST_DE = 25;
+  const featureContrast2 = FEATURE_CONTRAST_DE * FEATURE_CONTRAST_DE;
+  const isHighContrastFeature = (r: Region): boolean => {
+    const lab = rgbToLab(r.color.r, r.color.g, r.color.b);
+    for (const other of regions) {
+      if (other === r) continue;
+      const oLab = rgbToLab(other.color.r, other.color.g, other.color.b);
+      if (labDist2(lab, oLab) > featureContrast2) return true;
+    }
+    return false;
+  };
   const survivors =
     minExtent > 0
       ? regions.filter(
           (r) =>
-            regionMinExtent(r) >= minExtent || (objectOfRegion.get(r)?.baked?.length ?? 0) > 0,
+            regionMinExtent(r) >= minExtent ||
+            (objectOfRegion.get(r)?.baked?.length ?? 0) > 0 ||
+            isHighContrastFeature(r),
         )
       : regions;
   const dropped = regions.length - survivors.length;

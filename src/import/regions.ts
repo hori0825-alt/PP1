@@ -20,6 +20,7 @@ import {
 } from "../core/geometry";
 import type { Region } from "../core/region";
 import type { Point } from "../core/types";
+import { rgbToLab, labDist2 } from "./quantize";
 import type { LabelMap } from "./raster";
 
 export interface ExtractOptions {
@@ -31,6 +32,11 @@ export interface ExtractOptions {
   simplifyTolerance?: number;
   /** Chaikin スムージングの回数。デフォルト 2 */
   smoothingIterations?: number;
+  /**
+   * 小特徴保護のコントラスト閾値 (Lab ΔE)。面積不足の領域でも、パレット内の
+   * 他色とこれ以上のコントラストがあれば保持する。既定 25。0 で無効。
+   */
+  featureContrast?: number;
 }
 
 /** 面積不足で除外された領域 (キャンバスハイライト + 復元用) */
@@ -131,6 +137,13 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
   const smoothing = options.smoothingIterations ?? 2;
   const { width: w, height: h } = map;
 
+  // コントラスト保護: パレット各色の Lab 値を事前計算
+  const featureContrastDE = options.featureContrast ?? 25;
+  const contrast2 = featureContrastDE * featureContrastDE;
+  const paletteLab = map.palette.map((c) => rgbToLab(c.r, c.g, c.b));
+  // 高コントラスト小特徴は面積閾値を大幅に下げて保持する (白目・ハイライト等)
+  const minFeatureArea = Math.max(4, Math.round(minArea / 30));
+
   const toUnits = (p: Point): Point => ({
     x: (p.x - w / 2) * scale,
     y: (p.y - h / 2) * scale,
@@ -169,15 +182,26 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
       const netAreaPx = o.area + oHoles.reduce((s, hh) => s + hh.area, 0); // 穴は負
       const areaUnits2 = netAreaPx * scale * scale;
       if (areaUnits2 < minArea) {
-        const outerPath = refine(o.vertices);
-        if (outerPath.length >= 3) {
-          excludedRegions.push({
-            outer: outerPath,
-            color: map.palette[color],
-            areaMm2: Math.round(areaUnits2) / 100,
-          });
+        // コントラスト保護: この色が他のパレット色と高コントラストなら閾値を緩和
+        let keep = false;
+        if (featureContrastDE > 0 && areaUnits2 >= minFeatureArea) {
+          const thisLab = paletteLab[color];
+          for (let c2 = 0; c2 < paletteLab.length; c2++) {
+            if (c2 === color) continue;
+            if (labDist2(thisLab, paletteLab[c2]) > contrast2) { keep = true; break; }
+          }
         }
-        continue;
+        if (!keep) {
+          const outerPath = refine(o.vertices);
+          if (outerPath.length >= 3) {
+            excludedRegions.push({
+              outer: outerPath,
+              color: map.palette[color],
+              areaMm2: Math.round(areaUnits2) / 100,
+            });
+          }
+          continue;
+        }
       }
 
       const outerPath = refine(o.vertices);
