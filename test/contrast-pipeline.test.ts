@@ -145,4 +145,45 @@ describe("全段コントラスト保護", () => {
     const whiteStitches = whiteBlock!.runs.reduce((n, r) => n + r.stitches.length, 0);
     expect(whiteStitches).toBeGreaterThanOrEqual(2);
   });
+
+  // 実運用の失敗再現: 大きな画像 (間引き発生) + 多色 (colorCount=6) で、
+  // k-means が白目クラスタを取りこぼす。promoteFeatures がこれを復活させる。
+  it("Stage 0: 大画像・多色でも k-means が取りこぼした白目を専用色に復活する", () => {
+    // 600×600 = 36万画素 → kmeans の step≈18 で間引きされる。
+    // 顔を想定した複数色 (肌・髪・頬・口) で colorCount=6 を競わせ、
+    // 小さな白目 (8×8) が暗い瞳に吸収されやすい状況を作る。
+    const faceImg = makeImg(600, 600, (x, y) => {
+      // 8×8 の白目
+      if (x >= 300 && x < 308 && y >= 290 && y < 298) return [250, 250, 250, 255];
+      // 白目を囲む暗い瞳 (16×16)
+      if (x >= 294 && x < 314 && y >= 284 && y < 304) return [20, 18, 22, 255];
+      // 髪 (上部・濃茶)
+      if (y < 180) return [60, 40, 30, 255];
+      // 口 (下部・赤)
+      if (y > 460 && x > 240 && x < 360) return [170, 60, 60, 255];
+      // 頬 (左右・やや濃い肌)
+      if (x < 150 || x > 450) return [210, 170, 150, 255];
+      // 肌ベース
+      return [235, 205, 185, 255];
+    });
+    // 実 UI と同じ既定 (featureContrast 等を渡さない) で減色
+    const map = quantize(faceImg, {
+      colorCount: 6,
+      removeWhiteBackground: false,
+    });
+    // 白に近いパレット色が存在する (= 白目クラスタが復活した)
+    const hasWhitePalette = map.palette.some(
+      (c) => c.r > 220 && c.g > 220 && c.b > 220,
+    );
+    expect(hasWhitePalette).toBe(true);
+    // 白目領域のラベルが実際に塗られている (中央付近に白画素ラベルが残る)
+    const whiteIdx = map.palette.findIndex(
+      (c) => c.r > 220 && c.g > 220 && c.b > 220,
+    );
+    let whitePixels = 0;
+    for (let i = 0; i < map.labels.length; i++) {
+      if (map.labels[i] === whiteIdx) whitePixels++;
+    }
+    expect(whitePixels).toBeGreaterThanOrEqual(16);
+  });
 });
