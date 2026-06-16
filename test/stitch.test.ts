@@ -10,7 +10,7 @@ import { digitizeRegions } from "../src/stitch/digitize";
 import { postprocessRun } from "../src/stitch/postprocess";
 import { getGenerator, listGenerators } from "../src/stitch/registry";
 import { runningStitch } from "../src/stitch/running";
-import { satinAlongPath } from "../src/stitch/satin";
+import { satinAlongPath, satinFromRegion } from "../src/stitch/satin";
 import { tatamiFill } from "../src/stitch/tatami";
 import { insetPath } from "../src/stitch/underlay";
 import { writeDst } from "../src/export/dst";
@@ -195,6 +195,73 @@ describe("satin (領域から)", () => {
     const region: Region = { outer: rect(0, 0, mm(30), mm(10)), holes: [], color: RED };
     const { warnings } = gen(region, { maxWidth: SATIN_DEFAULT.maxWidth });
     expect(warnings.some((w) => w.includes("タタミ"))).toBe(true);
+  });
+});
+
+describe("satin 角度最適化 (中心線追従)", () => {
+  const spacing = mm(0.4);
+  const maxW = SATIN_DEFAULT.maxWidth;
+
+  function maxSpan(runs: { stitches: Point[] }[]): number {
+    let m = 0;
+    for (const run of runs) {
+      for (let i = 0; i + 1 < run.stitches.length; i += 2) {
+        m = Math.max(
+          m,
+          Math.hypot(
+            run.stitches[i + 1].x - run.stitches[i].x,
+            run.stitches[i + 1].y - run.stitches[i].y,
+          ),
+        );
+      }
+    }
+    return m;
+  }
+
+  // 幅 3mm の弓なり (arc) 帯: 固定角だと斜めに伸びてストロークが長くなる
+  function arcBand(): Point[] {
+    const pts: Point[] = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = (Math.PI * i) / 16;
+      pts.push({ x: Math.cos(t) * mm(20), y: Math.sin(t) * mm(20) });
+    }
+    for (let i = 16; i >= 0; i--) {
+      const t = (Math.PI * i) / 16;
+      pts.push({ x: Math.cos(t) * mm(17), y: Math.sin(t) * mm(17) });
+    }
+    return pts;
+  }
+
+  it("湾曲した帯ではストローク (1針) が大幅に短くなる", () => {
+    const region: Region = { outer: arcBand(), holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    const spanOff = maxSpan(off.runs);
+    const spanOn = maxSpan(on.runs);
+    // 帯の実幅は約 3mm。最適化で実幅近くまで縮む (固定角は倍以上に伸びる)
+    expect(spanOff).toBeGreaterThan(mm(7));
+    expect(spanOn).toBeLessThan(spanOff * 0.6);
+    expect(spanOn).toBeLessThan(mm(5));
+    assertContinuity(on.runs[0]);
+  });
+
+  it("最適化は最大ストロークを基準より長くしない (テーパ形状でも悪化しない)", () => {
+    const tri: Point[] = [
+      { x: 0, y: 0 },
+      { x: mm(40), y: 0 },
+      { x: mm(40), y: mm(6) },
+    ];
+    const region: Region = { outer: tri, holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    expect(maxSpan(on.runs)).toBeLessThanOrEqual(maxSpan(off.runs) + 2);
+  });
+
+  it("まっすぐな細帯では最適化しても結果が変わらない", () => {
+    const region: Region = { outer: rect(0, 0, mm(30), mm(3)), holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    expect(Math.abs(maxSpan(on.runs) - maxSpan(off.runs))).toBeLessThanOrEqual(2);
   });
 });
 

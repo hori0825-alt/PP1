@@ -27,6 +27,11 @@ export interface SatinParams {
   spacing: number;
   /** 幅がこれを超えたら警告 (内部単位) */
   maxWidth: number;
+  /**
+   * 縫い角度の自動最適化。主軸直交を基準に角度を振り、1針 (レール間スパン) の
+   * 最大長が最小になる向きを選ぶ。湾曲・歪んだ形でストロークを短くする。既定 true。
+   */
+  optimizeAngle?: boolean;
 }
 
 /** ランニングステッチのパラメータ */
