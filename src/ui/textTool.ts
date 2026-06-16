@@ -89,7 +89,7 @@ export function textToRegions(options: TextDesignOptions): Region[] {
     if (!img) continue;
     // 1色で減色 → 輪郭抽出 (グリフ canvas 中心が原点・k スケール)
     const labelMap = quantize(img, { colorCount: 2, removeWhiteBackground: true });
-    const glyphRegions = extractRegions(labelMap, { unitsPerPixel: k, minRegionArea: 100 });
+    const glyphRegions = extractRegions(labelMap, { unitsPerPixel: k, minRegionArea: 100 }).regions;
     for (const gr of glyphRegions) {
       // 色を指定色に、配置 (回転 + 平行移動) を適用
       const placed = transformRegion(

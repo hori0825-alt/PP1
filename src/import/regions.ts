@@ -33,6 +33,19 @@ export interface ExtractOptions {
   smoothingIterations?: number;
 }
 
+/** 面積不足で除外された領域 (キャンバスハイライト + 復元用) */
+export interface ExcludedRegion {
+  outer: Point[];
+  color: { r: number; g: number; b: number };
+  /** 面積 (mm²) */
+  areaMm2: number;
+}
+
+export interface ExtractResult {
+  regions: Region[];
+  excludedRegions: ExcludedRegion[];
+}
+
 /** 画像を target サイズ (内部単位) に収めるときの unitsPerPixel を返す */
 export function fitUnitsPerPixel(width: number, height: number, targetUnits = mm(100)): number {
   return targetUnits / Math.max(width, height);
@@ -109,7 +122,7 @@ function traceLoops(map: LabelMap, color: number): Loop[] {
  * ラベルマップから全色の Region を抽出する。
  * 出力座標は内部単位 (0.1mm)、原点はラベルマップ中心。
  */
-export function extractRegions(map: LabelMap, options: ExtractOptions): Region[] {
+export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractResult {
   const scale = options.unitsPerPixel;
   const minArea = options.minRegionArea ?? 300; // 3mm²
   // ピクセル空間で適用。ピクセル境界の階段ノイズ (振幅 ~0.5px) を確実に
@@ -123,7 +136,15 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): Region[]
     y: (p.y - h / 2) * scale,
   });
 
+  const refine = (path: Point[]): Point[] => {
+    let p = simplifyClosed(path, tolerance);
+    p = chaikinClosed(p, smoothing);
+    p = simplifyClosed(p, tolerance / 2);
+    return p.map(toUnits);
+  };
+
   const regions: Region[] = [];
+  const excludedRegions: ExcludedRegion[] = [];
 
   for (let color = 0; color < map.palette.length; color++) {
     const loops = traceLoops(map, color);
@@ -146,14 +167,18 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): Region[]
     for (const o of outers) {
       const oHoles = holeOf.get(o) as Loop[];
       const netAreaPx = o.area + oHoles.reduce((s, hh) => s + hh.area, 0); // 穴は負
-      if (netAreaPx * scale * scale < minArea) continue;
-
-      const refine = (path: Point[]): Point[] => {
-        let p = simplifyClosed(path, tolerance);
-        p = chaikinClosed(p, smoothing);
-        p = simplifyClosed(p, tolerance / 2);
-        return p.map(toUnits);
-      };
+      const areaUnits2 = netAreaPx * scale * scale;
+      if (areaUnits2 < minArea) {
+        const outerPath = refine(o.vertices);
+        if (outerPath.length >= 3) {
+          excludedRegions.push({
+            outer: outerPath,
+            color: map.palette[color],
+            areaMm2: Math.round(areaUnits2) / 100,
+          });
+        }
+        continue;
+      }
 
       const outerPath = refine(o.vertices);
       if (outerPath.length < 3) continue;
@@ -170,5 +195,5 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): Region[]
       regions.push(region);
     }
   }
-  return regions;
+  return { regions, excludedRegions };
 }

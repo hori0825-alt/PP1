@@ -64,13 +64,19 @@
 >   Lab ΔE が大きい（既定25超）小領域を統合せず残し、`smoothLabels` はエッジ保存
 >   （多数決色と高コントラストなら平滑化しない）にした（`import/quantize.ts`）。AA 由来の
 >   低コントラストノイズは従来どおり除去。`featureContrast` で閾値調整可。
->   ※ なお label-map 段の主因はこれだが、下流の `minRegionArea`(3mm²)・Small Object
->   Protection(`minObjectExtent`≈1mm) でも小特徴が落ちうる。次段（除外のハイライト＋手動保護、
->   しきい値の目標サイズ連動）で対応予定。
+>   ※ なお label-map 段の主因はこれだが、下流の `minRegionArea`・Small Object
+>   Protection(`minObjectExtent`) でも小特徴が落ちうる。フェーズ11 で対処済み。
 > - ✅ **同色内オブジェクト縫い順（フェーズ6.5）**: シーケンスビューの各パーツ行に ↑↓ を追加し、
 >   同色グループ内のパーツの縫い順を手動で入れ替えできる（色境界は越えない）。
 >   `settings.objectOrder`（オブジェクト id の並び）に保存し、digitize は同色内をこの順で縫う
 >   （未指定は Closest Join 自動最適化）。再生成・保存後も保持。色順 ▲▼ と区別して表示。
+> - ✅ **除外領域のキャンバスハイライト＋手動復元（フェーズ11）**: `extractRegions` が
+>   `minRegionArea` 面積閾値で除外した小領域を `ExcludedRegion` として追跡。ベクタービューで
+>   オレンジ破線の輪郭としてハイライトし、デザインタブに復元パネルを表示（個別/一括復元ボタン）。
+>   復元した小領域は通常の刺繍パーツとして縫われる。**しきい値の目標サイズ連動**: `minRegionArea`
+>   を `(targetSizeMm / 100)²` でスケーリングし、小さいデザインでも小特徴を適切に残す（100mm→3mm²、
+>   30mm→0.27mm²）。`minObjectExtent`（Small Object Protection）も同比率で線形スケーリング。
+>   `ExcludedRegion` は `outer`、`color`、`areaMm2` を持ち、復元時にそのまま `Region` に昇格する。
 > - ⚠ 既知の制限: ストロークの幅は中央値ベース（極端なテーパーは近似）。
 > - ⏳ 次: 任意色(カスタムRGB)選択／フィル密度の自動最適化のさらなる調整
 

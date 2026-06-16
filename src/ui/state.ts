@@ -14,6 +14,7 @@ import type { Point, StitchPlan, ThreadColor } from "../core/types";
 import { quantize } from "../import/quantize";
 import type { LabelMap, RasterImage } from "../import/raster";
 import { extractRegions, fitUnitsPerPixel } from "../import/regions";
+import type { ExcludedRegion } from "../import/regions";
 import { importSvg } from "../import/svg";
 import { getRecipe, recipeToDigitizeOptions } from "../fabric/recipes";
 import { generatePhotoStitch } from "../photo/photostitch";
@@ -99,6 +100,8 @@ export interface AppState {
   raster: RasterImage | null;
   labelMap: LabelMap | null;
   regions: Region[];
+  /** 面積不足で除外された領域 (キャンバスハイライト + 復元用) */
+  excludedRegions: ExcludedRegion[];
   /**
    * 永続オブジェクト層 (Phase 1)。regions と同期し、安定 id と baked を持つ。
    * recomputeStitches が regions から再構成する (その場編集では id を維持)。
@@ -165,6 +168,7 @@ export function createState(): AppState {
     raster: null,
     labelMap: null,
     regions: [],
+    excludedRegions: [],
     objects: [],
     plan: null,
     diagnostics: null,
@@ -686,16 +690,44 @@ export function recomputeRegions(state: AppState): void {
   const s = state.project.settings;
   if (state.project.source.kind === "svg" && state.project.source.data) {
     state.regions = importSvg(state.project.source.data, mm(s.targetSizeMm)).regions;
+    state.excludedRegions = [];
     state.labelMap = null;
   } else if (state.raster) {
     state.labelMap = quantize(state.raster, {
       colorCount: s.colorCount,
       removeWhiteBackground: s.removeWhiteBackground,
     });
-    state.regions = extractRegions(state.labelMap, {
+    // 目標サイズ連動: 小さいデザインでは面積閾値を下げて小特徴を残す
+    const sizeRatio = s.targetSizeMm / 100;
+    const scaledMinArea = Math.round(300 * sizeRatio * sizeRatio);
+    const result = extractRegions(state.labelMap, {
       unitsPerPixel: fitUnitsPerPixel(state.raster.width, state.raster.height, mm(s.targetSizeMm)),
+      minRegionArea: scaledMinArea,
     });
+    state.regions = result.regions;
+    state.excludedRegions = result.excludedRegions;
   }
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/** 除外された小領域を復元して regions に追加する */
+export function restoreExcludedRegion(state: AppState, index: number): void {
+  const ex = state.excludedRegions[index];
+  if (!ex) return;
+  const region: Region = { outer: ex.outer, holes: [], color: ex.color };
+  state.regions = [...state.regions, region];
+  state.excludedRegions = state.excludedRegions.filter((_, i) => i !== index);
+  state.project.regions = state.regions;
+  recomputeStitches(state);
+}
+
+/** 除外された小領域をすべて復元する */
+export function restoreAllExcluded(state: AppState): void {
+  for (const ex of state.excludedRegions) {
+    state.regions.push({ outer: ex.outer, holes: [], color: ex.color });
+  }
+  state.excludedRegions = [];
   state.project.regions = state.regions;
   recomputeStitches(state);
 }
@@ -727,6 +759,11 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
   const recipe = getRecipe(s.fabricId);
   const recipeOpts = recipeToDigitizeOptions(recipe);
   const densityScale = s.densityScale ?? 1.0;
+  // 目標サイズ連動: 小さいデザインでは minObjectExtent を下げて小特徴を残す
+  const sizeRatio = s.targetSizeMm / 100;
+  const scaledMinExtent = recipeOpts.minObjectExtent
+    ? Math.round(recipeOpts.minObjectExtent * sizeRatio)
+    : undefined;
   // 密度プリセット: 行間隔・サテン間隔に倍率を掛ける (省針数 ⇄ 高密度)。
   // scale = densityScale (ユーザー) × auto (目標針数に収める先回り倍率)
   const generate = (scale: number): ReturnType<typeof digitizeRegions> =>
@@ -740,6 +777,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
         trimMode: s.trimMode,
         underlay: s.underlay as UnderlayType[],
         fillType: state.puffy ? "satin" : state.fillType,
+        minObjectExtent: scaledMinExtent,
         // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)。それ以外は密度倍率を適用
         satinSpacing: state.puffy
           ? mm(0.3)
