@@ -59,6 +59,8 @@ export function compensateRegion(region: Region, params: CompensationParams): Re
     holes,
   });
   if (params.pull <= 0 && params.push <= 0) return region;
+  // 極小領域は補正をスキップ (補正量が領域サイズと同程度だと潰れる)
+  if (regionMinExtent(region) < 20) return region;
 
   const c = polygonCentroid(region.outer);
   const cos = Math.cos(-params.sewAngleRad);
@@ -110,6 +112,8 @@ export function densityCompensatedSpacing(
   enabled: boolean,
 ): number {
   if (!enabled) return baseSpacing;
+  // 極小領域は密度補正をスキップ (走査行が通らなくなる)
+  if (areaUnits2 < 100) return baseSpacing;
   // 150mm² (=15000 内部単位²) 未満で徐々に間隔を広げ (密度を下げ)、最大 1.4 倍まで。
   // 小さい面・文字での目詰まりと布の硬化を防ぐ。
   const threshold = 15000;
