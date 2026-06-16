@@ -168,12 +168,16 @@ function rayHitPolygon(
  * 中心線追従でレールを張り直す。各ステッチを局所的な中心線の「直交」方向へ
  * 境界まで伸ばすことで、湾曲・テーパした列でも 1 針が局所幅 (=最短) になる。
  * これが「サテンの縫い角度を自動で変化させる」実体。
+ *
+ * 針数は基準レール本数 (railL.length) に合わせて再サンプルする。中心線の弧長は
+ * 主軸投影より長いため、固定間隔で刻むと曲線部で針数が無駄に増える (実測 +40〜50%)。
+ * 弧長を基準本数で割った間隔で刻むことで、ストローク短縮の効果を保ったまま
+ * 針数を従来 (固定角スキャン) と同等に抑える。
  */
 function centerlineRails(
   outer: Point[],
   railL: Point[],
   railR: Point[],
-  spacing: number,
   maxWidth: number,
 ): { left: Point[]; right: Point[]; maxW: number } | null {
   const n = Math.min(railL.length, railR.length);
@@ -182,7 +186,14 @@ function centerlineRails(
   for (let i = 0; i < n; i++) {
     center.push({ x: (railL[i].x + railR[i].x) / 2, y: (railL[i].y + railR[i].y) / 2 });
   }
-  const samples = resamplePolyline(center, spacing);
+  // 中心線の弧長を基準本数で割り、針数が基準 (n 本) を超えないよう再サンプル
+  let clen = 0;
+  for (let i = 1; i < center.length; i++) {
+    clen += Math.hypot(center[i].x - center[i - 1].x, center[i].y - center[i - 1].y);
+  }
+  if (clen < 1e-6) return null;
+  const spacingEff = clen / (n - 1);
+  const samples = resamplePolyline(center, spacingEff);
   if (samples.length < 2) return null;
 
   const left: Point[] = [];
@@ -243,7 +254,7 @@ export function satinFromRegion(region: Region, params: SatinParams): GeneratorR
   // テーパ形状などでは直交キャストが基準より長くなり得るため、
   // 最大スパンが基準を上回らない場合のみ採用する (短縮目的に反しない)。
   if ((params.optimizeAngle ?? true) && !branched) {
-    const perp = centerlineRails(region.outer, railL, railR, params.spacing, params.maxWidth);
+    const perp = centerlineRails(region.outer, railL, railR, params.maxWidth);
     if (perp && perp.maxW <= maxW + 1) {
       railL = perp.left;
       railR = perp.right;

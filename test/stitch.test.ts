@@ -263,6 +263,16 @@ describe("satin 角度最適化 (中心線追従)", () => {
     const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
     expect(Math.abs(maxSpan(on.runs) - maxSpan(off.runs))).toBeLessThanOrEqual(2);
   });
+
+  it("中心線追従でも針数は固定角と同等 (無駄な増加なし)", () => {
+    const region: Region = { outer: arcBand(), holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    const countOff = off.runs.reduce((n, r) => n + r.stitches.length, 0);
+    const countOn = on.runs.reduce((n, r) => n + r.stitches.length, 0);
+    // 弧長ぶんの過剰サンプリングを抑え、基準を大きく超えない (誤差 5% 以内)
+    expect(countOn).toBeLessThanOrEqual(Math.ceil(countOff * 1.05));
+  });
 });
 
 describe("runningStitch", () => {
