@@ -138,3 +138,83 @@ describe("flattenPlan", () => {
     expect(stitches.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+describe("flattenPlan: 止め縫い (ロック)", () => {
+  const red = { r: 255, g: 0, b: 0 };
+  const blue = { r: 0, g: 0, b: 255 };
+
+  function isStitch(o: { kind: string }): o is { kind: "stitch"; x: number; y: number } {
+    return o.kind === "stitch";
+  }
+
+  it("既定でロックが有効、lockStitches=false で無効化できる", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        {
+          thread: red,
+          runs: [{ stitches: [{ x: 0, y: 0 }, { x: mm(10), y: 0 }, { x: mm(20), y: 0 }], connection: "trim" }],
+        },
+      ],
+    };
+    const withLock = flattenPlan(plan).filter(isStitch).length;
+    const noLock = flattenPlan(plan, { lockStitches: false }).filter(isStitch).length;
+    // 縫い始め tie-in (+2) と終端 tie-off (+2) のぶん多い
+    expect(withLock).toBe(noLock + 4);
+  });
+
+  it("trim の直前に止め縫い、直後 (jump 後の開始) にも止め縫いが入る", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        {
+          thread: red,
+          runs: [
+            { stitches: [{ x: 0, y: 0 }, { x: mm(10), y: 0 }], connection: "trim" },
+            { stitches: [{ x: mm(40), y: 0 }, { x: mm(50), y: 0 }], connection: "trim" },
+          ],
+        },
+      ],
+    };
+    const ops = flattenPlan(plan);
+    const trimIdx = ops.findIndex((o) => o.kind === "trim");
+    // trim 直前は止め縫い (stitch)、trim 直後は jump (位置合わせ) のまま
+    expect(ops[trimIdx - 1].kind).toBe("stitch");
+    expect(ops[trimIdx + 1].kind).toBe("jump");
+  });
+
+  it("ロックステッチは MIN/MAX ステッチ長の範囲に収まる", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        { thread: red, runs: [{ stitches: [{ x: 0, y: 0 }, { x: mm(10), y: 0 }], connection: "trim" }] },
+        { thread: blue, runs: [{ stitches: [{ x: mm(40), y: 0 }, { x: mm(50), y: 0 }], connection: "trim" }] },
+      ],
+    };
+    const ops = flattenPlan(plan);
+    let prev: { x: number; y: number } | null = null;
+    for (const op of ops) {
+      if (op.kind === "stitch" || op.kind === "jump") {
+        if (prev && op.kind === "stitch") {
+          const d = Math.hypot(op.x - prev.x, op.y - prev.y);
+          if (d > 0) expect(d).toBeLessThanOrEqual(MAX_STITCH_LEN + 1);
+        }
+        prev = { x: op.x, y: op.y };
+      }
+    }
+  });
+
+  it("色替えの前に止め縫いが入る (糸端のほつれ防止)", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        { thread: red, runs: [{ stitches: [{ x: 0, y: 0 }, { x: mm(10), y: 0 }], connection: "trim" }] },
+        { thread: blue, runs: [{ stitches: [{ x: mm(40), y: 0 }, { x: mm(50), y: 0 }], connection: "trim" }] },
+      ],
+    };
+    const ops = flattenPlan(plan);
+    const ccIdx = ops.findIndex((o) => o.kind === "colorChange");
+    expect(ops[ccIdx - 1].kind).toBe("stitch"); // 色替え直前は止め縫い
+    expect(ops[ccIdx + 1].kind).toBe("jump"); // 直後は位置合わせジャンプのまま
+  });
+});
