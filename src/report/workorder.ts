@@ -3,7 +3,7 @@
 // HTML レンダリングと印刷は UI 層 (src/ui/report.ts)。
 
 import { UNIT_MM } from "../core/constants";
-import { countColorChanges, countStitches, countTrims, planBounds } from "../core/plan";
+import { countColorChanges, countStitches, countTrims, planBounds, stitchedLengthByBlock } from "../core/plan";
 import type { StitchPlan } from "../core/types";
 import { assignBrotherThreads } from "../export/pec";
 import { getRecipe } from "../fabric/recipes";
@@ -17,6 +17,8 @@ export interface ThreadUsage {
   name: string;
   rgb: { r: number; g: number; b: number };
   stitches: number;
+  /** この色の縫い糸長 (mm)。糸量の見積りに使う */
+  lengthMm: number;
 }
 
 export interface WorkOrder {
@@ -33,6 +35,8 @@ export interface WorkOrder {
   widthMm: number;
   heightMm: number;
   estMinutes: number;
+  /** 総縫い糸長 (mm)。全色合計 */
+  totalThreadMm: number;
   threads: ThreadUsage[];
   fabric: {
     name: string;
@@ -52,6 +56,7 @@ export function buildWorkOrder(
   const brother = assignBrotherThreads(plan);
   const recipe = getRecipe(opts.fabricId);
 
+  const lengths = stitchedLengthByBlock(plan);
   const threads: ThreadUsage[] = plan.blocks.map((block, i) => {
     const stitches = block.runs.reduce((n, r) => n + r.stitches.length, 0);
     const th = brother[i];
@@ -61,6 +66,7 @@ export function buildWorkOrder(
       name: th.name ?? `#${th.pecIndex}`,
       rgb: { r: th.r, g: th.g, b: th.b },
       stitches,
+      lengthMm: lengths[i] * UNIT_MM,
     };
   });
 
@@ -85,6 +91,7 @@ export function buildWorkOrder(
     widthMm: bounds ? (bounds.maxX - bounds.minX) * UNIT_MM : 0,
     heightMm: bounds ? (bounds.maxY - bounds.minY) * UNIT_MM : 0,
     estMinutes: stats.estMinutes,
+    totalThreadMm: lengths.reduce((s, v) => s + v, 0) * UNIT_MM,
     threads,
     fabric: {
       name: recipe.name,

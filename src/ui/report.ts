@@ -25,6 +25,7 @@ function workOrderHtml(wo: WorkOrder, qrSvg: string, previewSvg: string): string
         <td><span class="sw" style="background:rgb(${t.rgb.r},${t.rgb.g},${t.rgb.b})"></span></td>
         <td>#${t.pecIndex} ${t.name}</td>
         <td>${t.stitches.toLocaleString()}</td>
+        <td>${(t.lengthMm / 1000).toFixed(2)} m</td>
       </tr>`,
     )
     .join("");
@@ -64,12 +65,13 @@ function workOrderHtml(wo: WorkOrder, qrSvg: string, previewSvg: string): string
           <dt>色数 / 糸替え</dt><dd>${wo.colorCount} 色 / ${wo.colorChanges} 回</dd>
           <dt>糸切り回数</dt><dd>${wo.trims} 回</dd>
           <dt>推定縫製時間</dt><dd>約 ${Math.ceil(wo.estMinutes)} 分</dd>
+          <dt>推定糸長</dt><dd>約 ${(wo.totalThreadMm / 1000).toFixed(2)} m</dd>
           <dt>布地</dt><dd>${wo.fabric.name}</dd>
           <dt>推奨糸</dt><dd>${wo.fabric.recommendedThread}</dd>
           <dt>推奨針</dt><dd>${wo.fabric.recommendedNeedle}</dd>
         </dl>
         <h3 style="font-size:14px;margin:16px 0 0;">使用糸・縫い順</h3>
-        <table><thead><tr><th>順</th><th>色</th><th>糸</th><th>針数</th></tr></thead><tbody>${rows}</tbody></table>
+        <table><thead><tr><th>順</th><th>色</th><th>糸</th><th>針数</th><th>糸長</th></tr></thead><tbody>${rows}</tbody></table>
         ${notes}
       </div>
     </div>

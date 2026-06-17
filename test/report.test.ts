@@ -54,6 +54,16 @@ describe("buildWorkOrder", () => {
     const sum = wo.threads.reduce((n, t) => n + t.stitches, 0);
     expect(sum).toBe(wo.totalStitches);
   });
+
+  it("糸長 (各色・合計) が正で、各色の合計が総糸長に一致する", () => {
+    const wo = buildWorkOrder(plan, {
+      projectId: "X", designName: "X", fileName: "x", createdAt: "2026-01-01", fabricId: "standard",
+    });
+    expect(wo.totalThreadMm).toBeGreaterThan(0);
+    for (const t of wo.threads) expect(t.lengthMm).toBeGreaterThan(0);
+    const sum = wo.threads.reduce((n, t) => n + t.lengthMm, 0);
+    expect(sum).toBeCloseTo(wo.totalThreadMm, 5);
+  });
 });
 
 describe("DesignLibrary", () => {

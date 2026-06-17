@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import { mm } from "../src/core/constants";
-import { countStitches, countTrims } from "../src/core/plan";
+import { countStitches, countTrims, stitchedLengthByBlock, totalStitchedLength } from "../src/core/plan";
+import type { StitchPlan } from "../src/core/types";
 import type { Region } from "../src/core/region";
 import type { Point } from "../src/core/types";
 import { branchOrder, digitizeLines } from "../src/plan/branching";
@@ -28,6 +29,38 @@ function rect(cx: number, cy: number, w: number, h: number): Point[] {
 function square(cx: number, cy: number, size: number, color = RED): Region {
   return { outer: rect(cx, cy, size, size), holes: [], color };
 }
+
+describe("stitchedLengthByBlock / totalStitchedLength", () => {
+  it("各 Run 内の連続ステッチ距離を色ごとに合計する (渡りは含めない)", () => {
+    const plan: StitchPlan = {
+      name: "L",
+      blocks: [
+        {
+          thread: RED,
+          runs: [
+            // 10mm 横移動 = 100 単位
+            { stitches: [{ x: 0, y: 0 }, { x: mm(10), y: 0 }], connection: "trim" },
+            // 別 Run: 5mm。Run 間の渡りは糸長に含めない
+            { stitches: [{ x: mm(40), y: 0 }, { x: mm(45), y: 0 }], connection: "trim" },
+          ],
+        },
+        { thread: BLUE, runs: [{ stitches: [{ x: 0, y: 0 }, { x: 0, y: mm(20) }], connection: "trim" }] },
+      ],
+    };
+    const byBlock = stitchedLengthByBlock(plan);
+    expect(byBlock[0]).toBeCloseTo(mm(10) + mm(5), 5); // 赤: 10+5mm
+    expect(byBlock[1]).toBeCloseTo(mm(20), 5); // 青: 20mm
+    expect(totalStitchedLength(plan)).toBeCloseTo(mm(35), 5);
+  });
+
+  it("実デザインでは糸長が正で、針数が多い色ほど概ね長い", () => {
+    const { plan } = digitizeRegions([square(0, 0, mm(30)), square(mm(40), 0, mm(8), BLUE)], "TL");
+    const lens = stitchedLengthByBlock(plan);
+    expect(lens.length).toBe(plan.blocks.length);
+    expect(totalStitchedLength(plan)).toBeGreaterThan(0);
+    for (const l of lens) expect(l).toBeGreaterThan(0);
+  });
+});
 
 describe("decideConnection", () => {
   const o = { x: 0, y: 0 };
