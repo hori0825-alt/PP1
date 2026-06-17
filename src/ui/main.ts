@@ -71,6 +71,7 @@ import { FABRIC_RECIPES, getRecipe } from "../fabric/recipes";
 import { makeKaleidoscope, makeMirror, makeRadial } from "../decorate/arrange";
 import { downloadPreview, downloadQr, openWorkOrder } from "./report";
 import { bindLibraryTab, libraryTabContent } from "./library";
+import { canRedo, canUndo, recordHistory, redo, resetHistory, undo } from "./history";
 import { textToRegions } from "./textTool";
 import type { LayoutMode } from "../text/layout";
 import type { FillType } from "../stitch/digitize";
@@ -584,6 +585,8 @@ function simulatorBar(): string {
 function render(): void {
   const app = document.getElementById("app");
   if (!app) return;
+  // 設計が変わっていれば履歴に記録する (表示切替・選択だけの再描画では増えない)
+  recordHistory(state);
   const tabs: [Tab, string][] =
     state.mode === "easy"
       ? [["design", "デザイン"], ["color", "色"], ["diagnostics", "診断"], ["output", "出力"], ["library", "ライブラリ"]]
@@ -605,6 +608,10 @@ function render(): void {
   app.innerHTML = `
     <header>
       <h1>PP1 Stitch Studio <span class="version">v${__APP_VERSION__}</span></h1>
+      <div class="history">
+        <button class="hist" id="undo" ${canUndo() ? "" : "disabled"} title="元に戻す (Ctrl+Z)">↶ 戻る</button>
+        <button class="hist" id="redo" ${canRedo() ? "" : "disabled"} title="やり直す (Ctrl+Shift+Z)">↷ やり直し</button>
+      </div>
       <div class="chips">${headerChips()}</div>
       <div class="modes">
         <button class="mode ${state.mode === "easy" ? "active" : ""}" data-mode="easy">かんたん</button>
@@ -650,6 +657,14 @@ function syncVectorPointer(): void {
 state.onChange = render;
 
 function bindEvents(): void {
+  // 戻る / やり直し (履歴)
+  document.getElementById("undo")?.addEventListener("click", () => {
+    if (undo(state)) render();
+  });
+  document.getElementById("redo")?.addEventListener("click", () => {
+    if (redo(state)) render();
+  });
+
   // モード・タブ
   document.querySelectorAll<HTMLElement>(".mode").forEach((b) =>
     b.addEventListener("click", () => {
@@ -682,6 +697,7 @@ function bindEvents(): void {
         const dataUrl = await fileToDataUrl(file);
         setSourceImage(state, raster, dataUrl, file.name);
       }
+      resetHistory(); // 新しいデザイン: それ以前には戻せない
       state.view = "stitch";
       render();
     })();
@@ -966,6 +982,7 @@ function bindEvents(): void {
         if (state.plan) refreshDerived(state);
         else if (state.regions.length > 0) recomputeStitches(state);
         else recomputeRegions(state);
+        resetHistory(); // 開いたプロジェクトより前には戻せない
         render();
       } catch (err) {
         alert(`読み込みに失敗しました: ${(err as Error).message}`);
@@ -1472,5 +1489,25 @@ function bindSimulator(): void {
     render();
   });
 }
+
+// キーボードショートカット: Ctrl/Cmd+Z で戻る、Ctrl/Cmd+Shift+Z または Ctrl/Cmd+Y でやり直し。
+// 入力欄 (テキスト/数値) のフォーカス中はブラウザ既定の取り消しを優先して邪魔しない。
+window.addEventListener("keydown", (e) => {
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const key = e.key.toLowerCase();
+  if (key === "z" && !e.shiftKey) {
+    if (undo(state)) {
+      e.preventDefault();
+      render();
+    }
+  } else if ((key === "z" && e.shiftKey) || key === "y") {
+    if (redo(state)) {
+      e.preventDefault();
+      render();
+    }
+  }
+});
 
 render();
