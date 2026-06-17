@@ -20,7 +20,7 @@ import { rgbToLab, labDist2 } from "../import/quantize";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
 import { optimizeOrder } from "../plan/order";
-import { compensateRegion, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
+import { compensateRegion, compensateSatinColumn, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
 import { strokeStitch } from "./stroke";
@@ -374,8 +374,21 @@ export function digitizeRegions(
             localWarnings.push(...strokeRes.warnings);
           } else {
             const objectSewRad = (objectAngleDeg * Math.PI) / 180;
-            // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
-            const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
+            // この領域がサテン (細い列) になる見込みか (補正前の素の形状で判定。
+            // generateFill と同じ条件。Pull 補正は幅をわずかに変えるだけで判定は揺らさない)。
+            const willTrySatin =
+              regionFillType === "satin" ||
+              (regionFillType === "auto" &&
+                source.holes.length === 0 &&
+                regionMinExtent(source) <= SATIN_DEFAULT.maxWidth);
+
+            // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する。
+            // サテン列は糸の張力で「列幅」が縮むため、長軸直交方向 (=幅) を広げる専用補正を使う
+            // (汎用の compensateRegion は幅 2mm 未満を弾くうえ、サテンの縫い方向と軸が合わない)。
+            // 面 (タタミ) は従来どおりステッチ直交方向を広げる。
+            const region = willTrySatin
+              ? compensateSatinColumn(source, pull)
+              : compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
 
             // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
             const regionParams: TatamiParams = {
@@ -388,12 +401,6 @@ export function digitizeRegions(
             const underlayTypes = options.underlay ?? [];
             const hasUnderlay = underlayTypes.length > 0;
             const underlayMinExtent = options.underlayMinExtent ?? 25; // 2.5mm
-            // この領域がサテン (細い列) になる見込みか。generateFill と同じ判定。
-            const willTrySatin =
-              regionFillType === "satin" ||
-              (regionFillType === "auto" &&
-                region.holes.length === 0 &&
-                regionMinExtent(region) <= SATIN_DEFAULT.maxWidth);
 
             if (willTrySatin) {
               // サテン列: 本縫いを先に生成して中心線を確定してから、中心線下縫いを敷く。

@@ -8,6 +8,7 @@ import type { Point } from "../src/core/types";
 import { FABRIC_RECIPES, getRecipe, recipeToDigitizeOptions } from "../src/fabric/recipes";
 import {
   compensateRegion,
+  compensateSatinColumn,
   densityCompensatedSpacing,
   regionArea,
   regionMinExtent,
@@ -67,6 +68,65 @@ describe("compensateRegion", () => {
     const out = compensateRegion(donut, { pull: mm(1), push: 0, sewAngleRad: 0 });
     expect(out.holes.length).toBe(1);
     expect(extentY(out.holes[0])).toBeGreaterThan(extentY(donut.holes[0]));
+  });
+});
+
+describe("compensateSatinColumn (サテン列の Pull 補正)", () => {
+  it("細い列の幅 (短軸) を広げ、長軸は変えない", () => {
+    // 横長の列 (長軸 x, 幅 y = 2mm)
+    const col: Region = { outer: rect(0, 0, mm(30), mm(2)), holes: [], color: RED };
+    const out = compensateSatinColumn(col, mm(0.4));
+    expect(extentY(out.outer)).toBeGreaterThan(extentY(col.outer)); // 幅が広がる
+    expect(extentX(out.outer)).toBeCloseTo(extentX(col.outer), 0); // 長軸は不変
+  });
+
+  it("汎用補正が弾く極細列 (短辺 < 2mm) にも適用される", () => {
+    const thin: Region = { outer: rect(0, 0, mm(40), mm(1)), holes: [], color: RED };
+    // 汎用補正は minExtent < 20 で素通し
+    const generic = compensateRegion(thin, { pull: mm(0.3), push: 0, sewAngleRad: 0 });
+    expect(generic).toBe(thin);
+    // サテン専用補正は幅を広げる
+    const satin = compensateSatinColumn(thin, mm(0.3));
+    expect(extentY(satin.outer)).toBeGreaterThan(extentY(thin.outer));
+  });
+
+  it("縦長の列でも長軸を検出して幅 (短軸) を広げる", () => {
+    const col: Region = { outer: rect(0, 0, mm(2), mm(30)), holes: [], color: RED };
+    const out = compensateSatinColumn(col, mm(0.4));
+    expect(extentX(out.outer)).toBeGreaterThan(extentX(col.outer)); // 幅 (x) が広がる
+    expect(extentY(out.outer)).toBeCloseTo(extentY(col.outer), 0); // 長軸 (y) は不変
+  });
+
+  it("拡張量は半幅でクランプされる (幅は最大2倍まで)", () => {
+    const col: Region = { outer: rect(0, 0, mm(30), mm(2)), holes: [], color: RED };
+    // 過大な pull を与えても幅は 2 倍 (2mm→4mm) を超えない
+    const out = compensateSatinColumn(col, mm(10));
+    expect(extentY(out.outer)).toBeLessThanOrEqual(mm(2) * 2 + 1);
+  });
+
+  it("補正値0なら領域は不変", () => {
+    const col: Region = { outer: rect(0, 0, mm(30), mm(2)), holes: [], color: RED };
+    expect(compensateSatinColumn(col, 0)).toBe(col);
+  });
+
+  it("digitize: 細いサテン列が Pull 補正で太くなる", () => {
+    const col = (): Region => ({ outer: rect(0, 0, mm(30), mm(2)), holes: [], color: RED, fillType: "satin" });
+    const maxPair = (plan: ReturnType<typeof digitizeRegions>["plan"]): number => {
+      let m = 0;
+      for (const b of plan.blocks) {
+        for (const r of b.runs) {
+          if (r.stitchType !== "satin") continue;
+          const st = r.stitches;
+          for (let i = 0; i + 1 < st.length; i += 2) {
+            m = Math.max(m, Math.hypot(st[i + 1].x - st[i].x, st[i + 1].y - st[i].y));
+          }
+        }
+      }
+      return m;
+    };
+    const none = digitizeRegions([col()], "N", { fillType: "satin", underlay: [] });
+    const pulled = digitizeRegions([col()], "P", { fillType: "satin", underlay: [], pullCompensation: mm(0.5) });
+    expect(maxPair(pulled.plan)).toBeGreaterThan(maxPair(none.plan));
   });
 });
 
