@@ -27,7 +27,7 @@ import { strokeStitch } from "./stroke";
 import { tatamiFill } from "./tatami";
 import { turningFill } from "./turning";
 import { fillUnderlay, satinUnderlay } from "./underlay";
-import type { FillType } from "../core/types";
+import type { FillType, SatinUnderlayMode } from "../core/types";
 import type { GeneratorResult, TatamiParams, UnderlayType } from "./types";
 
 export interface DigitizeOptions {
@@ -55,6 +55,8 @@ export interface DigitizeOptions {
   minObjectExtent?: number;
   /** 下縫いを付ける最小短辺 (内部単位)。これ未満の細い面は下縫いを省く。デフォルト 2.5mm */
   underlayMinExtent?: number;
+  /** サテン列の下縫い種別 (デフォルト auto = 一般下縫い設定から導出) */
+  satinUnderlay?: SatinUnderlayMode;
   /** 小さい面の密度を自動で下げる */
   autoDensity?: boolean;
   /** サテンの間隔 (内部単位)。3D/パフィーで詰める用 */
@@ -137,6 +139,32 @@ function satinUnderlayTypesFor(types: UnderlayType[], width: number): UnderlayTy
   }
   if (out.length === 0) out.push("center");
   return out;
+}
+
+/**
+ * サテン列の下縫い種別を解決する。
+ * - auto: 一般下縫い設定 (generalTypes) から導出。一般下縫いが無ければ付けない。
+ * - none: 付けない。
+ * - center: 中心線ランニングのみ。
+ * - center-zigzag: センター + ジグザグ (ジグザグは極細列では過剰なので幅で制限)。
+ * mode が auto 以外なら一般下縫い設定とは独立にサテン列へ下縫いを付けられる。
+ */
+function resolveSatinUnderlayTypes(
+  mode: SatinUnderlayMode,
+  generalTypes: UnderlayType[],
+  width: number,
+): UnderlayType[] {
+  switch (mode) {
+    case "none":
+      return [];
+    case "center":
+      return ["center"];
+    case "center-zigzag":
+      return width >= SATIN_ZIGZAG_MIN_WIDTH ? ["center", "zigzag"] : ["center"];
+    case "auto":
+    default:
+      return generalTypes.length > 0 ? satinUnderlayTypesFor(generalTypes, width) : [];
+  }
 }
 
 /**
@@ -333,6 +361,7 @@ export function digitizeRegions(
           params.stitchLength,
           options.satinSpacing ?? 0,
           (options.underlay ?? []).join("+"),
+          options.satinUnderlay ?? "auto",
           pull,
           push,
           autoDensity,
@@ -400,6 +429,7 @@ export function digitizeRegions(
             // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)。
             const underlayTypes = options.underlay ?? [];
             const hasUnderlay = underlayTypes.length > 0;
+            const satinUnderlayMode = options.satinUnderlay ?? "auto";
             const underlayMinExtent = options.underlayMinExtent ?? 25; // 2.5mm
 
             if (willTrySatin) {
@@ -407,16 +437,14 @@ export function digitizeRegions(
               // (startNear/exitNear はタタミ/ターニングの順序にのみ効き、サテンは無視するため、
               //  下縫いより先に本縫いを生成しても結果は変わらない)
               const fill = generateFill(region, regionParams, regionFillType, currentEnd ?? null, exitNear, options.satinSpacing, angleLines);
-              if (hasUnderlay && fill.usedSatin) {
+              if (fill.usedSatin) {
                 // 細い列は edge/tatami 下縫いがオフセット潰れで無意味なため従来はスキップしていた。
                 // 中心線に沿うサテン下縫い (center/zigzag) は細い列でも有効なので、ここで敷く。
+                // 種別は satinUnderlay 設定で決める (auto なら一般下縫い設定から導出)。
                 const spine = satinSpine(fill.runs);
-                if (spine.centerline.length >= 2 && spine.width >= SATIN_UNDERLAY_MIN_WIDTH) {
-                  const u = satinUnderlay({
-                    types: satinUnderlayTypesFor(underlayTypes, spine.width),
-                    centerline: spine.centerline,
-                    width: spine.width,
-                  });
+                const types = resolveSatinUnderlayTypes(satinUnderlayMode, underlayTypes, spine.width);
+                if (types.length > 0 && spine.centerline.length >= 2 && spine.width >= SATIN_UNDERLAY_MIN_WIDTH) {
+                  const u = satinUnderlay({ types, centerline: spine.centerline, width: spine.width });
                   for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
                   localWarnings.push(...u.warnings);
                 }

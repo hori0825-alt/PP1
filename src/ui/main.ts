@@ -75,6 +75,7 @@ import { canRedo, canUndo, recordHistory, redo, resetHistory, undo } from "./his
 import { textToRegions } from "./textTool";
 import type { LayoutMode } from "../text/layout";
 import type { FillType } from "../stitch/digitize";
+import type { SatinUnderlayMode } from "../core/types";
 import {
   attachVectorPointer,
   drawVectorEdit,
@@ -390,8 +391,23 @@ function stitchTab(): string {
     <p class="note">目標を超えたら密度を自動で粗くして収めます。結果は診断タブに表示されます。</p>
     <h2>下縫い</h2>
     ${(["edge", "tatami"] as const)
-      .map((u) => `<label><input type="checkbox" class="underlay" value="${u}" ${s.underlay.includes(u) ? "checked" : ""}> ${u === "edge" ? "エッジ下縫い" : "タタミ下縫い"}</label>`)
+      .map((u) => `<label><input type="checkbox" class="underlay" value="${u}" ${s.underlay.includes(u) ? "checked" : ""}> ${u === "edge" ? "エッジ下縫い (面)" : "タタミ下縫い (面)"}</label>`)
       .join("")}
+    <label>サテン列の下縫い
+      <select id="satin-underlay">
+        ${(
+          [
+            ["auto", "自動 (上の下縫い設定に従う)"],
+            ["none", "なし"],
+            ["center", "センター (中心線)"],
+            ["center-zigzag", "センター + ジグザグ"],
+          ] as [string, string][]
+        )
+          .map(([v, label]) => `<option value="${v}" ${(s.satinUnderlay ?? "auto") === v ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>
+    </label>
+    <p class="note">サテン列専用の土台。細い列はセンター、幅のある列はジグザグを足すと安定します (面の下縫いはエッジ/タタミが制御)。</p>
     <h2>糸切り</h2>
     <label>モード
       <select id="trim">
@@ -809,6 +825,12 @@ function bindEvents(): void {
       render();
     }),
   );
+  // サテン列の下縫い種別
+  document.getElementById("satin-underlay")?.addEventListener("change", (e) => {
+    state.project.settings.satinUnderlay = (e.target as HTMLSelectElement).value as SatinUnderlayMode;
+    recomputeStitches(state);
+    render();
+  });
   // 縫い方: 全体設定
   document.getElementById("global-fill")?.addEventListener("change", (e) => {
     state.fillType = (e.target as HTMLSelectElement).value as FillType;

@@ -107,3 +107,34 @@ describe("サテン下縫い (中心線)", () => {
     expect(ulStitches(both.plan)).toBeGreaterThan(ulStitches(center.plan));
   });
 });
+
+describe("サテン下縫い種別の選択 (satinUnderlay)", () => {
+  const underlayRuns = (plan: StitchPlan): { stitches: Point[] }[] =>
+    plan.blocks.flatMap((b) => b.runs).filter((r) => r.stitchType === "underlay");
+  const ulStitches = (plan: StitchPlan): number =>
+    underlayRuns(plan).flatMap((r) => r.stitches).length;
+  const satinCol = (w = mm(3)): Region => ({ outer: ribbon(mm(30), w), holes: [], color: COLOR, fillType: "satin" });
+
+  it("none: 一般下縫いが有効でもサテン下縫いを付けない", () => {
+    const res = digitizeRegions([satinCol()], "S", { underlay: ["edge"], satinUnderlay: "none" });
+    expect(underlayRuns(res.plan).length).toBe(0);
+  });
+
+  it("center: 一般下縫いが無効でもサテン列に中心線下縫いを付ける", () => {
+    const res = digitizeRegions([satinCol()], "S", { underlay: [], satinUnderlay: "center" });
+    expect(underlayRuns(res.plan).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("center-zigzag: 幅のある列では center のみよりステッチが増える (ジグザグぶん)", () => {
+    const c = digitizeRegions([satinCol(mm(5))], "C", { underlay: [], satinUnderlay: "center" });
+    const cz = digitizeRegions([satinCol(mm(5))], "Z", { underlay: [], satinUnderlay: "center-zigzag" });
+    expect(ulStitches(cz.plan)).toBeGreaterThan(ulStitches(c.plan));
+  });
+
+  it("auto (既定): 一般下縫い設定から導出する (従来動作)", () => {
+    const withEdge = digitizeRegions([satinCol()], "A", { underlay: ["edge"], satinUnderlay: "auto" });
+    const noUnderlay = digitizeRegions([satinCol()], "A", { underlay: [], satinUnderlay: "auto" });
+    expect(underlayRuns(withEdge.plan).length).toBeGreaterThanOrEqual(1);
+    expect(underlayRuns(noUnderlay.plan).length).toBe(0);
+  });
+});

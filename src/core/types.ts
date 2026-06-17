@@ -9,6 +9,15 @@
 /** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする。stroke は線 (中心線サテン/ランニング) */
 export type FillType = "tatami" | "satin" | "auto" | "stroke";
 
+/**
+ * サテン列の下縫い種別。
+ * - auto: 布地・一般下縫い設定から自動導出 (edge→センター / tatami→ジグザグ)
+ * - none: サテン列に下縫いを付けない
+ * - center: 中心線ランニングのみ (細い列の基本の土台)
+ * - center-zigzag: センター + ジグザグ (幅のある列をしっかり支える)
+ */
+export type SatinUnderlayMode = "auto" | "none" | "center" | "center-zigzag";
+
 /** 内部座標 (0.1mm 単位の整数、原点はデザイン中心、+y 下) */
 export interface Point {
   x: number;
