@@ -252,6 +252,102 @@ function centerlineRails(
   return { left, right, maxW };
 }
 
+/** 折れ線を弧長等分でちょうど count 点に再サンプルする (両端を含む。count>=2) */
+function resampleToCount(path: Point[], count: number): Point[] {
+  const lengths: number[] = [0];
+  for (let i = 1; i < path.length; i++) {
+    lengths.push(lengths[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y));
+  }
+  const total = lengths[lengths.length - 1];
+  if (total < 1e-9) return [path[0]];
+  const out: Point[] = [];
+  let seg = 0;
+  for (let k = 0; k < count; k++) {
+    const target = (total * k) / (count - 1);
+    while (seg + 1 < lengths.length - 1 && lengths[seg + 1] < target) seg++;
+    const segLen = lengths[seg + 1] - lengths[seg];
+    const u = segLen < 1e-9 ? 0 : (target - lengths[seg]) / segLen;
+    out.push({
+      x: path[seg].x + (path[seg + 1].x - path[seg].x) * u,
+      y: path[seg].y + (path[seg + 1].y - path[seg].y) * u,
+    });
+  }
+  return out;
+}
+
+/**
+ * メディアル軸 (骨格) 追従でレールを張る。L字・V字など曲がった列を、単一角度の走査では
+ * 表せない問題を解決する。
+ *
+ * 手順:
+ *   1. 主軸 (PCA) への射影が最小・最大の境界頂点を列の両端 (キャップ) とみなす。
+ *   2. 境界をキャップ間の2つの弧 (= 列の2つの長辺) に分割する。
+ *   3. 両弧を同数 N 点に弧長等分し、同じ進行率の点どうしをペアにする。
+ *      → 曲がりに沿って向かい合う左右レールになり、各ステッチが局所幅 (=最短) になる。
+ *
+ * 分岐形状や、両端が同じ側に出る歪んだ形では破綻しうるため、呼び出し側は
+ * 「最大スパンが既存より縮む場合のみ採用」のガードで安全に使う。
+ */
+function medialAxisRails(
+  outer: Point[],
+  spacing: number,
+): { left: Point[]; right: Point[]; maxW: number } | null {
+  const nv = outer.length;
+  if (nv < 4) return null;
+  const theta = principalAngle(outer);
+  const ux = Math.cos(theta);
+  const uy = Math.sin(theta);
+  // 主軸射影の最小・最大頂点 = 列の両端
+  let iMin = 0;
+  let iMax = 0;
+  let pMin = Infinity;
+  let pMax = -Infinity;
+  for (let i = 0; i < nv; i++) {
+    const p = outer[i].x * ux + outer[i].y * uy;
+    if (p < pMin) {
+      pMin = p;
+      iMin = i;
+    }
+    if (p > pMax) {
+      pMax = p;
+      iMax = i;
+    }
+  }
+  if (iMin === iMax) return null;
+  // キャップ間の2つの境界弧 (前進方向 / 後退方向)
+  const chainA: Point[] = [];
+  for (let i = iMin; ; i = (i + 1) % nv) {
+    chainA.push(outer[i]);
+    if (i === iMax) break;
+  }
+  const chainB: Point[] = [];
+  for (let i = iMin; ; i = (i - 1 + nv) % nv) {
+    chainB.push(outer[i]);
+    if (i === iMax) break;
+  }
+  if (chainA.length < 2 || chainB.length < 2) return null;
+  // 長い方の弧で N を決め (密度 ≈ spacing)、両弧を同数点に再サンプルして対応付ける
+  const lenOf = (ch: Point[]): number => {
+    let s = 0;
+    for (let i = 1; i < ch.length; i++) s += Math.hypot(ch[i].x - ch[i - 1].x, ch[i].y - ch[i - 1].y);
+    return s;
+  };
+  const n = Math.max(2, Math.round(Math.max(lenOf(chainA), lenOf(chainB)) / spacing));
+  const ra = resampleToCount(chainA, n);
+  const rb = resampleToCount(chainB, n);
+  const m = Math.min(ra.length, rb.length);
+  if (m < 2) return null;
+  const left: Point[] = [];
+  const right: Point[] = [];
+  let maxW = 0;
+  for (let i = 0; i < m; i++) {
+    left.push(ra[i]);
+    right.push(rb[i]);
+    maxW = Math.max(maxW, Math.hypot(ra[i].x - rb[i].x, ra[i].y - rb[i].y));
+  }
+  return { left, right, maxW };
+}
+
 /**
  * 細長い領域からサテンを生成する。
  * 主軸が垂直になる向きに回転し、水平スライスの左右端をレールにする (基準)。
@@ -292,6 +388,16 @@ export function satinFromRegion(region: Region, params: SatinParams): GeneratorR
       railL = perp.left;
       railR = perp.right;
       maxW = perp.maxW;
+    }
+
+    // メディアル軸追従 (L字・V字などの曲がった列)。単一角度の走査では角で縫い目が
+    // 斜めに伸びるが、骨格に沿うレールなら局所幅で縫える。最大スパンが明確に縮む
+    // 場合のみ採用し、直線・テーパ・弧など既存が良好な形には影響させない (退行防止)。
+    const medial = medialAxisRails(region.outer, params.spacing);
+    if (medial && medial.maxW + 5 < maxW) {
+      railL = medial.left;
+      railR = medial.right;
+      maxW = medial.maxW;
     }
   }
 

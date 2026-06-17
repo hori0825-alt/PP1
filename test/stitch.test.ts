@@ -379,6 +379,49 @@ describe("satin 角度最適化 (中心線追従)", () => {
   });
 });
 
+describe("satin メディアル軸 (曲がった列)", () => {
+  const spacing = mm(0.4);
+  const maxW = SATIN_DEFAULT.maxWidth;
+
+  function maxSpan(runs: { stitches: Point[] }[]): number {
+    let m = 0;
+    for (const run of runs) {
+      for (let i = 0; i + 1 < run.stitches.length; i += 2) {
+        m = Math.max(m, Math.hypot(run.stitches[i + 1].x - run.stitches[i].x, run.stitches[i + 1].y - run.stitches[i].y));
+      }
+    }
+    return m;
+  }
+
+  // 幅 3mm の L 字 (直角の曲がり)。単一角度の走査だと角でステッチが斜めに伸びる
+  const lBand: Point[] = [
+    { x: -mm(15), y: -mm(1.5) },
+    { x: mm(1.5), y: -mm(1.5) },
+    { x: mm(1.5), y: -mm(15) },
+    { x: mm(4.5), y: -mm(15) },
+    { x: mm(4.5), y: mm(1.5) },
+    { x: -mm(15), y: mm(1.5) },
+  ];
+
+  it("L字帯では角の縫い目が短くなる (メディアル軸採用で基準より縮む)", () => {
+    const region: Region = { outer: lBand, holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    // 基準 (単一角度) は帯幅 3mm を大きく超える斜めステッチを出す
+    expect(maxSpan(off.runs)).toBeGreaterThan(mm(5));
+    // メディアル軸追従で角のスパンが明確に縮む
+    expect(maxSpan(on.runs)).toBeLessThan(maxSpan(off.runs) - mm(0.5));
+    assertContinuity(on.runs[0]);
+  });
+
+  it("直線の細帯ではメディアル軸を採用しても結果が変わらない (退行防止)", () => {
+    const region: Region = { outer: rect(0, 0, mm(30), mm(3)), holes: [], color: RED };
+    const off = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: false });
+    const on = satinFromRegion(region, { spacing, maxWidth: maxW, optimizeAngle: true });
+    expect(Math.abs(maxSpan(on.runs) - maxSpan(off.runs))).toBeLessThanOrEqual(2);
+  });
+});
+
 describe("runningStitch", () => {
   it("ステッチ間隔がほぼ指定長になる", () => {
     const path = [
