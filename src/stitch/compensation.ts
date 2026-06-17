@@ -101,6 +101,78 @@ export function compensateRegion(region: Region, params: CompensationParams): Re
   );
 }
 
+/** 外周点列の主軸 (最大分散方向 = 長軸) の角度 (ラジアン)。PCA の固有方向 */
+function principalAngle(pts: Point[]): number {
+  let mx = 0;
+  let my = 0;
+  for (const p of pts) {
+    mx += p.x;
+    my += p.y;
+  }
+  mx /= pts.length;
+  my /= pts.length;
+  let cxx = 0;
+  let cxy = 0;
+  let cyy = 0;
+  for (const p of pts) {
+    const dx = p.x - mx;
+    const dy = p.y - my;
+    cxx += dx * dx;
+    cxy += dx * dy;
+    cyy += dy * dy;
+  }
+  return 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+}
+
+/**
+ * サテン列向けの Pull 補正。
+ *
+ * サテンは糸が列を横断して張るため、張力で列の「幅」が縮む (縫い縮み)。これを
+ * 見越して、主軸 (長軸) に直交する方向 = 列幅を pull ぶん (片側) 予め広げる。
+ *
+ * 汎用の compensateRegion は「ステッチ方向に直交する向き」を広げる規約で、これは
+ * タタミ (行方向に縮む) 向き。サテンの実際の縫い方向 (列を横断) とは軸が合わないため、
+ * サテン列にはこの専用補正を使う。
+ *
+ * 幅を広げるだけ (縮めない) ので列が潰れず、汎用補正が弾いていた細い列
+ * (regionMinExtent < 2mm) にも安全に適用できる。むしろ細い列ほど縫い縮みの比率が
+ * 大きいため、ここを補正できることがサテン品質の要になる。
+ */
+export function compensateSatinColumn(region: Region, pull: number): Region {
+  if (pull <= 0) return region;
+  const theta = principalAngle(region.outer); // 長軸の角度
+  const c = polygonCentroid(region.outer);
+  const cos = Math.cos(-theta);
+  const sin = Math.sin(-theta);
+  const cosB = Math.cos(theta);
+  const sinB = Math.sin(theta);
+  // 長軸を x 軸に回した系で、短軸 (= 列幅) の半幅を測る
+  let hy = 0;
+  for (const p of region.outer) {
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const ry = dx * sin + dy * cos;
+    hy = Math.max(hy, Math.abs(ry));
+  }
+  if (hy < 1e-6) return region;
+  // 片側拡張量は列の半幅を超えない (幅は最大でも2倍まで) ようクランプ (過拡張防止)
+  const eff = Math.min(pull, hy);
+  const scaleY = (hy + eff) / hy;
+  const transform = (p: Point): Point => {
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const rx = dx * cos - dy * sin;
+    let ry = dx * sin + dy * cos;
+    ry *= scaleY; // 列幅だけを広げる (長軸方向 rx は不変)
+    return { x: c.x + rx * cosB - ry * sinB, y: c.y + rx * sinB + ry * cosB };
+  };
+  return {
+    ...region,
+    outer: region.outer.map(transform),
+    holes: region.holes.map((h) => h.map(transform)),
+  };
+}
+
 /**
  * 密度補正 (Auto Density)。小さい面では密度を下げる (行間隔を広げる) ことで
  * 目詰まり・布の硬化を防ぐ。大きい面は基準密度を維持する。

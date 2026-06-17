@@ -10,7 +10,7 @@
 //      (Always/Never/Auto Trim と Trim Distance を指定可能)
 //   6. 同一領域内 (下縫い→本縫い等) は距離に関わらず糸切りしない
 
-import { SATIN_DEFAULT, TATAMI_DEFAULT } from "../core/constants";
+import { SATIN_DEFAULT, TATAMI_DEFAULT, mm } from "../core/constants";
 export type { FillType } from "../core/types";
 import { polygonCentroid, signedArea } from "../core/geometry";
 import type { EmbroideryObject } from "../core/object";
@@ -20,13 +20,13 @@ import { rgbToLab, labDist2 } from "../import/quantize";
 import type { ConnectOptions, TrimMode } from "../plan/connect";
 import { decideConnection } from "../plan/connect";
 import { optimizeOrder } from "../plan/order";
-import { compensateRegion, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
+import { compensateRegion, compensateSatinColumn, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
 import { strokeStitch } from "./stroke";
 import { tatamiFill } from "./tatami";
 import { turningFill } from "./turning";
-import { fillUnderlay } from "./underlay";
+import { fillUnderlay, satinUnderlay } from "./underlay";
 import type { FillType } from "../core/types";
 import type { GeneratorResult, TatamiParams, UnderlayType } from "./types";
 
@@ -95,6 +95,48 @@ function microFill(region: Region, stitchLength: number): Point[] {
     stitches.push({ x: first.x, y: first.y });
   }
   return stitches.length >= 2 ? stitches : [];
+}
+
+/** サテン下縫いを付ける最小幅 (内部単位)。これ未満の極細列は下縫い不要 (糸の盛りすぎ防止) */
+const SATIN_UNDERLAY_MIN_WIDTH = mm(1.2);
+/** サテン下縫いにジグザグを足す最小幅 (内部単位)。細い列はセンターのみで十分 */
+const SATIN_ZIGZAG_MIN_WIDTH = mm(2.5);
+
+/**
+ * サテン本縫い (1本の連続 Run = 左右ペアのジグザグ) から中心線と最大幅を取り出す。
+ * 偶数番=左レール / 奇数番=右レールの中点列が列の中心線になる。
+ * これをサテン下縫い (中心線ランニング / ジグザグ) の経路に使う。
+ */
+function satinSpine(runs: StitchRun[]): { centerline: Point[]; width: number } {
+  let best: StitchRun | null = null;
+  for (const r of runs) if (!best || r.stitches.length > best.stitches.length) best = r;
+  const centerline: Point[] = [];
+  let width = 0;
+  if (best) {
+    for (let i = 0; i + 1 < best.stitches.length; i += 2) {
+      const a = best.stitches[i];
+      const b = best.stitches[i + 1];
+      centerline.push({ x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
+      width = Math.max(width, Math.hypot(b.x - a.x, b.y - a.y));
+    }
+  }
+  return { centerline, width };
+}
+
+/**
+ * ユーザー/レシピの下縫い指定を、サテン列向けの下縫い種別に対応づける。
+ * - edge/center → center (中心線ランニング: 細い列を安定させる土台)
+ * - tatami/zigzag → zigzag (幅のある列の支え。細い列には付けない)
+ * 何も対応しなければ最低限 center を敷く (サテンに edge 下縫いはオフセットが潰れるため)。
+ */
+function satinUnderlayTypesFor(types: UnderlayType[], width: number): UnderlayType[] {
+  const out: UnderlayType[] = [];
+  if (types.includes("center") || types.includes("edge")) out.push("center");
+  if ((types.includes("tatami") || types.includes("zigzag")) && width >= SATIN_ZIGZAG_MIN_WIDTH) {
+    out.push("zigzag");
+  }
+  if (out.length === 0) out.push("center");
+  return out;
 }
 
 /**
@@ -332,8 +374,21 @@ export function digitizeRegions(
             localWarnings.push(...strokeRes.warnings);
           } else {
             const objectSewRad = (objectAngleDeg * Math.PI) / 180;
-            // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する (補正方向もパーツ角度に合わせる)
-            const region = compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
+            // この領域がサテン (細い列) になる見込みか (補正前の素の形状で判定。
+            // generateFill と同じ条件。Pull 補正は幅をわずかに変えるだけで判定は揺らさない)。
+            const willTrySatin =
+              regionFillType === "satin" ||
+              (regionFillType === "auto" &&
+                source.holes.length === 0 &&
+                regionMinExtent(source) <= SATIN_DEFAULT.maxWidth);
+
+            // Pull/Push 補正を適用した領域で下縫い・本縫いを生成する。
+            // サテン列は糸の張力で「列幅」が縮むため、長軸直交方向 (=幅) を広げる専用補正を使う
+            // (汎用の compensateRegion は幅 2mm 未満を弾くうえ、サテンの縫い方向と軸が合わない)。
+            // 面 (タタミ) は従来どおりステッチ直交方向を広げる。
+            const region = willTrySatin
+              ? compensateSatinColumn(source, pull)
+              : compensateRegion(source, { pull, push, sewAngleRad: objectSewRad });
 
             // 密度補正: 小さい面では行間隔を広げる (Auto Density)。角度はパーツ固有を使う
             const regionParams: TatamiParams = {
@@ -343,29 +398,56 @@ export function digitizeRegions(
             };
 
             // 下縫い → 本縫い。各ランに stitchType を付けておく (キャッシュにも残る)。
-            // 選択的下縫い: 短辺が下縫い閾値未満の細い面は edge 下縫いの内側オフセットが
-            // 潰れて無意味なうえ針数増の原因なので、下縫いをスキップする。
+            const underlayTypes = options.underlay ?? [];
+            const hasUnderlay = underlayTypes.length > 0;
             const underlayMinExtent = options.underlayMinExtent ?? 25; // 2.5mm
-            if (
-              options.underlay &&
-              options.underlay.length > 0 &&
-              regionMinExtent(region) >= underlayMinExtent
-            ) {
-              const u = fillUnderlay(region, { types: options.underlay, topAngleDeg: objectAngleDeg });
-              for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
-              localWarnings.push(...u.warnings);
-            }
 
-            const fillStart =
-              regionRuns.length > 0
-                ? regionRuns[regionRuns.length - 1].stitches[
-                    regionRuns[regionRuns.length - 1].stitches.length - 1
-                  ]
-                : currentEnd;
-            const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing, angleLines);
-            const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
-            for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
-            localWarnings.push(...fill.warnings);
+            if (willTrySatin) {
+              // サテン列: 本縫いを先に生成して中心線を確定してから、中心線下縫いを敷く。
+              // (startNear/exitNear はタタミ/ターニングの順序にのみ効き、サテンは無視するため、
+              //  下縫いより先に本縫いを生成しても結果は変わらない)
+              const fill = generateFill(region, regionParams, regionFillType, currentEnd ?? null, exitNear, options.satinSpacing, angleLines);
+              if (hasUnderlay && fill.usedSatin) {
+                // 細い列は edge/tatami 下縫いがオフセット潰れで無意味なため従来はスキップしていた。
+                // 中心線に沿うサテン下縫い (center/zigzag) は細い列でも有効なので、ここで敷く。
+                const spine = satinSpine(fill.runs);
+                if (spine.centerline.length >= 2 && spine.width >= SATIN_UNDERLAY_MIN_WIDTH) {
+                  const u = satinUnderlay({
+                    types: satinUnderlayTypesFor(underlayTypes, spine.width),
+                    centerline: spine.centerline,
+                    width: spine.width,
+                  });
+                  for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
+                  localWarnings.push(...u.warnings);
+                }
+              } else if (hasUnderlay && regionMinExtent(region) >= underlayMinExtent) {
+                // サテンに失敗してタタミへフォールバックした場合は面の下縫い
+                const u = fillUnderlay(region, { types: underlayTypes, topAngleDeg: objectAngleDeg });
+                for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
+                localWarnings.push(...u.warnings);
+              }
+              const fillTag: NonNullable<StitchRun["stitchType"]> = fill.usedSatin ? "satin" : "tatami";
+              for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fillTag });
+              localWarnings.push(...fill.warnings);
+            } else {
+              // 面 (タタミ/ターニング): 従来どおり 下縫い → 本縫い。
+              // 本縫いの開始点を下縫い終端に寄せて渡り (同一面内・糸切りなし) を短くする。
+              // 短辺が閾値未満の細い面は edge 下縫いの内側オフセットが潰れるためスキップ。
+              if (hasUnderlay && regionMinExtent(region) >= underlayMinExtent) {
+                const u = fillUnderlay(region, { types: underlayTypes, topAngleDeg: objectAngleDeg });
+                for (const r of u.runs) regionRuns.push({ ...r, stitchType: "underlay" });
+                localWarnings.push(...u.warnings);
+              }
+              const fillStart =
+                regionRuns.length > 0
+                  ? regionRuns[regionRuns.length - 1].stitches[
+                      regionRuns[regionRuns.length - 1].stitches.length - 1
+                    ]
+                  : currentEnd;
+              const fill = generateFill(region, regionParams, regionFillType, fillStart ?? null, exitNear, options.satinSpacing, angleLines);
+              for (const r of fill.runs) regionRuns.push({ ...r, stitchType: fill.usedSatin ? "satin" : "tatami" });
+              localWarnings.push(...fill.warnings);
+            }
           }
 
           processed = postprocessRuns(regionRuns);

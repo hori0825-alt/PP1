@@ -10,13 +10,46 @@ import type { Point, StitchRun } from "../core/types";
 import { rotatePoint, scanRegion } from "./scanline";
 import type { GeneratorResult, SatinParams } from "./types";
 
-/** 左右レールからジグザグステッチを生成する (1本の連続 Run) */
+/** 曲線内側のショートステッチを発動する外/内レール長比の閾値 */
+const SHORT_STITCH_RATIO = 2.0;
+/** 1区間あたりの最大分割数 (過密防止) */
+const SHORT_STITCH_MAX_SPLITS = 4;
+
+/**
+ * 左右レールからジグザグステッチを生成する (1本の連続 Run)。
+ * 曲線部では外側レールの区間長が内側の SHORT_STITCH_RATIO 倍を超えたとき、
+ * 両レールを均等分割して中間ペアを挿入する (ショートステッチ)。
+ * 内側は密で短い往復になり、外側は均一にカバーされる。
+ */
 export function satinFromRails(left: Point[], right: Point[]): StitchRun {
   const n = Math.min(left.length, right.length);
   const stitches: Point[] = [];
-  for (let i = 0; i < n; i++) {
-    stitches.push({ x: Math.round(left[i].x), y: Math.round(left[i].y) });
-    stitches.push({ x: Math.round(right[i].x), y: Math.round(right[i].y) });
+  if (n === 0) return { stitches, connection: "trim" };
+
+  stitches.push({ x: Math.round(left[0].x), y: Math.round(left[0].y) });
+  stitches.push({ x: Math.round(right[0].x), y: Math.round(right[0].y) });
+
+  for (let i = 1; i < n; i++) {
+    const ld = Math.hypot(left[i].x - left[i - 1].x, left[i].y - left[i - 1].y);
+    const rd = Math.hypot(right[i].x - right[i - 1].x, right[i].y - right[i - 1].y);
+    const maxD = Math.max(ld, rd);
+    const minD = Math.min(ld, rd);
+    const splits =
+      minD > 1 && maxD / minD >= SHORT_STITCH_RATIO
+        ? Math.min(Math.round(maxD / minD), SHORT_STITCH_MAX_SPLITS)
+        : 1;
+
+    for (let s = 1; s <= splits; s++) {
+      const t = s / splits;
+      stitches.push({
+        x: Math.round(left[i - 1].x + (left[i].x - left[i - 1].x) * t),
+        y: Math.round(left[i - 1].y + (left[i].y - left[i - 1].y) * t),
+      });
+      stitches.push({
+        x: Math.round(right[i - 1].x + (right[i].x - right[i - 1].x) * t),
+        y: Math.round(right[i - 1].y + (right[i].y - right[i - 1].y) * t),
+      });
+    }
   }
   return { stitches, connection: "trim" };
 }

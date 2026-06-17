@@ -71,6 +71,30 @@ header .version {
   color: #a02828;
 }
 
+.history {
+  display: flex;
+  gap: 4px;
+}
+
+.hist {
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px solid #d7dde3;
+  background: #ffffff;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hist:hover:not(:disabled) {
+  background: #f1f4f8;
+}
+
+.hist:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .modes {
   display: flex;
   gap: 4px;

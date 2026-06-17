@@ -10,7 +10,7 @@ import { digitizeRegions } from "../src/stitch/digitize";
 import { postprocessRun } from "../src/stitch/postprocess";
 import { getGenerator, listGenerators } from "../src/stitch/registry";
 import { runningStitch } from "../src/stitch/running";
-import { satinAlongPath, satinFromRegion } from "../src/stitch/satin";
+import { satinAlongPath, satinFromRails, satinFromRegion } from "../src/stitch/satin";
 import { tatamiFill } from "../src/stitch/tatami";
 import { insetPath } from "../src/stitch/underlay";
 import { writeDst } from "../src/export/dst";
@@ -195,6 +195,58 @@ describe("satin (領域から)", () => {
     const region: Region = { outer: rect(0, 0, mm(30), mm(10)), holes: [], color: RED };
     const { warnings } = gen(region, { maxWidth: SATIN_DEFAULT.maxWidth });
     expect(warnings.some((w) => w.includes("タタミ"))).toBe(true);
+  });
+});
+
+describe("satinFromRails: ショートステッチ (曲線内側)", () => {
+  function tightCornerRails(): { left: Point[]; right: Point[] } {
+    const left: Point[] = [];
+    const right: Point[] = [];
+    const rInner = mm(1);
+    const rOuter = mm(4);
+    const n = 8;
+    for (let i = 0; i <= n; i++) {
+      const t = ((Math.PI / 2) * i) / n;
+      left.push({ x: rInner * Math.cos(t), y: rInner * Math.sin(t) });
+      right.push({ x: rOuter * Math.cos(t), y: rOuter * Math.sin(t) });
+    }
+    return { left, right };
+  }
+
+  it("タイトなコーナーではショートステッチで針数が増える", () => {
+    const { left, right } = tightCornerRails();
+    const run = satinFromRails(left, right);
+    // 9 pairs × 2 = 18 without short stitches; ratio ≈ 4 → splits inserted
+    expect(run.stitches.length).toBeGreaterThan(18);
+    assertContinuity(run);
+  });
+
+  it("直線レールではショートステッチが入らない (針数不変)", () => {
+    const left: Point[] = [];
+    const right: Point[] = [];
+    for (let i = 0; i <= 10; i++) {
+      left.push({ x: 0, y: i * mm(1) });
+      right.push({ x: mm(3), y: i * mm(1) });
+    }
+    const run = satinFromRails(left, right);
+    expect(run.stitches.length).toBe(22); // 11 pairs × 2
+  });
+
+  it("外側レールの被覆間隔が均一化される", () => {
+    const { left, right } = tightCornerRails();
+    const run = satinFromRails(left, right);
+    // outer rail (right) stitches are at odd indices; measure max gap between consecutive
+    const outerPts: Point[] = [];
+    for (let i = 1; i < run.stitches.length; i += 2) {
+      outerPts.push(run.stitches[i]);
+    }
+    let maxGap = 0;
+    for (let i = 1; i < outerPts.length; i++) {
+      maxGap = Math.max(maxGap, Math.hypot(outerPts[i].x - outerPts[i - 1].x, outerPts[i].y - outerPts[i - 1].y));
+    }
+    // Without short stitches, outer gap ≈ π/2 * 40 / 8 ≈ 7.9 units per segment
+    // With splits=4, gap ≈ 7.9/4 ≈ 2.0 units
+    expect(maxGap).toBeLessThan(mm(0.5)); // < 5 units
   });
 });
 
