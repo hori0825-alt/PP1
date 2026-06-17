@@ -68,6 +68,21 @@ describe("quantize", () => {
     expect(map.palette.some((c) => close(c, GREEN))).toBe(true);
   });
 
+  it("指定色数より多くの色がある画像でも、パレットは指定色数を超えない", () => {
+    // 6 色のベタ帯。指定 4 色なら 4 色以下に厳守される (promoteFeatures で増えない)
+    const cols: [number, number, number, number][] = [
+      [200, 30, 30, 255], [30, 160, 60, 255], [40, 70, 200, 255],
+      [220, 200, 40, 255], [150, 40, 160, 255], [60, 60, 60, 255],
+    ];
+    const img = makeImage(120, 80, WHITE);
+    const bandW = 120 / cols.length;
+    cols.forEach((c, i) => paintRect(img, Math.round(i * bandW), 0, Math.round((i + 1) * bandW), 80, c));
+    expect(quantize(img, { colorCount: 4, removeWhiteBackground: false }).palette.length).toBeLessThanOrEqual(4);
+    expect(quantize(img, { colorCount: 6, removeWhiteBackground: false }).palette.length).toBeLessThanOrEqual(6);
+    // 自然色数より多く指定しても増えない (6 色しかないので 10 指定でも 6 以下)
+    expect(quantize(img, { colorCount: 10, removeWhiteBackground: false }).palette.length).toBeLessThanOrEqual(6);
+  });
+
   it("アンチエイリアス由来の中間色が統合される", () => {
     const img = makeImage(100, 100, WHITE);
     paintRect(img, 20, 20, 80, 80, RED);
