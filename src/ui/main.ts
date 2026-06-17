@@ -581,6 +581,26 @@ function simulatorBar(): string {
     </div>`;
 }
 
+/** plan に下縫い (stitchType="underlay") の Run が1つでもあるか */
+function planHasUnderlay(): boolean {
+  if (!state.plan) return false;
+  for (const b of state.plan.blocks) {
+    for (const r of b.runs) if (r.stitchType === "underlay" && r.stitches.length > 0) return true;
+  }
+  return false;
+}
+
+// --- ステッチビューの表示コントロール (下縫い強調) ---
+function stitchViewBar(): string {
+  // ステッチビューで、下縫いを含むデザインのときだけ表示する
+  if (state.view !== "stitch" || !planHasUnderlay()) return "";
+  return `
+    <div class="stitchview-bar">
+      <label class="ul-toggle"><input type="checkbox" id="hl-underlay" ${state.highlightUnderlay ? "checked" : ""}> 下縫いを強調表示</label>
+      ${state.highlightUnderlay ? `<span class="ul-legend"><span class="ul-dot"></span>下縫い<span class="ul-dot top"></span>本縫い (淡色)</span>` : ""}
+    </div>`;
+}
+
 // --- 全体描画 ---
 function render(): void {
   const app = document.getElementById("app");
@@ -621,6 +641,7 @@ function render(): void {
     <div class="workspace">
       <main class="canvas-area">
         <canvas id="preview" width="620" height="620"></canvas>
+        ${stitchViewBar()}
         ${simulatorBar()}
       </main>
       <aside class="props">
@@ -663,6 +684,12 @@ function bindEvents(): void {
   });
   document.getElementById("redo")?.addEventListener("click", () => {
     if (redo(state)) render();
+  });
+
+  // 下縫いの強調表示トグル (ステッチビュー)
+  document.getElementById("hl-underlay")?.addEventListener("change", (e) => {
+    state.highlightUnderlay = (e.target as HTMLInputElement).checked;
+    render();
   });
 
   // モード・タブ

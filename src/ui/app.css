@@ -140,6 +140,49 @@ canvas#preview {
   max-height: calc(100% - 60px);
 }
 
+/* --- ステッチビューの表示コントロール (下縫い強調) --- */
+.stitchview-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #e3e7ec;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 620px;
+  font-size: 13px;
+}
+
+.ul-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.ul-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6a727b;
+  font-size: 12px;
+}
+
+.ul-dot {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: #0bb3b3;
+  margin-left: 6px;
+}
+
+.ul-dot.top {
+  background: #c3c9d0;
+}
+
 /* --- シミュレーターバー --- */
 .sim-bar {
   display: flex;

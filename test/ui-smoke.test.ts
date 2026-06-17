@@ -72,6 +72,18 @@ describe("UI state ロジック", () => {
     recomputeStitches(state);
     expect(state.reduceApplied.length).toBe(0);
   });
+
+  it("下縫い強調表示は既定オフで、下縫いを含むデザインには underlay ランがある", () => {
+    const state = createState();
+    expect(state.highlightUnderlay).toBe(false); // 既定オフ (表示のみのフラグ)
+    state.regions = [{ outer: rect(0, 0, mm(20), mm(20)), holes: [], color: RED }];
+    recomputeStitches(state);
+    // 既定の下縫い (edge) が広い面に付き、可視化対象の underlay ランが存在する
+    const hasUnderlay = state.plan!.blocks.some((b) =>
+      b.runs.some((r) => r.stitchType === "underlay" && r.stitches.length > 0),
+    );
+    expect(hasUnderlay).toBe(true);
+  });
 });
 
 describe("シーケンスビュー描画 (jsdom)", () => {

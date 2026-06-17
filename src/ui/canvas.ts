@@ -289,11 +289,16 @@ function drawStitchView(
   // シミュレーション中は simFrame までだけ描く
   const sim = state.simulation;
   const limit = sim ? state.simFrame : Infinity;
+  const highlight = state.highlightUnderlay;
   let frameCount = 0;
   let prevEnd: { x: number; y: number } | null = null;
 
   for (const block of state.plan.blocks) {
     const color = `rgb(${block.thread.r},${block.thread.g},${block.thread.b})`;
+    // 下縫い強調時は本縫いを淡く描いて下縫い (テール色) を目立たせる
+    const topColor = highlight
+      ? `rgba(${block.thread.r},${block.thread.g},${block.thread.b},0.22)`
+      : color;
     for (const run of block.runs) {
       if (run.stitches.length === 0) continue;
       const hidden = run.objectId !== undefined && state.hiddenObjectIds.has(run.objectId);
@@ -301,6 +306,7 @@ function drawStitchView(
         prevEnd = run.stitches[run.stitches.length - 1];
         continue;
       }
+      const isUnderlay = run.stitchType === "underlay";
       // 渡り糸 (前 Run 終点 → この Run 始点)
       if (prevEnd) {
         ctx.strokeStyle = run.connection === "trim" ? "#d04545aa" : "#9aa4adaa";
@@ -315,8 +321,13 @@ function drawStitchView(
       }
       // 本体
       const selected = run.objectId !== undefined && run.objectId === state.selectedObjectId;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = selected ? 1.6 : 0.7;
+      if (highlight && isUnderlay) {
+        ctx.strokeStyle = "#0bb3b3"; // 下縫い: テール色で強調
+        ctx.lineWidth = 1.0;
+      } else {
+        ctx.strokeStyle = highlight ? topColor : color;
+        ctx.lineWidth = selected ? 1.6 : 0.7;
+      }
       ctx.beginPath();
       let started = false;
       for (const p of run.stitches) {
