@@ -236,6 +236,38 @@ function promoteFeatures(
 }
 
 /**
+ * 中心数を指定色数 k 以下に抑える (色数の厳守)。
+ * 最も近い中心ペアを中点へ統合することを繰り返す。高コントラストの小特徴 (白目等) は
+ * 互いに遠いため最後まで残り、近接した冗長な主要色から先に統合される。これにより
+ * promoteFeatures が特徴色を足しても総数が k を超えず、かつ特徴は保たれる。
+ */
+function capCenters(centers: Lab[], k: number): Lab[] {
+  const out = centers.slice();
+  while (out.length > k) {
+    let bi = 0;
+    let bj = 1;
+    let bd = Infinity;
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const d = labDist2(out[i], out[j]);
+        if (d < bd) {
+          bd = d;
+          bi = i;
+          bj = j;
+        }
+      }
+    }
+    out[bi] = {
+      l: (out[bi].l + out[bj].l) / 2,
+      a: (out[bi].a + out[bj].a) / 2,
+      b: (out[bi].b + out[bj].b) / 2,
+    };
+    out.splice(bj, 1);
+  }
+  return out;
+}
+
+/**
  * 近傍多数決によるラベル平滑化 (3×3)。AA 由来の孤立画素・ギザギザを統合する。
  * エッジ保存: 元の色と多数決色が高コントラスト (contrast2 超) なら変えない。
  * AA 画素は隣接色と中間=低コントラストなので平滑化され、白目のような高コントラスト
@@ -392,9 +424,11 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
   // 小特徴保護のコントラスト閾値 (Lab ΔE → 二乗距離)
   const contrast2 = (options.featureContrast ?? MIN_FEATURE_CONTRAST) ** 2;
 
-  // k-means で中心を学習 → 取りこぼした高コントラスト小特徴を専用色として復活
+  // k-means で中心を学習 → 取りこぼした高コントラスト小特徴を専用色として復活 →
+  // 指定色数 k を超えた分は近接ペアを統合して k 以下に厳守 (特徴は遠いので残る)
   const trained = kmeans(fgLab, k);
-  const centers = promoteFeatures(fgIndex, fgLab, w, h, trained, contrast2);
+  const promoted = promoteFeatures(fgIndex, fgLab, w, h, trained, contrast2);
+  const centers = capCenters(promoted, k);
   const assign = makeNearest(centers);
 
   const sumR = new Float64Array(centers.length);
