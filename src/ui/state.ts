@@ -780,6 +780,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
         angleDeg: s.angleDeg,
         trimMode: s.trimMode,
         underlay: s.underlay as UnderlayType[],
+        satinUnderlay: s.satinUnderlay,
         fillType: state.puffy ? "satin" : state.fillType,
         minObjectExtent: scaledMinExtent,
         // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)。それ以外は密度倍率を適用

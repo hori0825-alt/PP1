@@ -5,6 +5,7 @@
 
 import type { Region } from "./region";
 import type { StitchPlan, StitchRun } from "./types";
+import type { SatinUnderlayMode } from "./types";
 
 export const PROJECT_VERSION = 3;
 
@@ -17,6 +18,11 @@ export interface ProjectSettings {
   angleDeg: number;
   trimMode: "auto" | "never" | "always";
   underlay: string[];
+  /**
+   * サテン列の下縫い種別 (UI 選択)。未指定は "auto" (一般下縫い設定から導出)。
+   * 面 (タタミ) の下縫いは underlay 配列が制御し、本設定はサテン列にのみ効く。
+   */
+  satinUnderlay?: SatinUnderlayMode;
   /** 布地レシピ ID (src/fabric/recipes.ts) */
   fabricId: string;
   /**
