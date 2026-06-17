@@ -142,6 +142,58 @@ describe("tatamiFill", () => {
   });
 });
 
+describe("タタミ ランダム化 (モアレ低減)", () => {
+  const region: Region = { outer: rect(0, 0, mm(20), mm(20)), holes: [], color: RED };
+
+  // 同一行内 (y がほぼ一定) の隣接ステッチの x 間隔
+  function rowGaps(run: StitchRun): number[] {
+    const g: number[] = [];
+    for (let i = 1; i < run.stitches.length; i++) {
+      if (Math.abs(run.stitches[i].y - run.stitches[i - 1].y) < 2) {
+        g.push(Math.abs(run.stitches[i].x - run.stitches[i - 1].x));
+      }
+    }
+    return g;
+  }
+  function variance(arr: number[]): number {
+    const m = arr.reduce((s, v) => s + v, 0) / arr.length;
+    return arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length;
+  }
+
+  it("ランダム化の有無で針数は変わらず、針位置だけが変わる", () => {
+    const off = tatamiFill(region, { ...defaultParams, randomFactor: 0 });
+    const on = tatamiFill(region, { ...defaultParams, randomFactor: 0.3 });
+    expect(on.runs[0].stitches.length).toBe(off.runs[0].stitches.length);
+    const identical = on.runs[0].stitches.every(
+      (p, i) => p.x === off.runs[0].stitches[i].x && p.y === off.runs[0].stitches[i].y,
+    );
+    expect(identical).toBe(false);
+  });
+
+  it("決定的: 同じパラメータなら毎回同一の針列 (再生成が安定)", () => {
+    const a = tatamiFill(region, { ...defaultParams, randomFactor: 0.3 });
+    const b = tatamiFill(region, { ...defaultParams, randomFactor: 0.3 });
+    expect(a.runs[0].stitches).toEqual(b.runs[0].stitches);
+  });
+
+  it("ランダム化で行内の針間隔にばらつきが出る (格子崩し)", () => {
+    const off = rowGaps(tatamiFill(region, { ...defaultParams, randomFactor: 0 }).runs[0]);
+    const on = rowGaps(tatamiFill(region, { ...defaultParams, randomFactor: 0.3 }).runs[0]);
+    expect(variance(on)).toBeGreaterThan(variance(off));
+  });
+
+  it("ランダム化しても全針が領域内に収まり連続性を保つ (端点は境界に固定)", () => {
+    const on = tatamiFill(region, { ...defaultParams, randomFactor: 0.4 });
+    for (const p of on.runs[0].stitches) {
+      expect(p.x).toBeGreaterThanOrEqual(-mm(10) - 2);
+      expect(p.x).toBeLessThanOrEqual(mm(10) + 2);
+      expect(p.y).toBeGreaterThanOrEqual(-mm(10) - 2);
+      expect(p.y).toBeLessThanOrEqual(mm(10) + 2);
+    }
+    assertContinuity(on.runs[0]);
+  });
+});
+
 describe("satinAlongPath", () => {
   it("連続したジグザグで幅が保たれる", () => {
     const path = [
