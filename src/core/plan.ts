@@ -39,6 +39,28 @@ export function countColorChanges(plan: StitchPlan): number {
   return Math.max(0, plan.blocks.length - 1);
 }
 
+/**
+ * ブロック (糸色) ごとの「縫われた糸長」(内部単位)。
+ * 各 Run 内の連続ステッチ間距離の総和。Run 間の渡り (ジャンプ/糸切り) は含めず、
+ * 実際に布へ縫い込まれる糸の長さの近似とする (糸量・コストの見積り用)。
+ */
+export function stitchedLengthByBlock(plan: StitchPlan): number[] {
+  return plan.blocks.map((block) => {
+    let len = 0;
+    for (const run of block.runs) {
+      for (let i = 1; i < run.stitches.length; i++) {
+        len += distance(run.stitches[i - 1], run.stitches[i]);
+      }
+    }
+    return len;
+  });
+}
+
+/** 総縫い糸長 (内部単位)。全色の縫い糸長の合計 */
+export function totalStitchedLength(plan: StitchPlan): number {
+  return stitchedLengthByBlock(plan).reduce((s, v) => s + v, 0);
+}
+
 /** 全ステッチのバウンディングボックス。ステッチが無い場合は null */
 export function planBounds(plan: StitchPlan): Bounds | null {
   let b: Bounds | null = null;

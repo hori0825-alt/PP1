@@ -4,7 +4,7 @@
 
 import { UNIT_MM, mm } from "../core/constants";
 import { angleDegFromVector, pointInPolygon, pointSegmentDistance, polygonCentroid } from "../core/geometry";
-import { countStitches, countTrims } from "../core/plan";
+import { countStitches, countTrims, stitchedLengthByBlock } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
 import { writeDst } from "../export/dst";
 import { writePes } from "../export/pes";
@@ -224,14 +224,18 @@ function colorTab(): string {
   const isImage = state.project.source.kind === "image";
   let table = "";
   if (state.plan) {
+    const lengths = stitchedLengthByBlock(state.plan);
     const rows = state.plan.blocks
-      .map((b) => {
+      .map((b, i) => {
         const stitches = b.runs.reduce((n, r) => n + r.stitches.length, 0);
+        const meters = (lengths[i] * UNIT_MM) / 1000;
         return `<tr><td><span class="swatch" style="background:rgb(${b.thread.r},${b.thread.g},${b.thread.b})"></span></td>
-          <td>${b.thread.name ?? `${b.thread.r},${b.thread.g},${b.thread.b}`}</td><td>${stitches}針</td></tr>`;
+          <td>${b.thread.name ?? `${b.thread.r},${b.thread.g},${b.thread.b}`}</td><td>${stitches}針</td><td>${meters.toFixed(2)}m</td></tr>`;
       })
       .join("");
-    table = `<table class="colors"><thead><tr><th>色</th><th>名称</th><th>針数</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const totalM = (lengths.reduce((s2, v) => s2 + v, 0) * UNIT_MM) / 1000;
+    table = `<table class="colors"><thead><tr><th>色</th><th>名称</th><th>針数</th><th>糸長</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="note">推定糸長 合計 約 ${totalM.toFixed(2)} m (縫い込み分の概算)</p>`;
   }
   return `
     <h2>色数削減</h2>
