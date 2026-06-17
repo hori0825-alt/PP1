@@ -38,6 +38,12 @@ export const TATAMI_DEFAULT = {
   stitchLength: mm(3.0),
 } as const;
 
+/**
+ * タタミの針落ちランダム化の既定係数 (ステッチ長に対する片振り比)。
+ * 0.2 = ±20%。針が縦に整列して生じる格子状のモアレを崩す控えめな値。
+ */
+export const TATAMI_RANDOM_FACTOR = 0.2;
+
 /** サテンのデフォルト: 密度 0.4mm 間隔 / 最大幅 7mm */
 export const SATIN_DEFAULT = {
   spacing: mm(0.4),

@@ -15,7 +15,7 @@
 
 import type { Region } from "../core/region";
 import type { Point, StitchRun } from "../core/types";
-import { mm } from "../core/constants";
+import { TATAMI_RANDOM_FACTOR, mm } from "../core/constants";
 import type { CrossRef, Seg } from "./scanline";
 import { nearestOnRing, rotatePoint, scanRegion, travelAlongRing } from "./scanline";
 import type { GeneratorResult, TatamiParams } from "./types";
@@ -45,14 +45,41 @@ function resample(path: Point[], step: number): Point[] {
   return out;
 }
 
-/** 1行分のステッチ点 (端点を含み、内部はレンガ状オフセット) */
-function rowPoints(seg: Seg, leftToRight: boolean, parity: number, stitchLength: number): Point[] {
+/** 整数/実数シードから 0..1 の決定的擬似乱数 (sin ハッシュ)。再生成で同一結果になる */
+function hashUnit(seed: number): number {
+  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/**
+ * 1行分のステッチ点 (端点を含み、内部はレンガ状オフセット)。
+ * randomFactor > 0 のとき、中間針を ±(stitchLength×randomFactor) だけ決定的に揺らして
+ * 針の縦整列 (モアレ) を崩す。端点 (x1/x2) は境界上に固定し、はみ出し・隙間を防ぐ。
+ */
+function rowPoints(
+  seg: Seg,
+  leftToRight: boolean,
+  parity: number,
+  stitchLength: number,
+  randomFactor: number,
+): Point[] {
   const pts: Point[] = [];
-  const len = seg.x2 - seg.x1;
   const offset = parity % 2 === 0 ? 0 : stitchLength / 2;
+  const amp = stitchLength * randomFactor;
+  // 揺らしても端から離れすぎず・隣と交差しないよう、中間針はこの範囲に収める
+  const lo = seg.x1 + stitchLength * 0.25;
+  const hi = seg.x2 - stitchLength * 0.25;
   const xs: number[] = [seg.x1];
+  let k = 0;
   for (let x = seg.x1 + (offset > 1e-9 ? offset : stitchLength); x < seg.x2 - stitchLength * 0.25; x += stitchLength) {
-    xs.push(x);
+    let xj = x;
+    if (amp > 0) {
+      // 行 (seg.y) と行内位置 (k)・パリティを混ぜて、行ごと・点ごとに別の揺らぎにする
+      const j = (hashUnit(Math.round(seg.y) * 0.137 + k + parity * 7) - 0.5) * 2 * amp;
+      xj = Math.min(hi, Math.max(lo, x + j));
+    }
+    xs.push(xj);
+    k++;
   }
   xs.push(seg.x2);
   if (!leftToRight) xs.reverse();
@@ -77,6 +104,7 @@ export function tatamiFill(
 ): GeneratorResult {
   const warnings: string[] = [];
   const angleRad = (params.angleDeg * Math.PI) / 180;
+  const randomFactor = params.randomFactor ?? TATAMI_RANDOM_FACTOR;
   const { rows, rings } = scanRegion(region, angleRad, params.rowSpacing);
   // startNear / exitNear を走査空間 (回転済み座標) へ変換
   const cosNeg = Math.cos(-angleRad);
@@ -266,7 +294,7 @@ export function tatamiFill(
       const segsInOrder = entry.fromTop ? sec.segs : [...sec.segs].reverse();
       let leftToRight = entry.left;
       for (const seg of segsInOrder) {
-        const pts = rowPoints(seg, leftToRight, seg.row, params.stitchLength);
+        const pts = rowPoints(seg, leftToRight, seg.row, params.stitchLength, randomFactor);
         // 直前の行末と同じ点が続く場合はスキップ
         for (const p of pts) {
           const lastP = stitches[stitches.length - 1];

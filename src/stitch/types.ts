@@ -19,6 +19,12 @@ export interface TatamiParams {
   rowSpacing: number;
   /** ステッチ長 (内部単位) */
   stitchLength: number;
+  /**
+   * 針落ち位置のランダム化係数 (0〜0.5)。各行内の中間針を ±(stitchLength×係数)
+   * だけ決定的に揺らし、針が縦に揃って出る格子模様 (モアレ) を崩す。
+   * 0 で無効。未指定は既定値 (TATAMI_RANDOM_FACTOR)。端点は境界上に固定。
+   */
+  randomFactor?: number;
 }
 
 /** サテンのパラメータ */
