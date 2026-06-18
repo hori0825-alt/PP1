@@ -247,6 +247,34 @@ describe("planStats", () => {
     expect(stats.estMinutes).toBeGreaterThan(0);
     expect(stats.perColor.length).toBe(2);
   });
+
+  it("拡張統計: サイズ・糸長・ステッチ長・密度・色別糸長が集計される", () => {
+    const regions = [
+      square(0, 0, mm(30)),
+      square(mm(40), 0, mm(10), BLUE),
+    ];
+    const { plan } = digitizeRegions(regions, "EXTSTATS");
+    const stats = planStats(plan);
+    // デザインサイズ (mm)
+    expect(stats.widthMm).toBeGreaterThan(0);
+    expect(stats.heightMm).toBeGreaterThan(0);
+    // 総糸長 (mm)
+    expect(stats.totalLengthMm).toBeGreaterThan(0);
+    // ステッチ長統計
+    expect(stats.stitchLen.min).toBeGreaterThan(0);
+    expect(stats.stitchLen.max).toBeGreaterThanOrEqual(stats.stitchLen.min);
+    expect(stats.stitchLen.avg).toBeGreaterThan(0);
+    expect(stats.stitchLen.avg).toBeLessThanOrEqual(stats.stitchLen.max);
+    expect(stats.stitchLen.avg).toBeGreaterThanOrEqual(stats.stitchLen.min);
+    // 密度
+    expect(stats.densityPerCm2).toBeGreaterThan(0);
+    // 色別糸長
+    for (const c of stats.perColor) {
+      expect(c.lengthMm).toBeGreaterThan(0);
+    }
+    const sumColorLen = stats.perColor.reduce((s, c) => s + c.lengthMm, 0);
+    expect(sumColorLen).toBeCloseTo(stats.totalLengthMm, 0);
+  });
 });
 
 describe("autoReduce (自動針数削減)", () => {
