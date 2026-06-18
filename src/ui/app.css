@@ -484,6 +484,56 @@ table.colors td {
   margin: 2px 0;
 }
 
+/* --- 統計セクション --- */
+.stats-section {
+  margin-top: 12px;
+}
+.stats-section h2 {
+  font-size: 13px;
+  margin: 14px 0 6px;
+}
+.stats-tbl {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.stats-tbl td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #eaedf0;
+}
+.stats-tbl td:first-child {
+  color: #6b7380;
+  white-space: nowrap;
+  width: 35%;
+}
+.stats-color-tbl {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.stats-color-tbl th {
+  text-align: left;
+  padding: 3px 4px;
+  border-bottom: 2px solid #dde0e4;
+  color: #6b7380;
+  font-weight: 500;
+  font-size: 11px;
+}
+.stats-color-tbl td {
+  padding: 3px 4px;
+  border-bottom: 1px solid #eaedf0;
+}
+.stats-color-tbl td:nth-child(4),
+.stats-color-tbl td:nth-child(5),
+.stats-color-tbl td:nth-child(6),
+.stats-color-tbl td:nth-child(7),
+.stats-color-tbl th:nth-child(4),
+.stats-color-tbl th:nth-child(5),
+.stats-color-tbl th:nth-child(6),
+.stats-color-tbl th:nth-child(7) {
+  text-align: right;
+}
+
 .error {
   color: #a02828;
   font-size: 12px;

@@ -2,7 +2,7 @@
 // 左ツール / 中央キャンバス / 右プロパティ / 下シミュレーター・シーケンス。
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
-import { HOOP_SIZE, UNIT_MM, mm } from "../core/constants";
+import { HOOP_SIZE, STITCHES_PER_MINUTE, UNIT_MM, mm } from "../core/constants";
 import { angleDegFromVector, pointInPolygon, pointSegmentDistance, polygonCentroid } from "../core/geometry";
 import { countStitches, countTrims, stitchedLengthByBlock } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
@@ -508,7 +508,48 @@ function diagnosticsTab(): string {
     state.reduceApplied.length > 0
       ? `<div class="reduced">${state.reduceApplied.map((s) => `<p>✓ ${s}</p>`).join("")}</div>`
       : "";
-  return `<div class="diag-list">${items}</div>${reduced}`;
+  const st = d.stats;
+  const fmtTime = (m: number): string => m >= 1 ? `${Math.floor(m)}分${Math.round((m % 1) * 60)}秒` : `${Math.round(m * 60)}秒`;
+  const colorRows = st.perColor.map((c, i) => {
+    const pct = st.stitchCount > 0 ? ((c.stitches / st.stitchCount) * 100).toFixed(1) : "0";
+    const lenM = (c.lengthMm / 1000).toFixed(2);
+    const time = fmtTime(c.stitches / STITCHES_PER_MINUTE);
+    return `<tr>
+      <td>${i + 1}</td>
+      <td><span class="swatch" style="background:rgb(${c.thread.r},${c.thread.g},${c.thread.b})"></span></td>
+      <td>${c.thread.name ?? ""}</td>
+      <td>${c.stitches}</td>
+      <td>${pct}%</td>
+      <td>${lenM}m</td>
+      <td>${time}</td>
+    </tr>`;
+  }).join("");
+  const totalM = (st.totalLengthMm / 1000).toFixed(2);
+  const travelMaxMm = (st.travel.max * UNIT_MM).toFixed(1);
+  const travelAvgMm = (st.travel.avg * UNIT_MM).toFixed(1);
+  const stats = `
+    <div class="stats-section">
+      <h2>ステッチ統計</h2>
+      <table class="stats-tbl">
+        <tbody>
+          <tr><td>サイズ</td><td>${st.widthMm.toFixed(1)} x ${st.heightMm.toFixed(1)} mm</td></tr>
+          <tr><td>総針数</td><td>${st.stitchCount.toLocaleString()}</td></tr>
+          <tr><td>色数 / 色替え</td><td>${st.colorCount} 色 / ${st.colorChanges} 回</td></tr>
+          <tr><td>糸切り / ジャンプ</td><td>${st.trims} / ${st.jumps}</td></tr>
+          <tr><td>総糸長</td><td>${totalM} m</td></tr>
+          <tr><td>推定時間</td><td>${fmtTime(st.estMinutes)}</td></tr>
+          <tr><td>密度</td><td>${st.densityPerCm2.toFixed(0)} 針/cm²</td></tr>
+          <tr><td>ステッチ長</td><td>${st.stitchLen.min.toFixed(1)} ~ ${st.stitchLen.max.toFixed(1)} mm (平均 ${st.stitchLen.avg.toFixed(1)})</td></tr>
+          <tr><td>渡り距離</td><td>最大 ${travelMaxMm}mm / 平均 ${travelAvgMm}mm (${st.travel.count} 回)</td></tr>
+        </tbody>
+      </table>
+      <h2>色別内訳</h2>
+      <table class="stats-color-tbl">
+        <thead><tr><th>#</th><th>色</th><th>名称</th><th>針数</th><th>割合</th><th>糸長</th><th>時間</th></tr></thead>
+        <tbody>${colorRows}</tbody>
+      </table>
+    </div>`;
+  return `<div class="diag-list">${items}</div>${reduced}${stats}`;
 }
 
 function outputTab(): string {
