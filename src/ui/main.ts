@@ -587,19 +587,37 @@ function specialTab(): string {
 }
 
 // --- 下部: シミュレーター ---
+/** 現在フレームの読み取り表示 (色スウォッチ + 針数 + 色番号) の HTML */
+function simInfoHtml(): string {
+  const sim = state.simulation;
+  if (!sim) return "";
+  const f = sim.frames[Math.min(state.simFrame, sim.frames.length) - 1];
+  const ci = f?.colorIndex ?? 0;
+  const th = sim.threads[ci];
+  const sw = th ? `<span class="sim-sw" style="background:rgb(${th.r},${th.g},${th.b})"></span>` : "";
+  return `${sw}${f ? f.stitchNumber : 0} / ${sim.totalStitches} 針 · 色 ${ci + 1}/${sim.threads.length}`;
+}
+
 function simulatorBar(): string {
   if (!state.simulation) return "";
   const sim = state.simulation;
   const cur = state.simFrame;
-  const frame = sim.frames[Math.min(cur, sim.frames.length) - 1];
+  const speeds: number[] = [0.5, 1, 2, 4];
   return `
     <div class="sim-bar">
-      <button id="sim-play">${state.simPlaying ? "⏸" : "▶"}</button>
-      <button id="sim-reset">⏮</button>
+      <button id="sim-play" title="${state.simPlaying ? "一時停止" : "再生"}">${state.simPlaying ? "⏸" : "▶"}</button>
+      <button id="sim-reset" title="先頭へ">⏮</button>
+      <button id="sim-stepback" title="1針戻る">◁</button>
+      <button id="sim-stepfwd" title="1針進む">▷</button>
+      <button id="sim-prevcolor" title="前の色へ">⏪</button>
+      <button id="sim-nextcolor" title="次の色へ">⏩</button>
       <button id="sim-prevtrim" title="前の糸切りへ">✂◀</button>
       <button id="sim-nexttrim" title="次の糸切りへ">▶✂</button>
       <input type="range" id="sim-slider" min="0" max="${sim.frames.length}" value="${cur}" />
-      <span class="sim-info">${frame ? frame.stitchNumber : 0} / ${sim.totalStitches} 針 · 色 ${(frame?.colorIndex ?? 0) + 1}/${sim.threads.length}</span>
+      <select id="sim-speed" title="再生速度">
+        ${speeds.map((s) => `<option value="${s}" ${state.simSpeed === s ? "selected" : ""}>${s}×</option>`).join("")}
+      </select>
+      <span class="sim-info">${simInfoHtml()}</span>
     </div>`;
 }
 
@@ -1648,6 +1666,16 @@ function pickObject(p: { x: number; y: number }): number | null {
   return best;
 }
 
+/** 再生中・スライダー操作中の軽量更新 (full render を避けてキャンバス/スライダー/読取を更新) */
+function updateSimLive(): void {
+  const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
+  if (canvas) renderCanvas(canvas, viewport, state);
+  const slider = document.getElementById("sim-slider") as HTMLInputElement | null;
+  if (slider) slider.value = String(state.simFrame);
+  const info = document.querySelector(".sim-info");
+  if (info) info.innerHTML = simInfoHtml();
+}
+
 function bindSimulator(): void {
   const stop = (): void => {
     if (simTimer !== null) {
@@ -1656,6 +1684,14 @@ function bindSimulator(): void {
     }
     state.simPlaying = false;
   };
+  // フレームを離散ジャンプして停止・再描画する (ステップ/色送り/糸切り送り共通)
+  const jumpTo = (frame: number): void => {
+    if (!state.simulation) return;
+    stop();
+    state.simFrame = Math.max(0, Math.min(frame, state.simulation.frames.length));
+    render();
+  };
+
   document.getElementById("sim-play")?.addEventListener("click", () => {
     if (!state.simulation) return;
     if (state.simPlaying) {
@@ -1667,11 +1703,10 @@ function bindSimulator(): void {
     if (state.simFrame >= state.simulation.frames.length) state.simFrame = 0;
     simTimer = window.setInterval(() => {
       if (!state.simulation) return;
-      state.simFrame = Math.min(state.simFrame + Math.max(1, Math.floor(state.simulation.frames.length / 200)), state.simulation.frames.length);
-      const canvas = document.getElementById("preview") as HTMLCanvasElement;
-      renderCanvas(canvas, viewport, state);
-      const slider = document.getElementById("sim-slider") as HTMLInputElement | null;
-      if (slider) slider.value = String(state.simFrame);
+      // 速度倍率を反映 (標準で約200ティック完走、倍率で増減)
+      const base = Math.max(1, Math.floor(state.simulation.frames.length / 200));
+      state.simFrame = Math.min(state.simFrame + Math.max(1, Math.round(base * state.simSpeed)), state.simulation.frames.length);
+      updateSimLive();
       if (state.simFrame >= state.simulation.frames.length) {
         stop();
         render();
@@ -1679,35 +1714,30 @@ function bindSimulator(): void {
     }, 30);
     render();
   });
-  document.getElementById("sim-reset")?.addEventListener("click", () => {
-    stop();
-    state.simFrame = 0;
-    render();
+  document.getElementById("sim-reset")?.addEventListener("click", () => jumpTo(0));
+  document.getElementById("sim-stepback")?.addEventListener("click", () => jumpTo(state.simFrame - 1));
+  document.getElementById("sim-stepfwd")?.addEventListener("click", () => jumpTo(state.simFrame + 1));
+  document.getElementById("sim-speed")?.addEventListener("change", (e) => {
+    state.simSpeed = Number((e.target as HTMLSelectElement).value);
   });
   document.getElementById("sim-slider")?.addEventListener("input", (e) => {
     stop();
     state.simFrame = Number((e.target as HTMLInputElement).value);
-    const canvas = document.getElementById("preview") as HTMLCanvasElement;
-    renderCanvas(canvas, viewport, state);
-    const info = document.querySelector(".sim-info");
-    if (info && state.simulation) {
-      const f = state.simulation.frames[Math.min(state.simFrame, state.simulation.frames.length) - 1];
-      info.textContent = `${f ? f.stitchNumber : 0} / ${state.simulation.totalStitches} 針 · 色 ${(f?.colorIndex ?? 0) + 1}/${state.simulation.threads.length}`;
-    }
+    updateSimLive();
+  });
+  const findNext = (arr: number[]): number => arr.find((f) => f > state.simFrame) ?? state.simulation!.frames.length;
+  const findPrev = (arr: number[]): number => [...arr].reverse().find((f) => f < state.simFrame) ?? 0;
+  document.getElementById("sim-nextcolor")?.addEventListener("click", () => {
+    if (state.simulation) jumpTo(findNext(state.simulation.colorChangeFrames));
+  });
+  document.getElementById("sim-prevcolor")?.addEventListener("click", () => {
+    if (state.simulation) jumpTo(findPrev(state.simulation.colorChangeFrames));
   });
   document.getElementById("sim-nexttrim")?.addEventListener("click", () => {
-    stop();
-    if (!state.simulation) return;
-    const next = state.simulation.trimFrames.find((f) => f > state.simFrame);
-    state.simFrame = next ?? state.simulation.frames.length;
-    render();
+    if (state.simulation) jumpTo(findNext(state.simulation.trimFrames));
   });
   document.getElementById("sim-prevtrim")?.addEventListener("click", () => {
-    stop();
-    if (!state.simulation) return;
-    const prev = [...state.simulation.trimFrames].reverse().find((f) => f < state.simFrame);
-    state.simFrame = prev ?? 0;
-    render();
+    if (state.simulation) jumpTo(findPrev(state.simulation.trimFrames));
   });
 }
 
