@@ -125,6 +125,8 @@ export interface AppState {
   // シミュレーター
   simFrame: number;
   simPlaying: boolean;
+  /** 再生速度の倍率 (1 = 標準) */
+  simSpeed: number;
 
   /** 下縫いの強調表示 (ステッチビュー)。ON で下縫いを色分けし本縫いを淡く描く */
   highlightUnderlay: boolean;
@@ -185,6 +187,7 @@ export function createState(): AppState {
     reduceApplied: [],
     simFrame: 0,
     simPlaying: false,
+    simSpeed: 1,
     highlightUnderlay: false,
     vectorEdit: null,
     stitchEdit: null,
