@@ -500,6 +500,7 @@ function diagnosticsTab(): string {
       (i) => `<div class="diag-item ${i.level}">
         <div class="diag-head">${icon[i.level]} ${i.title}</div>
         <div class="diag-detail">${i.detail}</div>
+        ${i.hint ? `<div class="diag-hint">💡 ${i.hint}</div>` : ""}
         ${i.autofix === "reduce-stitches" ? '<button class="diag-fix" data-fix="reduce">自動針数削減</button>' : ""}
       </div>`,
     )
