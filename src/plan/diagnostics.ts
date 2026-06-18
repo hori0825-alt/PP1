@@ -18,6 +18,8 @@ export interface DiagnosticItem {
   title: string;
   /** 詳細メッセージ */
   detail: string;
+  /** 修正方法のヒント */
+  hint: string;
   autofix: AutoFix;
 }
 
@@ -39,6 +41,7 @@ export function diagnose(plan: StitchPlan): DiagnosticReport {
       level: issue.severity === "error" ? "critical" : "notice",
       title: issueTitle(issue.code),
       detail: issue.message,
+      hint: issueHint(issue.code),
       autofix: issue.code === "stitch-count-exceeded" ? "reduce-stitches" : null,
     });
   }
@@ -49,6 +52,7 @@ export function diagnose(plan: StitchPlan): DiagnosticReport {
       level: "notice",
       title: "針数が上限に近い",
       detail: `針数 ${stats.stitchCount} は上限 ${MAX_STITCH_COUNT} の90%を超えています`,
+      hint: "ステッチタブで「密度」を省針数に変更するか、「目標針数」を設定してください。下の自動削減ボタンも使えます。",
       autofix: "reduce-stitches",
     });
   }
@@ -59,6 +63,7 @@ export function diagnose(plan: StitchPlan): DiagnosticReport {
       level: "notice",
       title: "長い渡り糸",
       detail: `最大渡り距離が ${(stats.travel.max / 10).toFixed(1)}mm あります`,
+      hint: "縫い順タブでオブジェクトの順序を確認してください。離れたパーツが連続していると渡り糸が長くなります。糸切りモードを「常に切る」にすると布裏の見た目が改善します。",
       autofix: null,
     });
   }
@@ -71,6 +76,7 @@ export function diagnose(plan: StitchPlan): DiagnosticReport {
       level: "ok",
       title: "問題なし",
       detail: `針数 ${stats.stitchCount} / 色数 ${stats.colorCount} / 糸切り ${stats.trims} 回。PP1 で安全に縫えます。`,
+      hint: "",
       autofix: null,
     });
   }
@@ -106,5 +112,28 @@ function issueTitle(code: string): string {
       return "ステッチなし";
     default:
       return "注意";
+  }
+}
+
+function issueHint(code: string): string {
+  switch (code) {
+    case "out-of-hoop":
+      return "デザインタブでサイズを小さくしてください (100mm 枠に収まるように)。ベクター編集で輪郭をドラッグして位置を調整することもできます。";
+    case "stitch-count-exceeded":
+      return "ステッチタブで「密度」を省針数に変更するか、「目標針数」を設定してください。デザインのサイズを小さくしたり、色数を減らすのも効果的です。下の自動削減ボタンで自動調整もできます。";
+    case "long-stitch-in-run":
+      return "通常は出力時に自動分割されるため、そのまま書き出して問題ありません。気になる場合はベクター編集で該当パーツの形状を滑らかにしてください。";
+    case "continuous-too-far":
+      return "ステッチタブで糸切りモードを「自動」にしてください。自動では距離に応じてジャンプや糸切りに切り替わります。";
+    case "short-stitches":
+      return "非常に小さいパーツや細い隙間が原因です。ベクター編集で極小の輪郭を削除するか、デザインタブの除外パネルで小領域を除外してください。";
+    case "too-many-colors":
+      return "色タブで色数を減らしてください。色替えのたびにミシンが停止するため、PP1 では 6〜8 色以内を推奨します。";
+    case "too-many-trims":
+      return "ステッチタブで糸切りモードを「切らない」に変更すると糸切りが減ります。ただし布裏に渡り糸が残ります。パーツの配置を近づけて渡り距離を短くするのも有効です。";
+    case "empty-plan":
+      return "デザインタブで画像や SVG を読み込んでください。文字タブからテキストを刺繍化することもできます。";
+    default:
+      return "";
   }
 }

@@ -465,6 +465,16 @@ table.colors td {
   color: #5a626b;
 }
 
+.diag-hint {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #3a6e8c;
+  background: #edf5fa;
+  padding: 5px 8px;
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
 .diag-fix {
   margin-top: 8px;
   width: auto;
