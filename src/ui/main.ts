@@ -91,6 +91,8 @@ const viewport: Viewport = createViewport();
 let seqFilter: SeqFilter = "all";
 let simTimer: number | null = null;
 let detachVectorPointer: (() => void) | null = null;
+/** 直近のピンチ/パン操作の終了時刻 (ms)。直後のタップ選択を抑止する */
+let lastPinchEnd = 0;
 
 function download(filename: string, data: Uint8Array | string, mime = "application/octet-stream"): void {
   const blob = typeof data === "string" ? new Blob([data], { type: mime }) : new Blob([data.buffer as ArrayBuffer], { type: mime });
@@ -1143,7 +1145,13 @@ function redrawCanvas(canvas: HTMLCanvasElement): void {
   if (state.vectorEdit) drawVectorEdit(canvas, viewport, state);
 }
 
-/** ホイールでズーム (カーソル中心)、中/右ドラッグでパン。左ボタンは選択・編集用に空ける。 */
+/**
+ * キャンバスのナビゲーション操作:
+ * - ホイール: カーソル中心ズーム
+ * - 中/右ドラッグ (マウス): パン (左ボタンは選択・編集用に空ける)
+ * - 2本指 (タッチ): ピンチズーム + パン (重心移動で平行移動、指間距離比で拡縮)
+ * 1本指タッチは既存の選択・編集に回す。ピンチ直後のタップ選択は lastPinchEnd で抑止。
+ */
 function bindCanvasNav(canvas: HTMLCanvasElement): void {
   canvas.addEventListener(
     "wheel",
@@ -1155,10 +1163,39 @@ function bindCanvasNav(canvas: HTMLCanvasElement): void {
     },
     { passive: false },
   );
+
+  // マウス中/右ドラッグ パン
   let panning = false;
   let lastX = 0;
   let lastY = 0;
+  // タッチ: 2本指ピンチ/パン
+  const touches = new Map<number, { sx: number; sy: number }>();
+  let pinchDist = 0;
+  let pinchCx = 0;
+  let pinchCy = 0;
+  const pinchState = (): { cx: number; cy: number; d: number } => {
+    const pts = [...touches.values()];
+    return {
+      cx: (pts[0].sx + pts[1].sx) / 2,
+      cy: (pts[0].sy + pts[1].sy) / 2,
+      d: Math.hypot(pts[0].sx - pts[1].sx, pts[0].sy - pts[1].sy),
+    };
+  };
+
   canvas.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType === "touch") {
+      touches.set(ev.pointerId, pointerToCanvas(canvas, ev.clientX, ev.clientY));
+      canvas.setPointerCapture(ev.pointerId);
+      if (touches.size === 2) {
+        const c = pinchState();
+        pinchDist = c.d;
+        pinchCx = c.cx;
+        pinchCy = c.cy;
+        lastPinchEnd = Date.now(); // 2本指が乗った時点で 1本目のタップ選択を抑止
+        ev.preventDefault();
+      }
+      return;
+    }
     if (ev.button !== 1 && ev.button !== 2) return; // 中/右ボタンのみパン
     panning = true;
     const p = pointerToCanvas(canvas, ev.clientX, ev.clientY);
@@ -1167,7 +1204,26 @@ function bindCanvasNav(canvas: HTMLCanvasElement): void {
     canvas.setPointerCapture(ev.pointerId);
     ev.preventDefault();
   });
+
   canvas.addEventListener("pointermove", (ev) => {
+    if (ev.pointerType === "touch") {
+      if (!touches.has(ev.pointerId)) return;
+      touches.set(ev.pointerId, pointerToCanvas(canvas, ev.clientX, ev.clientY));
+      if (touches.size === 2) {
+        ev.preventDefault();
+        const c = pinchState();
+        // 重心の移動でパン → 重心中心・指間距離比でズーム
+        viewport.panX += c.cx - pinchCx;
+        viewport.panY += c.cy - pinchCy;
+        if (pinchDist > 0) zoomViewport(canvas, c.d / pinchDist, c.cx, c.cy);
+        pinchDist = c.d;
+        pinchCx = c.cx;
+        pinchCy = c.cy;
+        lastPinchEnd = Date.now();
+        redrawCanvas(canvas);
+      }
+      return;
+    }
     if (!panning) return;
     const p = pointerToCanvas(canvas, ev.clientX, ev.clientY);
     viewport.panX += p.sx - lastX;
@@ -1176,13 +1232,24 @@ function bindCanvasNav(canvas: HTMLCanvasElement): void {
     lastY = p.sy;
     redrawCanvas(canvas);
   });
-  const endPan = (ev: PointerEvent): void => {
+
+  const endPointer = (ev: PointerEvent): void => {
+    if (ev.pointerType === "touch") {
+      if (touches.delete(ev.pointerId)) {
+        if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+        if (touches.size < 2 && pinchDist > 0) {
+          pinchDist = 0;
+          lastPinchEnd = Date.now();
+        }
+      }
+      return;
+    }
     if (!panning) return;
     panning = false;
     if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
   };
-  canvas.addEventListener("pointerup", endPan);
-  canvas.addEventListener("pointercancel", endPan);
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
   canvas.addEventListener("contextmenu", (ev) => ev.preventDefault()); // 右ドラッグパン中のメニュー抑止
 }
 
@@ -1318,6 +1385,7 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   });
 
   canvas.addEventListener("click", (ev) => {
+    if (Date.now() - lastPinchEnd < 350) return; // ピンチ/パン直後のタップ選択を抑止
     const { sx, sy } = pointerToCanvas(canvas, ev.clientX, ev.clientY);
     const p = screenToDesign(viewport, canvas, sx, sy);
     if (state.penDraw) {

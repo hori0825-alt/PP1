@@ -142,6 +142,12 @@ canvas#preview {
 }
 
 /* --- キャンバスのズーム/パン --- */
+canvas#preview {
+  /* 2本指ジェスチャ (ピンチ/パン) をブラウザに奪われず自前で処理する。
+     キャンバス上のみ無効化し、パネル等ページ側のスクロールは通常どおり効く。 */
+  touch-action: none;
+}
+
 .zoom-ctl {
   position: absolute;
   right: 12px;
