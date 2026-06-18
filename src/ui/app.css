@@ -123,6 +123,7 @@ header .version {
 }
 
 .canvas-area {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -138,6 +139,32 @@ canvas#preview {
   border-radius: 8px;
   max-width: 100%;
   max-height: calc(100% - 60px);
+}
+
+/* --- キャンバスのズーム/パン --- */
+.zoom-ctl {
+  position: absolute;
+  right: 12px;
+  bottom: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.zoom-ctl button {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid #d7dde3;
+  background: #ffffffdd;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #3a424b;
+}
+
+.zoom-ctl button:hover {
+  background: #f1f4f8;
 }
 
 /* --- ステッチビューの表示コントロール (下縫い強調) --- */
