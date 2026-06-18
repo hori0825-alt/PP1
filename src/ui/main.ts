@@ -2,7 +2,7 @@
 // 左ツール / 中央キャンバス / 右プロパティ / 下シミュレーター・シーケンス。
 // かんたんモード (ウィザード) とプロモード (全タブ) を切替。
 
-import { UNIT_MM, mm } from "../core/constants";
+import { HOOP_SIZE, UNIT_MM, mm } from "../core/constants";
 import { angleDegFromVector, pointInPolygon, pointSegmentDistance, polygonCentroid } from "../core/geometry";
 import { countStitches, countTrims, stitchedLengthByBlock } from "../core/plan";
 import { deserializeProject, serializeProject } from "../core/project";
@@ -661,6 +661,11 @@ function render(): void {
     <div class="workspace">
       <main class="canvas-area">
         <canvas id="preview" width="620" height="620"></canvas>
+        <div class="zoom-ctl">
+          <button id="zoom-in" title="拡大">＋</button>
+          <button id="zoom-out" title="縮小">－</button>
+          <button id="zoom-fit" title="全体表示">⤢</button>
+        </div>
         ${stitchViewBar()}
         ${simulatorBar()}
       </main>
@@ -672,7 +677,9 @@ function render(): void {
   `;
 
   const canvas = document.getElementById("preview") as HTMLCanvasElement;
-  fitViewport(viewport, canvas);
+  // ズーム/パンを保持: 毎回 fitViewport で初期化すると拡大が戻るため、
+  // 初回 (scale===0) のみ renderCanvas 内で自動フィットさせる。明示的なフィットは
+  // 新規読み込み・サイズ変更・「全体表示」ボタンで viewport.scale=0 にして行う。
   renderCanvas(canvas, viewport, state);
   if (state.vectorEdit) drawVectorEdit(canvas, viewport, state);
   if (state.tab === "sequence") {
@@ -745,6 +752,7 @@ function bindEvents(): void {
         setSourceImage(state, raster, dataUrl, file.name);
       }
       resetHistory(); // 新しいデザイン: それ以前には戻せない
+      viewport.scale = 0; // 新規読み込みは全体表示にフィット
       state.view = "stitch";
       render();
     })();
@@ -756,6 +764,7 @@ function bindEvents(): void {
       state.project.settings.targetSizeMm = Number(b.dataset.size);
       if (state.photoMode) recomputePhoto(state);
       else recomputeRegions(state);
+      viewport.scale = 0; // サイズ変更後は全体表示にフィット
       render();
     }),
   );
@@ -1036,6 +1045,7 @@ function bindEvents(): void {
         else if (state.regions.length > 0) recomputeStitches(state);
         else recomputeRegions(state);
         resetHistory(); // 開いたプロジェクトより前には戻せない
+        viewport.scale = 0; // 全体表示にフィット
         render();
       } catch (err) {
         alert(`読み込みに失敗しました: ${(err as Error).message}`);
@@ -1066,7 +1076,30 @@ function bindEvents(): void {
 
   // キャンバス: クリックで選択 / ベクタービューでは方向つまみをドラッグして向きを引く
   const canvas = document.getElementById("preview") as HTMLCanvasElement | null;
-  if (canvas) bindCanvasPointer(canvas);
+  if (canvas) {
+    bindCanvasPointer(canvas);
+    bindCanvasNav(canvas); // ホイールズーム + 中/右ドラッグパン
+  }
+
+  // ズームコントロール (＋ / － / 全体表示)
+  document.getElementById("zoom-in")?.addEventListener("click", () => {
+    if (canvas) {
+      zoomViewport(canvas, 1.3, canvas.width / 2, canvas.height / 2);
+      redrawCanvas(canvas);
+    }
+  });
+  document.getElementById("zoom-out")?.addEventListener("click", () => {
+    if (canvas) {
+      zoomViewport(canvas, 1 / 1.3, canvas.width / 2, canvas.height / 2);
+      redrawCanvas(canvas);
+    }
+  });
+  document.getElementById("zoom-fit")?.addEventListener("click", () => {
+    if (canvas) {
+      fitViewport(viewport, canvas);
+      redrawCanvas(canvas);
+    }
+  });
 
   // ベクター編集中のノード操作ポインタを取り付け直す
   syncVectorPointer();
@@ -1085,6 +1118,74 @@ function overDirectionKnob(canvas: HTMLCanvasElement, sx: number, sy: number): b
  * ポインタキャプチャを使い、リスナーは canvas 要素に限定する
  * (canvas は再描画ごとに作り直されるためリークしない)。
  */
+/** ポインタ位置をキャンバスのバッファ座標へ変換する (CSS 表示サイズと描画解像度の差を補正)。
+ *  これにより、キャンバスが縮小表示されていても選択・ズームの当たり判定が正確になる。 */
+function pointerToCanvas(canvas: HTMLCanvasElement, clientX: number, clientY: number): { sx: number; sy: number } {
+  const rect = canvas.getBoundingClientRect();
+  const fx = rect.width > 0 ? canvas.width / rect.width : 1;
+  const fy = rect.height > 0 ? canvas.height / rect.height : 1;
+  return { sx: (clientX - rect.left) * fx, sy: (clientY - rect.top) * fy };
+}
+
+/** カーソル位置 (バッファ座標) を固定したままスケールを factor 倍する (枠フィット〜60倍に制限) */
+function zoomViewport(canvas: HTMLCanvasElement, factor: number, sx: number, sy: number): void {
+  const fit = canvas.width / (HOOP_SIZE * 1.12);
+  const next = Math.max(fit * 0.5, Math.min(fit * 60, viewport.scale * factor));
+  const d = screenToDesign(viewport, canvas, sx, sy);
+  viewport.scale = next;
+  viewport.panX = sx - canvas.width / 2 - d.x * next;
+  viewport.panY = sy - canvas.height / 2 - d.y * next;
+}
+
+/** キャンバスを再描画する (ベクター編集オーバーレイも維持) */
+function redrawCanvas(canvas: HTMLCanvasElement): void {
+  renderCanvas(canvas, viewport, state);
+  if (state.vectorEdit) drawVectorEdit(canvas, viewport, state);
+}
+
+/** ホイールでズーム (カーソル中心)、中/右ドラッグでパン。左ボタンは選択・編集用に空ける。 */
+function bindCanvasNav(canvas: HTMLCanvasElement): void {
+  canvas.addEventListener(
+    "wheel",
+    (ev) => {
+      ev.preventDefault();
+      const { sx, sy } = pointerToCanvas(canvas, ev.clientX, ev.clientY);
+      zoomViewport(canvas, ev.deltaY < 0 ? 1.15 : 1 / 1.15, sx, sy);
+      redrawCanvas(canvas);
+    },
+    { passive: false },
+  );
+  let panning = false;
+  let lastX = 0;
+  let lastY = 0;
+  canvas.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 1 && ev.button !== 2) return; // 中/右ボタンのみパン
+    panning = true;
+    const p = pointerToCanvas(canvas, ev.clientX, ev.clientY);
+    lastX = p.sx;
+    lastY = p.sy;
+    canvas.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointermove", (ev) => {
+    if (!panning) return;
+    const p = pointerToCanvas(canvas, ev.clientX, ev.clientY);
+    viewport.panX += p.sx - lastX;
+    viewport.panY += p.sy - lastY;
+    lastX = p.sx;
+    lastY = p.sy;
+    redrawCanvas(canvas);
+  });
+  const endPan = (ev: PointerEvent): void => {
+    if (!panning) return;
+    panning = false;
+    if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+  };
+  canvas.addEventListener("pointerup", endPan);
+  canvas.addEventListener("pointercancel", endPan);
+  canvas.addEventListener("contextmenu", (ev) => ev.preventDefault()); // 右ドラッグパン中のメニュー抑止
+}
+
 function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   let draggingAngle = false;
   let drawingLine = false;
@@ -1093,12 +1194,11 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   let didDrag = false;
   let draggingStitch: { run: number; idx: number } | null = null;
 
-  const localXY = (ev: PointerEvent): { sx: number; sy: number } => {
-    const rect = canvas.getBoundingClientRect();
-    return { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
-  };
+  const localXY = (ev: PointerEvent): { sx: number; sy: number } =>
+    pointerToCanvas(canvas, ev.clientX, ev.clientY);
 
   canvas.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return; // 左ボタンのみ選択・編集 (中/右はパン)
     if (state.penDraw) return; // ペン作図はクリックで点を置く (ドラッグ操作を抑止)
     // --- 針編集モード (フェーズ7) ---
     if (state.stitchEdit && state.view === "stitch") {
@@ -1218,8 +1318,8 @@ function bindCanvasPointer(canvas: HTMLCanvasElement): void {
   });
 
   canvas.addEventListener("click", (ev) => {
-    const rect = canvas.getBoundingClientRect();
-    const p = screenToDesign(viewport, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
+    const { sx, sy } = pointerToCanvas(canvas, ev.clientX, ev.clientY);
+    const p = screenToDesign(viewport, canvas, sx, sy);
     if (state.penDraw) {
       // 手動デジタイズ: クリックで点を追加
       addPenPoint(state, p);
