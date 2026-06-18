@@ -711,8 +711,8 @@ function render(): void {
     <header>
       <h1>PP1 Stitch Studio <span class="version">v${__APP_VERSION__}</span></h1>
       <div class="history">
-        <button class="hist" id="undo" ${canUndo() ? "" : "disabled"} title="元に戻す (Ctrl+Z)">↶ 戻る</button>
-        <button class="hist" id="redo" ${canRedo() ? "" : "disabled"} title="やり直す (Ctrl+Shift+Z)">↷ やり直し</button>
+        <button class="hist" id="undo" ${canUndo() ? "" : "disabled"} title="直前の操作を取り消します (Ctrl+Z)。色・サイズ・密度などの変更を1手ずつ巻き戻せます。">↶ 戻る</button>
+        <button class="hist" id="redo" ${canRedo() ? "" : "disabled"} title="「戻る」で取り消した操作をもう一度やり直します (Ctrl+Shift+Z)。戻りすぎたときに使います。">↷ やり直し</button>
       </div>
       <div class="chips">${headerChips()}</div>
       <div class="modes">

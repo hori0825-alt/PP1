@@ -79,19 +79,20 @@ header .version {
 .hist {
   font-size: 13px;
   padding: 5px 12px;
-  border: 1px solid #d7dde3;
-  background: #ffffff;
+  border: 1px solid #b3d4f0;
+  background: #e8f2fc;
+  color: #2a5a8c;
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .hist:hover:not(:disabled) {
-  background: #f1f4f8;
+  background: #d0e6f9;
 }
 
 .hist:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
 }
 
@@ -103,10 +104,15 @@ header .version {
 .mode {
   font-size: 13px;
   padding: 5px 14px;
-  border: 1px solid #d7dde3;
-  background: #ffffff;
+  border: 1px solid #b3d4f0;
+  background: #e8f2fc;
+  color: #2a5a8c;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.mode:hover:not(.active) {
+  background: #d0e6f9;
 }
 
 .mode.active {
