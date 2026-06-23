@@ -33,6 +33,7 @@ import type { UnderlayType } from "../stitch/types";
 import type { LayoutMode } from "../text/layout";
 import { editShapeToRegion, regionToEditShape } from "../vector/shape";
 import type { EditShape } from "../vector/shape";
+import type { AiProvider, AiRecommendation } from "../ai/aiAssist";
 
 export type Mode = "easy" | "pro";
 export type ViewMode = "original" | "quantized" | "vector" | "stitch";
@@ -153,6 +154,13 @@ export interface AppState {
   /** 3D パフィー (サテンを詰めて立体的に) */
   puffy: boolean;
 
+  // AI アシスト
+  aiProvider: AiProvider;
+  aiModel: string;
+  aiStatus: "idle" | "loading" | "error";
+  aiError: string;
+  aiResult: AiRecommendation | null;
+
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
 }
@@ -205,6 +213,11 @@ export function createState(): AppState {
     photoSettings: { colorCount: 1, contrast: 1.2, brightness: 0, removeBackground: true },
     photoMode: false,
     puffy: false,
+    aiProvider: "openai",
+    aiModel: "gpt-4o",
+    aiStatus: "idle",
+    aiError: "",
+    aiResult: null,
   };
 }
 

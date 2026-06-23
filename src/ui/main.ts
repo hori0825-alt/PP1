@@ -82,6 +82,12 @@ import {
   vectorSetAllType,
   vectorTabContent,
 } from "./vectorEdit";
+import {
+  AI_MODELS,
+  AI_PROVIDER_LABELS,
+  analyzeImage,
+} from "../ai/aiAssist";
+import type { AiProvider, AiRecommendation } from "../ai/aiAssist";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -180,6 +186,7 @@ function designTab(): string {
     </div>` : `<p class="note">PNG / JPG / SVG を読み込むと自動で刺繍化されます。</p>`}
     ${state.project.source.kind === "image" ? photoSection() : ""}
     ${excludedPanel()}
+    ${loaded ? aiAssistSection() : ""}
   `;
 }
 
@@ -218,6 +225,69 @@ function excludedPanel(): string {
       </div>
       ${n > 1 ? '<button id="restore-all-excluded" class="secondary">すべて復元</button>' : ""}
       <p class="note">表示:ベクターでオレンジ破線の輪郭が見えます。復元すると刺繍パーツに含めます。</p>
+    </div>`;
+}
+
+function aiAssistSection(): string {
+  const models = AI_MODELS[state.aiProvider];
+  const savedKey = localStorage.getItem(`ai_key_${state.aiProvider}`) ?? "";
+  const savedProxy = localStorage.getItem("ai_proxy_claude") ?? "";
+  const isLoading = state.aiStatus === "loading";
+
+  const providerSelect = (Object.keys(AI_PROVIDER_LABELS) as AiProvider[])
+    .map((p) => `<option value="${p}" ${state.aiProvider === p ? "selected" : ""}>${AI_PROVIDER_LABELS[p]}</option>`)
+    .join("");
+  const modelSelect = models
+    .map((m) => `<option value="${m}" ${state.aiModel === m ? "selected" : ""}>${m}</option>`)
+    .join("");
+
+  const resultHtml = ((): string => {
+    if (state.aiStatus === "error") {
+      return `<div class="ai-error">⚠ ${state.aiError}</div>`;
+    }
+    if (!state.aiResult) return "";
+    const r = state.aiResult;
+    const fillLabel: Record<string, string> = { auto: "自動", satin: "サテン縫い", tatami: "タタミ縫い" };
+    const satinLabel: Record<string, string> = { auto: "自動", none: "なし", center: "センター", "center-zigzag": "センター+ジグザグ" };
+    const densityLabel: Record<string, string> = { "0.9": "高密度", "1": "標準", "1.25": "省針数", "1.5": "最省針数" };
+    const underlayLabel = r.underlay.length === 0 ? "なし" : r.underlay.join(", ");
+    return `
+      <div class="ai-result">
+        <div class="ai-analysis">${r.analysis}</div>
+        <table class="ai-rec-tbl">
+          <tbody>
+            <tr><td>推奨色数</td><td>${r.colorCount} 色</td></tr>
+            <tr><td>縫い方</td><td>${fillLabel[r.fillType] ?? r.fillType}</td></tr>
+            <tr><td>タタミ角度</td><td>${r.angleDeg}°</td></tr>
+            <tr><td>密度</td><td>${densityLabel[String(r.densityScale)] ?? String(r.densityScale)}</td></tr>
+            <tr><td>下縫い</td><td>${underlayLabel}</td></tr>
+            <tr><td>サテン下縫い</td><td>${satinLabel[r.satinUnderlay] ?? r.satinUnderlay}</td></tr>
+            <tr><td>白背景除去</td><td>${r.removeWhiteBackground ? "はい" : "いいえ"}</td></tr>
+          </tbody>
+        </table>
+        ${r.tips.length > 0 ? `<ul class="ai-tips">${r.tips.map((t) => `<li>${t}</li>`).join("")}</ul>` : ""}
+        <button id="ai-apply">設定を適用</button>
+      </div>`;
+  })();
+
+  return `
+    <h2>AI アシスト</h2>
+    <div class="ai-panel">
+      <label>AI プロバイダー
+        <select id="ai-provider">${providerSelect}</select>
+      </label>
+      <label>モデル
+        <select id="ai-model">${modelSelect}</select>
+      </label>
+      <label>API キー
+        <input type="password" id="ai-key" placeholder="sk-..." value="${savedKey}" autocomplete="off">
+      </label>
+      ${state.aiProvider === "claude" ? `<label>プロキシ URL (Claude 必須)
+        <input type="url" id="ai-proxy" placeholder="https://your-proxy.example.com" value="${savedProxy}">
+      </label>
+      <p class="note">Anthropic API はブラウザから直接呼べないため、CORS プロキシが必要です。</p>` : ""}
+      <button id="ai-analyze" ${isLoading ? "disabled" : ""}>${isLoading ? "解析中…" : "AI で解析"}</button>
+      ${resultHtml}
     </div>`;
 }
 
@@ -1593,6 +1663,92 @@ function bindSpecialTab(): void {
   document.getElementById("puffy")?.addEventListener("change", (e) => {
     state.puffy = (e.target as HTMLInputElement).checked;
     recomputeStitches(state);
+    render();
+  });
+  bindAiAssist();
+}
+
+function bindAiAssist(): void {
+  document.getElementById("ai-provider")?.addEventListener("change", (e) => {
+    state.aiProvider = (e.target as HTMLSelectElement).value as AiProvider;
+    state.aiModel = AI_MODELS[state.aiProvider][0];
+    state.aiResult = null;
+    state.aiStatus = "idle";
+    render();
+  });
+  document.getElementById("ai-model")?.addEventListener("change", (e) => {
+    state.aiModel = (e.target as HTMLSelectElement).value;
+  });
+  document.getElementById("ai-key")?.addEventListener("change", (e) => {
+    localStorage.setItem(`ai_key_${state.aiProvider}`, (e.target as HTMLInputElement).value);
+  });
+  document.getElementById("ai-proxy")?.addEventListener("change", (e) => {
+    localStorage.setItem("ai_proxy_claude", (e.target as HTMLInputElement).value);
+  });
+  document.getElementById("ai-analyze")?.addEventListener("click", () => {
+    const src = state.project.source;
+    if (src.kind === "none") return;
+    const apiKey = (document.getElementById("ai-key") as HTMLInputElement | null)?.value.trim() ?? "";
+    if (!apiKey) {
+      state.aiStatus = "error";
+      state.aiError = "API キーを入力してください。";
+      render();
+      return;
+    }
+    const dataUrl = src.data ?? "";
+    if (!dataUrl || src.kind !== "image") {
+      state.aiStatus = "error";
+      state.aiError = "画像データが見つかりません。PNG/JPG を読み込んでください。";
+      render();
+      return;
+    }
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) {
+      state.aiStatus = "error";
+      state.aiError = "画像フォーマットを読み取れませんでした。";
+      render();
+      return;
+    }
+    const [, mimeType, base64] = match;
+    const proxyUrl = (document.getElementById("ai-proxy") as HTMLInputElement | null)?.value.trim() ?? "";
+    if (state.aiProvider === "claude" && !proxyUrl) {
+      state.aiStatus = "error";
+      state.aiError = "Claude にはプロキシ URL が必要です。";
+      render();
+      return;
+    }
+    state.aiStatus = "loading";
+    state.aiResult = null;
+    state.aiError = "";
+    render();
+    void analyzeImage(base64, mimeType, {
+      provider: state.aiProvider,
+      model: state.aiModel,
+      apiKey,
+      proxyUrl: proxyUrl || undefined,
+    }).then((rec: AiRecommendation) => {
+      state.aiResult = rec;
+      state.aiStatus = "idle";
+      render();
+    }).catch((err: unknown) => {
+      state.aiStatus = "error";
+      state.aiError = err instanceof Error ? err.message : String(err);
+      render();
+    });
+  });
+  document.getElementById("ai-apply")?.addEventListener("click", () => {
+    const r = state.aiResult;
+    if (!r) return;
+    const s = state.project.settings;
+    s.colorCount = r.colorCount;
+    s.removeWhiteBackground = r.removeWhiteBackground;
+    s.angleDeg = r.angleDeg;
+    s.densityScale = r.densityScale;
+    s.underlay = r.underlay;
+    s.satinUnderlay = r.satinUnderlay;
+    state.fillType = r.fillType === "auto" ? "auto" : r.fillType;
+    if (state.project.source.kind === "image") recomputeRegions(state);
+    else recomputeStitches(state);
     render();
   });
 }

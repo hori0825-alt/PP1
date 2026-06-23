@@ -971,6 +971,92 @@ textarea#txt-input {
   background: #ffe0b0;
 }
 
+/* --- AI アシストパネル --- */
+.ai-panel {
+  margin-top: 4px;
+  padding: 12px;
+  background: #f3f6fb;
+  border: 1px solid #c5d9f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: #3a4a5c;
+  font-weight: 500;
+}
+
+.ai-panel select,
+.ai-panel input[type="password"],
+.ai-panel input[type="url"] {
+  padding: 5px 8px;
+  border: 1px solid #b3c8e0;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+  color: #2a2e33;
+}
+
+.ai-error {
+  padding: 8px 10px;
+  background: #fff0f0;
+  border: 1px solid #f0b0b0;
+  border-radius: 5px;
+  color: #b02020;
+  font-size: 12px;
+}
+
+.ai-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-analysis {
+  padding: 8px 10px;
+  background: #edf5fa;
+  border-left: 3px solid #4a8ab8;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: #1e3a52;
+  line-height: 1.5;
+}
+
+.ai-rec-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ai-rec-tbl td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #dde8f0;
+}
+
+.ai-rec-tbl td:first-child {
+  color: #5a6e80;
+  width: 45%;
+}
+
+.ai-rec-tbl td:last-child {
+  font-weight: 500;
+  color: #1a3045;
+}
+
+.ai-tips {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #3a5a6c;
+  line-height: 1.6;
+}
+
 /* --- モバイル / 狭幅レイアウト --- */
 /* 既定は横並び (キャンバス + 320px サイドバー) だが、狭幅では
    サイドバーに圧迫されてプレビューが極端に小さくなる。
