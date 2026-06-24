@@ -160,6 +160,8 @@ export interface AppState {
   aiStatus: "idle" | "loading" | "error";
   aiError: string;
   aiResult: AiRecommendation | null;
+  /** 推奨の出どころ (端末内解析 or 外部 AI) */
+  aiResultSource: "local" | "ai" | null;
 
   /** 再描画コールバック (UI コンポーネントが状態変更後に呼ぶ) */
   onChange?: () => void;
@@ -218,6 +220,7 @@ export function createState(): AppState {
     aiStatus: "idle",
     aiError: "",
     aiResult: null,
+    aiResultSource: null,
   };
 }
 

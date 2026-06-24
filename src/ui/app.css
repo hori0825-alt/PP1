@@ -1057,6 +1057,30 @@ textarea#txt-input {
   line-height: 1.6;
 }
 
+.ai-src {
+  font-size: 11px;
+  color: #5a7a90;
+  font-weight: 600;
+}
+
+.ai-advanced {
+  border-top: 1px dashed #c5d9f0;
+  padding-top: 8px;
+}
+
+.ai-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3a6e8c;
+}
+
+.ai-advanced > label,
+.ai-advanced > p,
+.ai-advanced > button {
+  margin-top: 8px;
+}
+
 /* --- モバイル / 狭幅レイアウト --- */
 /* 既定は横並び (キャンバス + 320px サイドバー) だが、狭幅では
    サイドバーに圧迫されてプレビューが極端に小さくなる。
