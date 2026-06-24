@@ -140,6 +140,32 @@ describe("tatamiFill", () => {
     const { runs } = tatamiFill(region, { ...defaultParams, rowSpacing: mm(0.4) });
     expect(runs.length).toBe(1);
   });
+
+  it("走査線が拾えない水平の首で繋がる形状でも1本の連続 Run になる (面内糸切り根絶)", () => {
+    // 左右の箱を、走査線の隙間 (y=0 と y=4 単位の行の間) に収まる薄い水平の首
+    // (y∈[1,3] 単位) で繋ぐ。角度0・行間隔0.4mm では首を走査線が一切サンプルせず、
+    // 左右が別々の連結成分になる。旧実装は成分ごとに Run を分けていたため、
+    // 1つの面なのに 2 Run = Run 間に糸切りが混入していた。修正後は縁沿い移動で
+    // 繋いだ 1 本の連続 Run になる。
+    const outer: Point[] = [
+      { x: mm(-20), y: mm(-5) },
+      { x: mm(-6), y: mm(-5) },
+      { x: mm(-6), y: 1 },
+      { x: mm(6), y: 1 },
+      { x: mm(6), y: mm(-5) },
+      { x: mm(20), y: mm(-5) },
+      { x: mm(20), y: mm(5) },
+      { x: mm(6), y: mm(5) },
+      { x: mm(6), y: 3 },
+      { x: mm(-6), y: 3 },
+      { x: mm(-6), y: mm(5) },
+      { x: mm(-20), y: mm(5) },
+    ];
+    const region: Region = { outer, holes: [], color: RED };
+    const { runs } = tatamiFill(region, { ...defaultParams, angleDeg: 0, rowSpacing: mm(0.4) });
+    expect(runs.length).toBe(1);
+    assertContinuity(runs[0]);
+  });
 });
 
 describe("タタミ ランダム化 (モアレ低減)", () => {

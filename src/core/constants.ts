@@ -44,9 +44,13 @@ export const TATAMI_DEFAULT = {
  */
 export const TATAMI_RANDOM_FACTOR = 0.2;
 
-/** サテンのデフォルト: 密度 0.4mm 間隔 / 最大幅 7mm */
+/**
+ * サテンのデフォルト: 密度 0.35mm 間隔 / 最大幅 7mm。
+ * 0.4mm は下地が透けて痩せて見えるため、光沢面が締まる 0.35mm を既定にする
+ * (PP1 など家庭機で糸切れを招かない範囲)。タタミの行間隔とは別管理。
+ */
 export const SATIN_DEFAULT = {
-  spacing: mm(0.4),
+  spacing: mm(0.35),
   maxWidth: mm(7),
 } as const;
 

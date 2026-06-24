@@ -5,7 +5,7 @@
 // 読み込み後に全体を 100mm 枠 (または指定サイズ) に収めて中心配置する。
 
 import { mm } from "../core/constants";
-import { pointInPolygon, selfIntersects, signedArea } from "../core/geometry";
+import { pointInPolygon, selfIntersects, signedArea, strokeToRegionPaths } from "../core/geometry";
 import type { Region } from "../core/region";
 import type { Point, ThreadColor } from "../core/types";
 
@@ -444,25 +444,77 @@ interface FilledShape {
   color: ThreadColor;
 }
 
-function collectShapes(el: XmlElement, matrix: Matrix, inheritedFill: string | undefined, out: FilledShape[]): void {
+/** ストローク (線) 形状。中心線サブパスと太さ (SVG ユーザー単位) を保持する */
+interface StrokedShape {
+  subpaths: { points: Point[]; closed: boolean }[];
+  color: ThreadColor;
+  /** 線幅 (transform のスケールを反映済みの SVG ルート空間単位) */
+  width: number;
+}
+
+interface StyleContext {
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: string;
+}
+
+/** style="..." から指定プロパティの値を取り出す */
+function styleProp(style: string | undefined, prop: string): string | undefined {
+  if (!style) return undefined;
+  return new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(style)?.[1]?.trim();
+}
+
+function parseStrokeWidth(text: string | undefined): number {
+  if (!text) return 1; // SVG 既定の stroke-width は 1
+  const v = parseFloat(text);
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+function collectShapes(
+  el: XmlElement,
+  matrix: Matrix,
+  inherited: StyleContext,
+  fills: FilledShape[],
+  strokes: StrokedShape[],
+): void {
   for (const child of el.children) {
     const m = multiply(matrix, parseTransform(child.attrs.transform));
-    // style 属性内の fill も拾う
-    const styleFill = /(?:^|;)\s*fill\s*:\s*([^;]+)/.exec(child.attrs.style ?? "")?.[1];
-    const fillText = child.attrs.fill ?? styleFill ?? inheritedFill;
+    const style = child.attrs.style;
+    const fillText = child.attrs.fill ?? styleProp(style, "fill") ?? inherited.fill;
+    const strokeText = child.attrs.stroke ?? styleProp(style, "stroke") ?? inherited.stroke;
+    const strokeWidthText =
+      child.attrs["stroke-width"] ?? styleProp(style, "stroke-width") ?? inherited.strokeWidth;
 
     if (child.tag === "g" || child.tag === "svg") {
-      collectShapes(child, m, fillText, out);
+      collectShapes(child, m, { fill: fillText, stroke: strokeText, strokeWidth: strokeWidthText }, fills, strokes);
       continue;
     }
     const subs = shapeSubPaths(child);
     if (subs.length === 0) continue;
-    const color = parseColor(fillText ?? "black");
-    if (!color) continue; // fill="none" は領域なし (線のみ。線の刺繍化は後フェーズ)
-    const closedSubs = subs
-      .filter((s) => s.closed && s.points.length >= 3)
-      .map((s) => s.points.map((p) => applyMatrix(m, p)));
-    if (closedSubs.length > 0) out.push({ subpaths: closedSubs, color });
+
+    // 塗り: 閉じたサブパスを領域にする (fill="none" は塗りなし)
+    const fillColor = parseColor(fillText ?? "black");
+    if (fillColor) {
+      const closedSubs = subs
+        .filter((s) => s.closed && s.points.length >= 3)
+        .map((s) => s.points.map((p) => applyMatrix(m, p)));
+      if (closedSubs.length > 0) fills.push({ subpaths: closedSubs, color: fillColor });
+    }
+
+    // 線: stroke 指定がある形状は中心線として保持し、後でリボン領域に変換する。
+    // これにより線画 (アニメ絵・ロゴのアウトライン) が縫えるようになる。
+    const strokeColor = parseColor(strokeText);
+    if (strokeColor) {
+      // transform のスケール (行列式の平方根) を線幅にも反映する
+      const scaleFactor = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+      const width = parseStrokeWidth(strokeWidthText) * scaleFactor;
+      const strokeSubs = subs
+        .filter((s) => s.points.length >= 2)
+        .map((s) => ({ points: s.points.map((p) => applyMatrix(m, p)), closed: s.closed }));
+      if (width > 0 && strokeSubs.length > 0) {
+        strokes.push({ subpaths: strokeSubs, color: strokeColor, width });
+      }
+    }
   }
 }
 
@@ -481,24 +533,25 @@ export function importSvg(text: string, targetUnits = mm(100)): SvgImportResult 
   const root = parseXml(text);
   const svg = root.children.find((c) => c.tag === "svg") ?? root;
   const shapes: FilledShape[] = [];
-  collectShapes(svg, parseTransform(svg.attrs.transform), undefined, shapes);
+  const strokes: StrokedShape[] = [];
+  collectShapes(svg, parseTransform(svg.attrs.transform), {}, shapes, strokes);
 
-  // 全体バウンディングを取り、スケール・中心オフセットを決める
+  // 全体バウンディングを取り、スケール・中心オフセットを決める (線画も含める)
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const s of shapes) {
-    for (const sub of s.subpaths) {
-      for (const p of sub) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y > maxY) maxY = p.y;
-      }
-    }
+  const grow = (p: Point): void => {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  };
+  for (const s of shapes) for (const sub of s.subpaths) for (const p of sub) grow(p);
+  for (const s of strokes) for (const sub of s.subpaths) for (const p of sub.points) grow(p);
+  if ((shapes.length === 0 && strokes.length === 0) || !Number.isFinite(minX)) {
+    return { regions: [], scale: 1 };
   }
-  if (shapes.length === 0 || !Number.isFinite(minX)) return { regions: [], scale: 1 };
   const w = Math.max(1e-6, maxX - minX);
   const h = Math.max(1e-6, maxY - minY);
   const scale = targetUnits / Math.max(w, h);
@@ -532,6 +585,21 @@ export function importSvg(text: string, targetUnits = mm(100)): SvgImportResult 
       }
       const region: Region = { outer, holes, color: shape.color };
       if (selfIntersects(outer)) region.selfIntersecting = true;
+      regions.push(region);
+    }
+  }
+
+  // ストロークを太さで囲んだリボン領域に変換して追加する。
+  // 線は塗りの上に乗るよう regions の末尾 (=後で縫う) へ追加する。
+  for (const stroke of strokes) {
+    const halfW = (stroke.width * scale) / 2;
+    if (halfW <= 0) continue;
+    for (const sub of stroke.subpaths) {
+      const center = sub.points.map(toUnits);
+      const ribbon = strokeToRegionPaths(center, sub.closed, halfW);
+      if (!ribbon || ribbon.outer.length < 3) continue;
+      const region: Region = { outer: ribbon.outer, holes: ribbon.holes, color: stroke.color };
+      if (selfIntersects(ribbon.outer)) region.selfIntersecting = true;
       regions.push(region);
     }
   }

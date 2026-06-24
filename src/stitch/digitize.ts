@@ -193,8 +193,7 @@ function generateFill(
       spacing: satinSpacing ?? SATIN_DEFAULT.spacing,
       maxWidth: SATIN_DEFAULT.maxWidth,
     });
-    const branched = satin.warnings.some((w) => w.includes("分岐"));
-    if (!branched && satin.runs.length > 0) return { ...satin, usedSatin: true };
+    if (!satin.branched && satin.runs.length > 0) return { ...satin, usedSatin: true };
   }
   if (angleLines && angleLines.length >= 2) {
     const t = turningFill(region, params, angleLines, startNear, exitNear);

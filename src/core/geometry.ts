@@ -123,6 +123,112 @@ export function chaikinClosed(path: Point[], iterations = 1): Point[] {
 }
 
 /**
+ * 折れ線 (ストローク中心線) を太さ halfWidth で囲んだ閉じたリボン (帯) にする。
+ * 開いた線は両端をバットキャップで閉じた1枚の帯に、閉じた線は外側リングと
+ * 内側リング (穴) を持つ環にする。線画 (fill=none の SVG パス) を縫える領域へ
+ * 変換するのに使う。各頂点で前後セグメントの法線を平均して左右へオフセットする
+ * (鋭角はベベル相当に少し痩せるが、線画のデジタイズには十分)。
+ */
+export function strokeToRegionPaths(
+  points: Point[],
+  closed: boolean,
+  halfWidth: number,
+): { outer: Point[]; holes: Point[][] } | null {
+  // 連続する重複点を除去
+  const pts: Point[] = [];
+  for (const p of points) {
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-6) pts.push(p);
+  }
+  if (closed && pts.length > 1) {
+    const a = pts[0];
+    const b = pts[pts.length - 1];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) pts.pop(); // 閉路の重複終点を除去
+  }
+  const n = pts.length;
+  if (n < 2 || halfWidth <= 0) return null;
+
+  const left: Point[] = [];
+  const right: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    let nx = 0;
+    let ny = 0;
+    const addSeg = (a: Point, b: Point): void => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-9) return;
+      nx += -dy / len; // 進行方向に対する左法線
+      ny += dx / len;
+    };
+    if (closed || i > 0) addSeg(pts[(i - 1 + n) % n], pts[i]);
+    if (closed || i < n - 1) addSeg(pts[i], pts[(i + 1) % n]);
+    const nl = Math.hypot(nx, ny);
+    if (nl >= 1e-9) {
+      nx /= nl;
+      ny /= nl;
+    }
+    left.push({ x: pts[i].x + nx * halfWidth, y: pts[i].y + ny * halfWidth });
+    right.push({ x: pts[i].x - nx * halfWidth, y: pts[i].y - ny * halfWidth });
+  }
+
+  if (closed) {
+    // 同心の2リング → 面積が大きい方を外周、小さい方を穴にする
+    const aL = Math.abs(signedArea(left));
+    const aR = Math.abs(signedArea(right));
+    return aL >= aR ? { outer: left, holes: [right] } : { outer: right, holes: [left] };
+  }
+  return { outer: [...left, ...right.reverse()], holes: [] };
+}
+
+/** 3点 a-b-c の b における屈曲角 (度)。直線なら 0、鋭角なら大きい */
+function turnAngleDeg(a: Point, b: Point, c: Point): number {
+  const v1x = b.x - a.x;
+  const v1y = b.y - a.y;
+  const v2x = c.x - b.x;
+  const v2y = c.y - b.y;
+  const l1 = Math.hypot(v1x, v1y);
+  const l2 = Math.hypot(v2x, v2y);
+  if (l1 < 1e-9 || l2 < 1e-9) return 0;
+  const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+/**
+ * 角を保存する Chaikin スムージング (閉路)。
+ * 各頂点の屈曲角が cornerAngleDeg 以上なら「角」とみなして位置を固定し、
+ * それ未満のゆるい頂点だけを丸める。ロゴ・文字の直角やセリフ、星型の尖りを
+ * 残しつつ、曲線部のピクセル階段だけを滑らかにする。
+ * Douglas-Peucker で簡略化した後 (=意味のある頂点だけ残った状態) に適用する前提。
+ */
+export function chaikinClosedPreserveCorners(
+  path: Point[],
+  iterations: number,
+  cornerAngleDeg = 60,
+): Point[] {
+  let pts = path;
+  for (let it = 0; it < iterations; it++) {
+    const n = pts.length;
+    if (n < 3) return pts.slice();
+    const next: Point[] = [];
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n];
+      const cur = pts[i];
+      const nxt = pts[(i + 1) % n];
+      if (turnAngleDeg(prev, cur, nxt) >= cornerAngleDeg) {
+        next.push({ x: cur.x, y: cur.y }); // 角は固定して丸めない
+      } else {
+        // ゆるい頂点は前後へ 1/4 ずつ寄せた2点に置換 (角を切り落として丸める)
+        next.push({ x: cur.x + (prev.x - cur.x) * 0.25, y: cur.y + (prev.y - cur.y) * 0.25 });
+        next.push({ x: cur.x + (nxt.x - cur.x) * 0.25, y: cur.y + (nxt.y - cur.y) * 0.25 });
+      }
+    }
+    pts = next;
+  }
+  return pts;
+}
+
+/**
  * 方向ベクトル (dx,dy) からステッチ角度 (度) を求める。
  * ステッチの向きは 180° 周期 (逆向きでも縫い目は同じ) なので [0,180) に正規化する。
  */

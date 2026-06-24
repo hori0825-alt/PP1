@@ -3,7 +3,9 @@
 import { describe, expect, it } from "vitest";
 import { mm } from "../src/core/constants";
 import { pathBounds, signedArea } from "../src/core/geometry";
+import { countStitches } from "../src/core/plan";
 import { importSvg, parseColor, parsePathData } from "../src/import/svg";
+import { digitizeRegions } from "../src/stitch/digitize";
 
 describe("parseColor", () => {
   it("各形式をパースし、none は null", () => {
@@ -75,11 +77,35 @@ describe("importSvg", () => {
     expect(signedArea(regions[0].holes[0])).toBeLessThan(0);
   });
 
-  it("fill=none の形状は領域にならない", () => {
+  it("fill=none + stroke の形状は線がリボン領域として縫える", () => {
     const svg = `<svg><rect x="0" y="0" width="10" height="10" fill="none" stroke="black"/>
       <rect x="20" y="0" width="10" height="10" fill="black"/></svg>`;
     const { regions } = importSvg(svg);
+    // 塗りの矩形 + ストローク(閉路)のリボン環 = 2領域
+    expect(regions.length).toBe(2);
+  });
+
+  it("fill=none かつ stroke なしの形状は領域にならない", () => {
+    const svg = `<svg><rect x="0" y="0" width="10" height="10" fill="none"/>
+      <rect x="20" y="0" width="10" height="10" fill="black"/></svg>`;
+    const { regions } = importSvg(svg);
     expect(regions.length).toBe(1);
+  });
+
+  it("開いた線 (stroke のみのパス) がリボン領域になる", () => {
+    const svg = `<svg><path d="M0 0 L100 0 L100 80" fill="none" stroke="red" stroke-width="4"/></svg>`;
+    const { regions } = importSvg(svg);
+    expect(regions.length).toBe(1);
+    expect(regions[0].color).toEqual({ r: 255, g: 0, b: 0 });
+    expect(regions[0].holes).toHaveLength(0); // 開いた線は穴なしの1枚帯
+    expect(regions[0].outer.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("stroke 由来のリボン領域が実際にステッチ化される (線が縫える)", () => {
+    const svg = `<svg><path d="M0 0 L100 0" fill="none" stroke="black" stroke-width="6"/></svg>`;
+    const { regions } = importSvg(svg);
+    const { plan } = digitizeRegions(regions, "LINE");
+    expect(countStitches(plan)).toBeGreaterThan(0);
   });
 
   it("100mm 枠に収まるよう中心配置でスケールされる", () => {

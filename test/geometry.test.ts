@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chaikinClosed,
+  chaikinClosedPreserveCorners,
   pointInPolygon,
   pointSegmentDistance,
   selfIntersects,
@@ -73,6 +74,49 @@ describe("chaikinClosed", () => {
     const a = Math.abs(signedArea(smooth));
     expect(a).toBeGreaterThan(100 * 100 * 0.8);
     expect(a).toBeLessThan(100 * 100);
+  });
+});
+
+describe("chaikinClosedPreserveCorners", () => {
+  it("矩形の鋭い角は固定され、丸まらない (ロゴ・文字のシャープさを保つ)", () => {
+    const square: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ];
+    const out = chaikinClosedPreserveCorners(square, 2);
+    // 90°の角は全て固定 → 4頂点の矩形のまま (通常 Chaikin は16点に丸める)
+    expect(out.length).toBe(4);
+    for (const c of square) {
+      expect(out.some((p) => Math.abs(p.x - c.x) < 1e-6 && Math.abs(p.y - c.y) < 1e-6)).toBe(true);
+    }
+  });
+
+  it("ゆるい屈曲だけの輪郭 (多角形近似の円) は平滑化される", () => {
+    const n = 24;
+    const circle: Point[] = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i / n) * 2 * Math.PI;
+      circle.push({ x: 100 * Math.cos(t), y: 100 * Math.sin(t) });
+    }
+    // 1頂点あたりの屈曲角は 360/24 = 15° で閾値未満 → 全て丸められ点数が増える
+    const out = chaikinClosedPreserveCorners(circle, 1);
+    expect(out.length).toBe(n * 2);
+  });
+
+  it("角と曲線が混在する形状: 角は残し曲線は丸める", () => {
+    // 下辺が直線で上が尖った「家」形 (頂点は鋭角、底の2角は直角)
+    const house: Point[] = [
+      { x: 0, y: 0 },
+      { x: 50, y: -80 }, // 屋根の頂点 (鋭角)
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ];
+    const out = chaikinClosedPreserveCorners(house, 2);
+    // 屋根の頂点は鋭角なので固定されて残る
+    expect(out.some((p) => Math.abs(p.x - 50) < 1e-6 && Math.abs(p.y + 80) < 1e-6)).toBe(true);
   });
 });
 
