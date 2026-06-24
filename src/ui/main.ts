@@ -82,12 +82,8 @@ import {
   vectorSetAllType,
   vectorTabContent,
 } from "./vectorEdit";
-import {
-  AI_MODELS,
-  AI_PROVIDER_LABELS,
-  analyzeImage,
-} from "../ai/aiAssist";
-import type { AiProvider, AiRecommendation } from "../ai/aiAssist";
+import { analyzeWithAi } from "../ai/client";
+import type { AiAnalysis, AiCorrectionSettings } from "../ai/types";
 import { localRecommend } from "../plan/localRecommend";
 import "./app.css";
 
@@ -100,6 +96,11 @@ let simTimer: number | null = null;
 let detachVectorPointer: (() => void) | null = null;
 /** 直近のピンチ/パン操作の終了時刻 (ms)。直後のタップ選択を抑止する */
 let lastPinchEnd = 0;
+
+// 旧バージョンの API キーを localStorage から削除 (セキュリティ対策)
+for (const k of ["ai_key_claude", "ai_key_openai", "ai_key_gemini", "ai_proxy_claude"]) {
+  localStorage.removeItem(k);
+}
 
 function download(filename: string, data: Uint8Array | string, mime = "application/octet-stream"): void {
   const blob = typeof data === "string" ? new Blob([data], { type: mime }) : new Blob([data.buffer as ArrayBuffer], { type: mime });
@@ -230,17 +231,8 @@ function excludedPanel(): string {
 }
 
 function aiAssistSection(): string {
-  const models = AI_MODELS[state.aiProvider];
-  const savedKey = localStorage.getItem(`ai_key_${state.aiProvider}`) ?? "";
-  const savedProxy = localStorage.getItem("ai_proxy_claude") ?? "";
   const isLoading = state.aiStatus === "loading";
-
-  const providerSelect = (Object.keys(AI_PROVIDER_LABELS) as AiProvider[])
-    .map((p) => `<option value="${p}" ${state.aiProvider === p ? "selected" : ""}>${AI_PROVIDER_LABELS[p]}</option>`)
-    .join("");
-  const modelSelect = models
-    .map((m) => `<option value="${m}" ${state.aiModel === m ? "selected" : ""}>${m}</option>`)
-    .join("");
+  const c = state.aiCorrection;
 
   const resultHtml = ((): string => {
     if (state.aiStatus === "error") {
@@ -252,7 +244,10 @@ function aiAssistSection(): string {
     const satinLabel: Record<string, string> = { auto: "自動", none: "なし", center: "センター", "center-zigzag": "センター+ジグザグ" };
     const densityLabel: Record<string, string> = { "0.9": "高密度", "1": "標準", "1.25": "省針数", "1.5": "最省針数" };
     const underlayLabel = r.underlay.length === 0 ? "なし" : r.underlay.join(", ");
-    const srcLabel = state.aiResultSource === "ai" ? "外部 AI による提案" : "端末内の自動解析";
+    const srcLabel = state.aiResultSource === "ai" ? "AI 解析による提案" : "端末内の自動解析";
+
+    const analysisExtra = state.aiAnalysis ? aiAnalysisDetail(state.aiAnalysis) : "";
+
     return `
       <div class="ai-result">
         <div class="ai-src">${srcLabel}</div>
@@ -268,6 +263,7 @@ function aiAssistSection(): string {
             <tr><td>白背景除去</td><td>${r.removeWhiteBackground ? "はい" : "いいえ"}</td></tr>
           </tbody>
         </table>
+        ${analysisExtra}
         ${r.tips.length > 0 ? `<ul class="ai-tips">${r.tips.map((t) => `<li>${t}</li>`).join("")}</ul>` : ""}
         <button id="ai-apply">この設定を適用</button>
       </div>`;
@@ -276,28 +272,35 @@ function aiAssistSection(): string {
   return `
     <h2>おまかせ設定</h2>
     <div class="ai-panel">
-      <p class="note">画像を解析して、色数・縫い方・下縫い・密度の推奨値を提案します。まずは無料・オフラインの自動解析がおすすめです。</p>
-      <button id="ai-local">おまかせ設定を計算 (無料・オフライン)</button>
-      ${resultHtml}
-      <details class="ai-advanced" ${state.aiResultSource === "ai" ? "open" : ""}>
-        <summary>外部 AI に相談する (上級者向け・API キーが必要)</summary>
-        <p class="note">OpenAI・Google・Anthropic の API キーをお持ちの場合、より高度な解析ができます。無料枠では時間をおくと制限が解除されます (429 エラー時)。</p>
-        <label>AI プロバイダー
-          <select id="ai-provider">${providerSelect}</select>
-        </label>
-        <label>モデル
-          <select id="ai-model">${modelSelect}</select>
-        </label>
-        <label>API キー
-          <input type="password" id="ai-key" placeholder="sk-..." value="${savedKey}" autocomplete="off">
-        </label>
-        ${state.aiProvider === "claude" ? `<label>プロキシ URL (Claude 必須)
-          <input type="url" id="ai-proxy" placeholder="https://your-proxy.example.com" value="${savedProxy}">
-        </label>
-        <p class="note">Anthropic API はブラウザから直接呼べないため、CORS プロキシが必要です。</p>` : ""}
-        <button id="ai-analyze" ${isLoading ? "disabled" : ""}>${isLoading ? "解析中…" : "AI で解析"}</button>
+      <button id="ai-local" ${isLoading ? "disabled" : ""}>おまかせ設定を計算 (オフライン)</button>
+      <button id="ai-analyze" ${isLoading ? "disabled" : ""}>${isLoading ? "AI 解析中…" : "AI で解析 (サーバー経由)"}</button>
+      <p class="note">オフライン: 即座に計算、無料。AI 解析: バックエンド経由でより詳細な解析 (要 Vercel デプロイ)。</p>
+
+      <details class="ai-advanced">
+        <summary>AI 補正の設定</summary>
+        <label><input type="checkbox" class="ai-opt" data-key="protectHighlights" ${c.protectHighlights ? "checked" : ""}> 白目・ハイライトを保護</label>
+        <label><input type="checkbox" class="ai-opt" data-key="preserveTransparency" ${c.preserveTransparency ? "checked" : ""}> 透明・白抜き部分を保持</label>
+        <label><input type="checkbox" class="ai-opt" data-key="simplifyPhoto" ${c.simplifyPhoto ? "checked" : ""}> 写真を刺繍向けに単純化</label>
+        <label><input type="checkbox" class="ai-opt" data-key="minimizeTrims" ${c.minimizeTrims ? "checked" : ""}> 糸切りを減らす</label>
+        <label><input type="checkbox" class="ai-opt" data-key="autoStitchType" ${c.autoStitchType ? "checked" : ""}> サテン/タタミを自動判定</label>
       </details>
+
+      ${resultHtml}
     </div>`;
+}
+
+function aiAnalysisDetail(a: AiAnalysis): string {
+  const parts: string[] = [];
+  const typeLabel: Record<string, string> = { photo: "写真", illustration: "イラスト", anime: "アニメ絵", logo: "ロゴ", line_art: "線画" };
+  parts.push(`<div class="ai-detail-tag">種類: ${typeLabel[a.image_type] ?? a.image_type}</div>`);
+  if (a.protected_regions.length > 0) {
+    const names = a.protected_regions.map((r) => r.name).join("、");
+    parts.push(`<div class="ai-detail-tag">保護領域: ${names}</div>`);
+  }
+  if (a.warnings.length > 0) {
+    parts.push(a.warnings.map((w) => `<div class="ai-warning-tag">⚠ ${w.message}</div>`).join(""));
+  }
+  return `<div class="ai-detail">${parts.join("")}</div>`;
 }
 
 function colorTab(): string {
@@ -1678,6 +1681,7 @@ function bindSpecialTab(): void {
 }
 
 function bindAiAssist(): void {
+  // オフライン解析
   document.getElementById("ai-local")?.addEventListener("click", () => {
     if (state.regions.length === 0) {
       state.aiStatus = "error";
@@ -1686,79 +1690,79 @@ function bindAiAssist(): void {
       return;
     }
     state.aiResult = localRecommend(state.regions, state.diagnostics?.stats ?? null);
+    state.aiAnalysis = null;
     state.aiResultSource = "local";
-    state.aiStatus = "idle";
+    state.aiStatus = "done";
     state.aiError = "";
     render();
   });
-  document.getElementById("ai-provider")?.addEventListener("change", (e) => {
-    state.aiProvider = (e.target as HTMLSelectElement).value as AiProvider;
-    state.aiModel = AI_MODELS[state.aiProvider][0];
-    state.aiResult = null;
-    state.aiStatus = "idle";
-    render();
-  });
-  document.getElementById("ai-model")?.addEventListener("change", (e) => {
-    state.aiModel = (e.target as HTMLSelectElement).value;
-  });
-  document.getElementById("ai-key")?.addEventListener("change", (e) => {
-    localStorage.setItem(`ai_key_${state.aiProvider}`, (e.target as HTMLInputElement).value);
-  });
-  document.getElementById("ai-proxy")?.addEventListener("change", (e) => {
-    localStorage.setItem("ai_proxy_claude", (e.target as HTMLInputElement).value);
-  });
+
+  // AI 補正トグル
+  document.querySelectorAll<HTMLInputElement>(".ai-opt").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      const key = cb.dataset.key as keyof AiCorrectionSettings;
+      if (key) state.aiCorrection[key] = cb.checked;
+    }),
+  );
+
+  // AI 解析 (バックエンド経由)
   document.getElementById("ai-analyze")?.addEventListener("click", () => {
     const src = state.project.source;
-    if (src.kind === "none") return;
-    const apiKey = (document.getElementById("ai-key") as HTMLInputElement | null)?.value.trim() ?? "";
-    if (!apiKey) {
-      state.aiStatus = "error";
-      state.aiError = "API キーを入力してください。";
-      render();
-      return;
-    }
-    const dataUrl = src.data ?? "";
-    if (!dataUrl || src.kind !== "image") {
+    if (src.kind !== "image" || !src.data) {
       state.aiStatus = "error";
       state.aiError = "画像データが見つかりません。PNG/JPG を読み込んでください。";
       render();
       return;
     }
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
-    if (!match) {
-      state.aiStatus = "error";
-      state.aiError = "画像フォーマットを読み取れませんでした。";
-      render();
-      return;
-    }
-    const [, mimeType, base64] = match;
-    const proxyUrl = (document.getElementById("ai-proxy") as HTMLInputElement | null)?.value.trim() ?? "";
-    if (state.aiProvider === "claude" && !proxyUrl) {
-      state.aiStatus = "error";
-      state.aiError = "Claude にはプロキシ URL が必要です。";
-      render();
-      return;
-    }
     state.aiStatus = "loading";
     state.aiResult = null;
+    state.aiAnalysis = null;
     state.aiError = "";
     render();
-    void analyzeImage(base64, mimeType, {
-      provider: state.aiProvider,
-      model: state.aiModel,
-      apiKey,
-      proxyUrl: proxyUrl || undefined,
-    }).then((rec: AiRecommendation) => {
-      state.aiResult = rec;
-      state.aiResultSource = "ai";
-      state.aiStatus = "idle";
-      render();
-    }).catch((err: unknown) => {
-      state.aiStatus = "error";
-      state.aiError = err instanceof Error ? err.message : String(err);
+
+    const stats = state.diagnostics?.stats ?? null;
+    void analyzeWithAi(src.data, {
+      originalWidth: state.raster?.width ?? 0,
+      originalHeight: state.raster?.height ?? 0,
+      hasTransparentPixels: false,
+      currentColorCount: state.project.settings.colorCount,
+      dominantColors: stats?.perColor.slice(0, 8).map((c) => ({
+        r: c.thread.r, g: c.thread.g, b: c.thread.b,
+        percentage: stats.stitchCount > 0 ? (c.stitches / stats.stitchCount) * 100 : 0,
+      })) ?? [],
+      estimatedStitchCount: stats?.stitchCount ?? null,
+      targetSizeMm: state.project.settings.targetSizeMm,
+      maxColors: state.project.settings.colorCount,
+      maxStitches: state.project.settings.targetStitchCount ?? null,
+      fillType: state.fillType,
+      angleDeg: state.project.settings.angleDeg,
+      densityScale: state.project.settings.densityScale ?? 1,
+      trimMode: state.project.settings.trimMode,
+    }, state.aiCorrection).then((result) => {
+      if ("error" in result) {
+        // AI 失敗 → オフラインフォールバック
+        if (state.regions.length > 0) {
+          state.aiResult = localRecommend(state.regions, stats);
+          state.aiAnalysis = null;
+          state.aiResultSource = "local";
+          state.aiStatus = "done";
+          state.aiError = `AI補正に失敗したため、通常処理で続行しました。(${result.error})`;
+        } else {
+          state.aiStatus = "error";
+          state.aiError = result.error;
+        }
+      } else {
+        state.aiAnalysis = result.analysis;
+        state.aiResult = analysisToRecommendation(result.analysis);
+        state.aiResultSource = "ai";
+        state.aiStatus = "done";
+        state.aiError = "";
+      }
       render();
     });
   });
+
+  // 設定を適用
   document.getElementById("ai-apply")?.addEventListener("click", () => {
     const r = state.aiResult;
     if (!r) return;
@@ -1774,6 +1778,39 @@ function bindAiAssist(): void {
     else recomputeStitches(state);
     render();
   });
+}
+
+function analysisToRecommendation(a: AiAnalysis): import("../ai/types").AiRecommendation {
+  const densityMap: Record<string, number> = { low: 1.5, medium: 1.0, high: 0.9 };
+  const avgDensity = a.stitch_plan.length > 0
+    ? a.stitch_plan.reduce((sum, s) => sum + (densityMap[s.density] ?? 1.0), 0) / a.stitch_plan.length
+    : 1.0;
+  const validDensity = [0.9, 1.0, 1.25, 1.5];
+  const density = validDensity.reduce((best, v) => Math.abs(v - avgDensity) < Math.abs(best - avgDensity) ? v : best, 1.0);
+
+  const satinCount = a.stitch_plan.filter((s) => s.stitch_type === "satin").length;
+  const tatamiCount = a.stitch_plan.filter((s) => s.stitch_type === "tatami").length;
+  const fillType = satinCount > tatamiCount * 2 ? "satin" as const : tatamiCount > satinCount * 2 ? "tatami" as const : "auto" as const;
+
+  const tips = a.warnings.map((w) => w.message).slice(0, 3);
+  if (a.protected_regions.length > 0) {
+    tips.unshift(`保護領域: ${a.protected_regions.map((r) => r.name).join("、")}`);
+  }
+
+  const typeLabel: Record<string, string> = { photo: "写真", illustration: "イラスト", anime: "アニメ絵", logo: "ロゴ", line_art: "線画" };
+  const analysis = `${typeLabel[a.image_type] ?? a.image_type}として検出。${a.color_reduction_plan.target_color_count} 色に減色を推奨。`;
+
+  return {
+    analysis,
+    colorCount: a.color_reduction_plan.target_color_count,
+    fillType,
+    angleDeg: 45,
+    densityScale: density,
+    underlay: fillType === "tatami" || fillType === "auto" ? ["edge"] : [],
+    satinUnderlay: "auto",
+    removeWhiteBackground: a.transparent_or_empty_regions.length > 0,
+    tips: tips.slice(0, 3),
+  };
 }
 
 function bindVectorTab(): void {

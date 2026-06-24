@@ -5,7 +5,7 @@
 import { pathBounds, signedArea } from "../core/geometry";
 import type { Region } from "../core/region";
 import type { PlanStats } from "./stats";
-import type { AiRecommendation } from "../ai/aiAssist";
+import type { AiRecommendation } from "../ai/types";
 
 /** Region の塗り面積 (内部単位²)。穴は差し引く */
 function regionArea(r: Region): number {
