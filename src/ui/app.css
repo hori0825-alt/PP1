@@ -992,9 +992,7 @@ textarea#txt-input {
   font-weight: 500;
 }
 
-.ai-panel select,
-.ai-panel input[type="password"],
-.ai-panel input[type="url"] {
+.ai-panel select {
   padding: 5px 8px;
   border: 1px solid #b3c8e0;
   border-radius: 4px;
@@ -1079,6 +1077,38 @@ textarea#txt-input {
 .ai-advanced > p,
 .ai-advanced > button {
   margin-top: 8px;
+}
+
+.ai-advanced label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #3a4a5c;
+  cursor: pointer;
+}
+
+.ai-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.ai-detail-tag {
+  padding: 2px 8px;
+  background: #e8f0fa;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #2a5080;
+}
+
+.ai-warning-tag {
+  padding: 2px 8px;
+  background: #fff5e0;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #8a6010;
 }
 
 /* --- モバイル / 狭幅レイアウト --- */

@@ -64,6 +64,46 @@ npm run samples   # 実機テスト用サンプルを samples/ に生成
 - シーケンスビュー、ステッチシミュレーター、出力前診断
 - 作業指示書 PDF (印刷)・QR コード・プレビュー画像、デザインライブラリ
 
+## AI 解析 (v3.21.0〜)
+
+画像を AI で解析し、減色・ベクター化・ステッチ化の設定を自動提案します。
+
+### セキュリティ
+
+- API キーはフロントエンド (HTML/JS/localStorage/URL) に **一切含まれません**
+- API キーはバックエンド (Vercel Edge Functions) の環境変数でのみ管理します
+- フロントエンドは `/api/embroidery-ai` に POST し、解析結果の JSON だけを受け取ります
+
+### 2つのモード
+
+| モード | 説明 | 要件 |
+|---|---|---|
+| おまかせ設定 (オフライン) | パーツ形状から設定を即座に計算 | なし (常に利用可) |
+| AI 解析 (サーバー経由) | OpenAI GPT-4o で画像を詳細解析 | Vercel デプロイ + API キー |
+
+### デプロイ方法
+
+#### A. Vercel にデプロイ (推奨: フロントエンド + AI)
+
+1. Vercel にリポジトリを接続
+2. 環境変数を設定: `OPENAI_API_KEY=sk-...` / `OPENAI_MODEL=gpt-4o` (省略可)
+3. デプロイ (`api/embroidery-ai.ts` が Edge Function として自動認識)
+
+#### B. GitHub Pages + Vercel API (分離構成)
+
+1. Vercel に同リポジトリを接続し環境変数を設定
+2. GitHub Pages 側のビルド時: `VITE_AI_API_URL=https://your-project.vercel.app npm run build`
+
+#### 環境変数
+
+| 変数名 | 設置場所 | 説明 |
+|---|---|---|
+| `OPENAI_API_KEY` | Vercel 環境変数 | OpenAI API キー (バックエンド専用) |
+| `OPENAI_MODEL` | Vercel 環境変数 | 使用モデル (省略時 `gpt-4o`) |
+| `VITE_AI_API_URL` | ビルド時環境変数 | AI バックエンドの URL (分離構成時のみ) |
+
+`.env.example` → `.env` にコピーしてローカル開発に使えます。`.env` は `.gitignore` に含まれています。
+
 ## アーキテクチャ
 
 責務を分離し、コアロジックは DOM 非依存でテスト可能です。
