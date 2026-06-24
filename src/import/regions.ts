@@ -11,7 +11,7 @@
 
 import { mm } from "../core/constants";
 import {
-  chaikinClosed,
+  chaikinClosedPreserveCorners,
   polygonCentroid,
   pointInPolygon,
   selfIntersects,
@@ -150,8 +150,10 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
   });
 
   const refine = (path: Point[]): Point[] => {
+    // DP で階段ノイズを除去 → 角を保存しつつ曲線だけ平滑化 → 再 DP で冗長点を除く。
+    // ロゴ・文字の直角やセリフが鈍らないよう、鋭い屈曲は固定する。
     let p = simplifyClosed(path, tolerance);
-    p = chaikinClosed(p, smoothing);
+    p = chaikinClosedPreserveCorners(p, smoothing);
     p = simplifyClosed(p, tolerance / 2);
     return p.map(toUnits);
   };

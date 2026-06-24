@@ -122,6 +122,53 @@ export function chaikinClosed(path: Point[], iterations = 1): Point[] {
   return pts;
 }
 
+/** 3点 a-b-c の b における屈曲角 (度)。直線なら 0、鋭角なら大きい */
+function turnAngleDeg(a: Point, b: Point, c: Point): number {
+  const v1x = b.x - a.x;
+  const v1y = b.y - a.y;
+  const v2x = c.x - b.x;
+  const v2y = c.y - b.y;
+  const l1 = Math.hypot(v1x, v1y);
+  const l2 = Math.hypot(v2x, v2y);
+  if (l1 < 1e-9 || l2 < 1e-9) return 0;
+  const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+/**
+ * 角を保存する Chaikin スムージング (閉路)。
+ * 各頂点の屈曲角が cornerAngleDeg 以上なら「角」とみなして位置を固定し、
+ * それ未満のゆるい頂点だけを丸める。ロゴ・文字の直角やセリフ、星型の尖りを
+ * 残しつつ、曲線部のピクセル階段だけを滑らかにする。
+ * Douglas-Peucker で簡略化した後 (=意味のある頂点だけ残った状態) に適用する前提。
+ */
+export function chaikinClosedPreserveCorners(
+  path: Point[],
+  iterations: number,
+  cornerAngleDeg = 60,
+): Point[] {
+  let pts = path;
+  for (let it = 0; it < iterations; it++) {
+    const n = pts.length;
+    if (n < 3) return pts.slice();
+    const next: Point[] = [];
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n];
+      const cur = pts[i];
+      const nxt = pts[(i + 1) % n];
+      if (turnAngleDeg(prev, cur, nxt) >= cornerAngleDeg) {
+        next.push({ x: cur.x, y: cur.y }); // 角は固定して丸めない
+      } else {
+        // ゆるい頂点は前後へ 1/4 ずつ寄せた2点に置換 (角を切り落として丸める)
+        next.push({ x: cur.x + (prev.x - cur.x) * 0.25, y: cur.y + (prev.y - cur.y) * 0.25 });
+        next.push({ x: cur.x + (nxt.x - cur.x) * 0.25, y: cur.y + (nxt.y - cur.y) * 0.25 });
+      }
+    }
+    pts = next;
+  }
+  return pts;
+}
+
 /**
  * 方向ベクトル (dx,dy) からステッチ角度 (度) を求める。
  * ステッチの向きは 180° 周期 (逆向きでも縫い目は同じ) なので [0,180) に正規化する。
