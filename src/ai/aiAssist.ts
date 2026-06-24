@@ -66,6 +66,27 @@ export async function analyzeImage(
   }
 }
 
+async function extractApiError(res: Response, provider: string): Promise<never> {
+  const body = await res.text().catch(() => "");
+  let message = "";
+  try {
+    const obj = JSON.parse(body) as Record<string, unknown>;
+    const err = (obj["error"] ?? obj) as Record<string, unknown>;
+    message = String(err["message"] ?? "");
+  } catch {
+    message = body.slice(0, 200);
+  }
+  const hint = res.status === 429
+    ? "レート制限に達しました。しばらく待ってから再試行してください。"
+    : res.status === 401 || res.status === 403
+    ? "API キーが正しくないか期限切れです。"
+    : res.status === 400
+    ? "リクエスト内容が正しくありません (画像サイズが大きすぎる可能性があります)。"
+    : "";
+  const full = [message, hint].filter(Boolean).join(" — ");
+  throw new Error(`${provider} API エラー ${res.status}: ${full}`);
+}
+
 async function callClaude(
   base64Image: string,
   mimeType: string,
@@ -98,10 +119,7 @@ async function callClaude(
       ],
     }),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Claude API エラー ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) await extractApiError(res, "Claude");
   const data = (await res.json()) as { content: { type: string; text: string }[] };
   const text = data.content.find((c) => c.type === "text")?.text ?? "";
   return parseRecommendation(text);
@@ -135,10 +153,7 @@ async function callOpenAI(
       ],
     }),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`OpenAI API エラー ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) await extractApiError(res, "OpenAI");
   const data = (await res.json()) as {
     choices: { message: { content: string } }[];
   };
@@ -166,10 +181,7 @@ async function callGemini(
       generationConfig: { maxOutputTokens: 512 },
     }),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gemini API エラー ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) await extractApiError(res, "Gemini");
   const data = (await res.json()) as {
     candidates: { content: { parts: { text: string }[] } }[];
   };
