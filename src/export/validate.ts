@@ -7,6 +7,7 @@ import {
   MAX_STITCH_COUNT,
   MAX_STITCH_LEN,
   MIN_STITCH_LEN,
+  TRIM_THRESHOLDS,
   TRIM_WARN_FACTOR,
 } from "../core/constants";
 import { countColorChanges, countStitches, countTrims, distance, planBounds } from "../core/plan";
@@ -24,6 +25,8 @@ export interface ValidationIssue {
     | "short-stitches"
     | "too-many-colors"
     | "too-many-trims"
+    | "trim-in-object"
+    | "long-jump"
     | "empty-plan";
   message: string;
 }
@@ -94,6 +97,8 @@ export function validatePlan(plan: StitchPlan): ValidationResult {
   let shortStitches = 0;
   let longInRun = 0;
   let continuousTooFar = 0;
+  let trimInObject = 0;
+  let longJumps = 0;
   for (const block of plan.blocks) {
     for (let ri = 0; ri < block.runs.length; ri++) {
       const run = block.runs[ri];
@@ -102,12 +107,23 @@ export function validatePlan(plan: StitchPlan): ValidationResult {
         if (d > MAX_STITCH_LEN) longInRun++;
         else if (d > 0 && d < MIN_STITCH_LEN) shortStitches++;
       }
-      // continuous 接続は通常ステッチで移動するため距離制限がある
-      if (ri > 0 && run.connection === "continuous" && run.stitches.length > 0) {
+      if (ri > 0 && run.stitches.length > 0) {
         const prev = block.runs[ri - 1];
         if (prev.stitches.length > 0) {
-          const d = distance(prev.stitches[prev.stitches.length - 1], run.stitches[0]);
-          if (d > MAX_STITCH_LEN) continuousTooFar++;
+          const gap = distance(prev.stitches[prev.stitches.length - 1], run.stitches[0]);
+          // continuous 接続は通常ステッチで移動するため距離制限がある
+          if (run.connection === "continuous" && gap > MAX_STITCH_LEN) continuousTooFar++;
+          // 糸を切らない渡り (jump) が長いと渡り糸が表に出て引っかかる
+          if (run.connection === "jump" && gap > TRIM_THRESHOLDS.trimAbove) longJumps++;
+        }
+        // 面内糸切り: 同一オブジェクトの連続 Run 間に trim があってはならない。
+        // 糸切り根絶設計 (1領域=1連続Run) が崩れた時に出力前で必ず止める安全網。
+        if (
+          run.connection === "trim" &&
+          run.objectId !== undefined &&
+          run.objectId === prev.objectId
+        ) {
+          trimInObject++;
         }
       }
     }
@@ -131,6 +147,20 @@ export function validatePlan(plan: StitchPlan): ValidationResult {
       severity: "warning",
       code: "short-stitches",
       message: `${MIN_STITCH_LEN / 10}mm 未満の短いステッチが ${shortStitches} 針あります`,
+    });
+  }
+  if (trimInObject > 0) {
+    issues.push({
+      severity: "error",
+      code: "trim-in-object",
+      message: `同一オブジェクト内に糸切りが ${trimInObject} 箇所あります (面の途中で糸が切れます)`,
+    });
+  }
+  if (longJumps > 0) {
+    issues.push({
+      severity: "warning",
+      code: "long-jump",
+      message: `${TRIM_THRESHOLDS.trimAbove / 10}mm を超える渡り (糸切りなし) が ${longJumps} 箇所あります (渡り糸が引っかかる恐れ)`,
     });
   }
 

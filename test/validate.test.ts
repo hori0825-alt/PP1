@@ -86,4 +86,61 @@ describe("validatePlan", () => {
     expect(result.ok).toBe(false);
     expect(result.issues.some((i) => i.code === "empty-plan")).toBe(true);
   });
+
+  it("同一オブジェクト内の糸切りは error (面内糸切り検出)", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        {
+          thread: black,
+          runs: [
+            { stitches: [{ x: 0, y: 0 }, { x: mm(3), y: 0 }], connection: "trim", objectId: 1 },
+            { stitches: [{ x: mm(6), y: 0 }, { x: mm(9), y: 0 }], connection: "trim", objectId: 1 },
+          ],
+        },
+      ],
+    };
+    const result = validatePlan(plan);
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((i) => i.code === "trim-in-object" && i.severity === "error")).toBe(
+      true,
+    );
+  });
+
+  it("別オブジェクト間の糸切りは許容される (error にしない)", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        {
+          thread: black,
+          runs: [
+            { stitches: [{ x: 0, y: 0 }, { x: mm(3), y: 0 }], connection: "trim", objectId: 1 },
+            { stitches: [{ x: mm(6), y: 0 }, { x: mm(9), y: 0 }], connection: "trim", objectId: 2 },
+          ],
+        },
+      ],
+    };
+    const result = validatePlan(plan);
+    expect(result.issues.some((i) => i.code === "trim-in-object")).toBe(false);
+  });
+
+  it("糸切りなしの長い渡り (jump) は warning", () => {
+    const plan: StitchPlan = {
+      name: "T",
+      blocks: [
+        {
+          thread: black,
+          runs: [
+            { stitches: [{ x: 0, y: 0 }, { x: mm(3), y: 0 }], connection: "trim" },
+            // 前 Run 終点 (3mm,0) から 15mm 離れた点へ糸を切らずに渡る
+            { stitches: [{ x: mm(18), y: 0 }, { x: mm(21), y: 0 }], connection: "jump" },
+          ],
+        },
+      ],
+    };
+    const result = validatePlan(plan);
+    expect(result.issues.some((i) => i.code === "long-jump" && i.severity === "warning")).toBe(
+      true,
+    );
+  });
 });
