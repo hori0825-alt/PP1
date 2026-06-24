@@ -410,5 +410,5 @@ export function satinFromRegion(region: Region, params: SatinParams): GeneratorR
     );
   }
 
-  return { runs: [satinFromRails(railL, railR)], warnings };
+  return { runs: [satinFromRails(railL, railR)], warnings, branched };
 }
