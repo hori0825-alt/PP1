@@ -122,6 +122,65 @@ export function chaikinClosed(path: Point[], iterations = 1): Point[] {
   return pts;
 }
 
+/**
+ * 折れ線 (ストローク中心線) を太さ halfWidth で囲んだ閉じたリボン (帯) にする。
+ * 開いた線は両端をバットキャップで閉じた1枚の帯に、閉じた線は外側リングと
+ * 内側リング (穴) を持つ環にする。線画 (fill=none の SVG パス) を縫える領域へ
+ * 変換するのに使う。各頂点で前後セグメントの法線を平均して左右へオフセットする
+ * (鋭角はベベル相当に少し痩せるが、線画のデジタイズには十分)。
+ */
+export function strokeToRegionPaths(
+  points: Point[],
+  closed: boolean,
+  halfWidth: number,
+): { outer: Point[]; holes: Point[][] } | null {
+  // 連続する重複点を除去
+  const pts: Point[] = [];
+  for (const p of points) {
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-6) pts.push(p);
+  }
+  if (closed && pts.length > 1) {
+    const a = pts[0];
+    const b = pts[pts.length - 1];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) pts.pop(); // 閉路の重複終点を除去
+  }
+  const n = pts.length;
+  if (n < 2 || halfWidth <= 0) return null;
+
+  const left: Point[] = [];
+  const right: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    let nx = 0;
+    let ny = 0;
+    const addSeg = (a: Point, b: Point): void => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-9) return;
+      nx += -dy / len; // 進行方向に対する左法線
+      ny += dx / len;
+    };
+    if (closed || i > 0) addSeg(pts[(i - 1 + n) % n], pts[i]);
+    if (closed || i < n - 1) addSeg(pts[i], pts[(i + 1) % n]);
+    const nl = Math.hypot(nx, ny);
+    if (nl >= 1e-9) {
+      nx /= nl;
+      ny /= nl;
+    }
+    left.push({ x: pts[i].x + nx * halfWidth, y: pts[i].y + ny * halfWidth });
+    right.push({ x: pts[i].x - nx * halfWidth, y: pts[i].y - ny * halfWidth });
+  }
+
+  if (closed) {
+    // 同心の2リング → 面積が大きい方を外周、小さい方を穴にする
+    const aL = Math.abs(signedArea(left));
+    const aR = Math.abs(signedArea(right));
+    return aL >= aR ? { outer: left, holes: [right] } : { outer: right, holes: [left] };
+  }
+  return { outer: [...left, ...right.reverse()], holes: [] };
+}
+
 /** 3点 a-b-c の b における屈曲角 (度)。直線なら 0、鋭角なら大きい */
 function turnAngleDeg(a: Point, b: Point, c: Point): number {
   const v1x = b.x - a.x;
