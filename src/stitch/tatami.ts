@@ -191,9 +191,14 @@ export function tatamiFill(
     }
   }
 
-  // --- 連結成分ごとに DFS でセクションを縫い、1本の Run にする ---
+  // --- 全セクションを1本の連続 Run に縫う (糸切り根絶: 1領域 = 1連続 Run) ---
+  // 連結成分が複数に割れても、成分間は現在位置から最も近い未訪問セクションへ
+  // 移動ステッチ (可能なら縁沿い Travel on Edge) で繋ぎ、面の途中で糸を切らない。
   const runs: StitchRun[] = [];
   const visited = new Set<Section>();
+  const stitches: Point[] = [];
+  let pos: Point | null = null;
+  let posRef: CrossRef | null = null;
 
   // セクションと点の最短距離 (端点4候補で近似)
   const sectionDist = (sec: Section, p: Point): number => {
@@ -210,9 +215,21 @@ export function tatamiFill(
     return best;
   };
 
-  for (let comp = 0; comp < compCount; comp++) {
-    const compSections = sections.filter((s) => s.component === comp);
-    if (compSections.length === 0) continue;
+  while (visited.size < sections.length) {
+    // 次に縫う成分の起点: 現在位置 (なければ startNear) に最も近い未訪問セクション。
+    // adj は同一成分内のみを繋ぐので、DFS は1成分を縫い切ってから次成分へ移る。
+    const ref = pos ?? startRot;
+    let root: Section | null = null;
+    let bestRoot = Infinity;
+    for (const sec of sections) {
+      if (visited.has(sec)) continue;
+      const d = ref ? sectionDist(sec, ref) : sec.segs[0].y;
+      if (d < bestRoot) {
+        bestRoot = d;
+        root = sec;
+      }
+    }
+    if (!root) break;
 
     const order: Section[] = [];
     const dfs = (sec: Section): void => {
@@ -225,23 +242,7 @@ export function tatamiFill(
         if (!visited.has(nb)) dfs(nb);
       }
     };
-    // startNear が指定されていれば最も近いセクションから縫い始める
-    let root = compSections[0];
-    if (startRot) {
-      let bestD = Infinity;
-      for (const sec of compSections) {
-        const d = sectionDist(sec, startRot);
-        if (d < bestD) {
-          bestD = d;
-          root = sec;
-        }
-      }
-    }
     dfs(root);
-
-    const stitches: Point[] = [];
-    let pos: Point | null = null;
-    let posRef: CrossRef | null = null;
 
     for (const sec of order) {
       // 入口: 先頭行 or 最終行 × 左端 or 右端 の4候補から現在位置に最も近いものを選ぶ
@@ -306,28 +307,30 @@ export function tatamiFill(
         leftToRight = !leftToRight;
       }
     }
-
-    // 出口トラベル (Travel on Edge): 次のオブジェクトに最も近い境界点まで
-    // 縁に沿って移動してから終わる。渡り距離が縮む場合のみ行う
-    if (exitRot !== null && pos !== null && posRef !== null) {
-      const ring = rings[posRef.ring];
-      const near = nearestOnRing(ring, exitRot);
-      const dDirect = Math.hypot(exitRot.x - pos.x, exitRot.y - pos.y);
-      if (near.dist + mm(1) < dDirect) {
-        const travel = resample(travelAlongRing(ring, posRef.s, near.s), params.stitchLength);
-        for (let i = 1; i < travel.length; i++) stitches.push(travel[i]);
-      }
-    }
-
-    // 回転を元に戻し、整数座標へ丸める
-    const cos = Math.cos(angleRad);
-    const sin = Math.sin(angleRad);
-    const unrotated = stitches.map((p) => {
-      const q = rotatePoint(p, cos, sin);
-      return { x: Math.round(q.x), y: Math.round(q.y) };
-    });
-    runs.push({ stitches: unrotated, connection: "trim" });
   }
+
+  // 出口トラベル (Travel on Edge): 次のオブジェクトに最も近い境界点まで
+  // 縁に沿って移動してから終わる。渡り距離が縮む場合のみ行う
+  if (exitRot !== null && pos !== null && posRef !== null) {
+    const ring = rings[posRef.ring];
+    const near = nearestOnRing(ring, exitRot);
+    const dDirect = Math.hypot(exitRot.x - pos.x, exitRot.y - pos.y);
+    if (near.dist + mm(1) < dDirect) {
+      const travel = resample(travelAlongRing(ring, posRef.s, near.s), params.stitchLength);
+      for (let i = 1; i < travel.length; i++) stitches.push(travel[i]);
+    }
+  }
+
+  if (stitches.length === 0) return { runs: [], warnings };
+
+  // 回転を元に戻し、整数座標へ丸める
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const unrotated = stitches.map((p) => {
+    const q = rotatePoint(p, cos, sin);
+    return { x: Math.round(q.x), y: Math.round(q.y) };
+  });
+  runs.push({ stitches: unrotated, connection: "trim" });
 
   return { runs, warnings };
 }
