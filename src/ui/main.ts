@@ -88,6 +88,7 @@ import {
   analyzeImage,
 } from "../ai/aiAssist";
 import type { AiProvider, AiRecommendation } from "../ai/aiAssist";
+import { localRecommend } from "../plan/localRecommend";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -251,8 +252,10 @@ function aiAssistSection(): string {
     const satinLabel: Record<string, string> = { auto: "自動", none: "なし", center: "センター", "center-zigzag": "センター+ジグザグ" };
     const densityLabel: Record<string, string> = { "0.9": "高密度", "1": "標準", "1.25": "省針数", "1.5": "最省針数" };
     const underlayLabel = r.underlay.length === 0 ? "なし" : r.underlay.join(", ");
+    const srcLabel = state.aiResultSource === "ai" ? "外部 AI による提案" : "端末内の自動解析";
     return `
       <div class="ai-result">
+        <div class="ai-src">${srcLabel}</div>
         <div class="ai-analysis">${r.analysis}</div>
         <table class="ai-rec-tbl">
           <tbody>
@@ -266,28 +269,34 @@ function aiAssistSection(): string {
           </tbody>
         </table>
         ${r.tips.length > 0 ? `<ul class="ai-tips">${r.tips.map((t) => `<li>${t}</li>`).join("")}</ul>` : ""}
-        <button id="ai-apply">設定を適用</button>
+        <button id="ai-apply">この設定を適用</button>
       </div>`;
   })();
 
   return `
-    <h2>AI アシスト</h2>
+    <h2>おまかせ設定</h2>
     <div class="ai-panel">
-      <label>AI プロバイダー
-        <select id="ai-provider">${providerSelect}</select>
-      </label>
-      <label>モデル
-        <select id="ai-model">${modelSelect}</select>
-      </label>
-      <label>API キー
-        <input type="password" id="ai-key" placeholder="sk-..." value="${savedKey}" autocomplete="off">
-      </label>
-      ${state.aiProvider === "claude" ? `<label>プロキシ URL (Claude 必須)
-        <input type="url" id="ai-proxy" placeholder="https://your-proxy.example.com" value="${savedProxy}">
-      </label>
-      <p class="note">Anthropic API はブラウザから直接呼べないため、CORS プロキシが必要です。</p>` : ""}
-      <button id="ai-analyze" ${isLoading ? "disabled" : ""}>${isLoading ? "解析中…" : "AI で解析"}</button>
+      <p class="note">画像を解析して、色数・縫い方・下縫い・密度の推奨値を提案します。まずは無料・オフラインの自動解析がおすすめです。</p>
+      <button id="ai-local">おまかせ設定を計算 (無料・オフライン)</button>
       ${resultHtml}
+      <details class="ai-advanced" ${state.aiResultSource === "ai" ? "open" : ""}>
+        <summary>外部 AI に相談する (上級者向け・API キーが必要)</summary>
+        <p class="note">OpenAI・Google・Anthropic の API キーをお持ちの場合、より高度な解析ができます。無料枠では時間をおくと制限が解除されます (429 エラー時)。</p>
+        <label>AI プロバイダー
+          <select id="ai-provider">${providerSelect}</select>
+        </label>
+        <label>モデル
+          <select id="ai-model">${modelSelect}</select>
+        </label>
+        <label>API キー
+          <input type="password" id="ai-key" placeholder="sk-..." value="${savedKey}" autocomplete="off">
+        </label>
+        ${state.aiProvider === "claude" ? `<label>プロキシ URL (Claude 必須)
+          <input type="url" id="ai-proxy" placeholder="https://your-proxy.example.com" value="${savedProxy}">
+        </label>
+        <p class="note">Anthropic API はブラウザから直接呼べないため、CORS プロキシが必要です。</p>` : ""}
+        <button id="ai-analyze" ${isLoading ? "disabled" : ""}>${isLoading ? "解析中…" : "AI で解析"}</button>
+      </details>
     </div>`;
 }
 
@@ -1669,6 +1678,19 @@ function bindSpecialTab(): void {
 }
 
 function bindAiAssist(): void {
+  document.getElementById("ai-local")?.addEventListener("click", () => {
+    if (state.regions.length === 0) {
+      state.aiStatus = "error";
+      state.aiError = "解析するパーツがありません。画像や SVG を読み込んでください。";
+      render();
+      return;
+    }
+    state.aiResult = localRecommend(state.regions, state.diagnostics?.stats ?? null);
+    state.aiResultSource = "local";
+    state.aiStatus = "idle";
+    state.aiError = "";
+    render();
+  });
   document.getElementById("ai-provider")?.addEventListener("change", (e) => {
     state.aiProvider = (e.target as HTMLSelectElement).value as AiProvider;
     state.aiModel = AI_MODELS[state.aiProvider][0];
@@ -1728,6 +1750,7 @@ function bindAiAssist(): void {
       proxyUrl: proxyUrl || undefined,
     }).then((rec: AiRecommendation) => {
       state.aiResult = rec;
+      state.aiResultSource = "ai";
       state.aiStatus = "idle";
       render();
     }).catch((err: unknown) => {

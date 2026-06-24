@@ -12,6 +12,7 @@ import { decideConnection } from "../src/plan/connect";
 import { optimizeOrder, orderTravelCost } from "../src/plan/order";
 import { autoReduce } from "../src/plan/reduce";
 import { planStats } from "../src/plan/stats";
+import { localRecommend } from "../src/plan/localRecommend";
 import { digitizeRegions } from "../src/stitch/digitize";
 
 const RED = { r: 220, g: 30, b: 30 };
@@ -294,5 +295,32 @@ describe("autoReduce (自動針数削減)", () => {
     expect(result.applied).toHaveLength(0);
     expect(result.after).toBe(result.before);
     expect(result.scale).toBe(1);
+  });
+});
+
+describe("localRecommend (オフライン推奨)", () => {
+  it("広い塗りつぶし中心ならタタミ + 下縫いを推奨し、白背景を検出する", () => {
+    const WHITE = { r: 250, g: 250, b: 250 };
+    const regions: Region[] = [
+      square(0, 0, mm(80), WHITE), // 大きな白背景
+      square(0, 0, mm(40), RED), // 広い塗り
+    ];
+    const rec = localRecommend(regions, null);
+    expect(rec.fillType).toBe("tatami");
+    expect(rec.underlay.length).toBeGreaterThan(0);
+    expect(rec.removeWhiteBackground).toBe(true);
+    expect(rec.colorCount).toBeGreaterThanOrEqual(2);
+    expect(rec.analysis).toContain("色");
+  });
+
+  it("細い線中心ならサテンを推奨し、針数が多ければ省針密度を勧める", () => {
+    const thin: Region[] = [
+      { outer: rect(0, 0, mm(60), mm(1)), holes: [], color: RED }, // 細長い線
+      { outer: rect(0, mm(5), mm(60), mm(1)), holes: [], color: BLUE },
+    ];
+    const stats = { ...planStats({ name: "x", blocks: [] }), stitchCount: 11000, widthMm: 60, heightMm: 6 };
+    const rec = localRecommend(thin, stats);
+    expect(rec.fillType).toBe("satin");
+    expect(rec.densityScale).toBeGreaterThan(1);
   });
 });
