@@ -6,8 +6,12 @@
 //   - 1つの面 (フィル領域) は必ず1本の連続した StitchRun として生成すること。
 //   - エクスポーターは StitchPlan を忠実に変換するだけで、最適化判断をしない。
 
-/** 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする。stroke は線 (中心線サテン/ランニング) */
-export type FillType = "tatami" | "satin" | "auto" | "stroke";
+/**
+ * 面の塗り方。auto は細い領域をサテン、それ以外をタタミにする。
+ * stroke は線 (中心線サテン/ランニング)。outline は線画モード:
+ * 領域を骨格化して中心線をサテン/ビーン縫いで縫い、塗らない (ロゴ・線画向け)。
+ */
+export type FillType = "tatami" | "satin" | "auto" | "stroke" | "outline";
 
 /**
  * サテン列の下縫い種別。
