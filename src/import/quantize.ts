@@ -267,6 +267,138 @@ function capCenters(centers: Lab[], k: number): Lab[] {
   return out;
 }
 
+/** 点 p から線分 a-b への距離の2乗 (Lab 3次元) */
+function distToSeg2(p: Lab, a: Lab, b: Lab): number {
+  const abl = b.l - a.l;
+  const aba = b.a - a.a;
+  const abb = b.b - a.b;
+  const len2 = abl * abl + aba * aba + abb * abb;
+  let t = len2 < 1e-9 ? 0 : ((p.l - a.l) * abl + (p.a - a.a) * aba + (p.b - a.b) * abb) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const ql = a.l + abl * t;
+  const qa = a.a + aba * t;
+  const qb = a.b + abb * t;
+  const dl = p.l - ql;
+  const da = p.a - qa;
+  const db = p.b - qb;
+  return dl * dl + da * da + db * db;
+}
+
+// 自然な色数への集約パラメータ (Lab ΔE)。
+const CONSOLIDATE_NEAR2 = 36; // ΔE 6 未満の中心は同色とみなして統合
+const CONSOLIDATE_BLEND2 = 100; // 他2色の中間 (ΔE 10 以内) にあれば AA/グラデの遷移色
+const CONSOLIDATE_BLEND_REL = 0.35; // 中間色が両端色の小さい方の 35% 未満なら遷移色とみなす
+
+/**
+ * k-means が「指定色数を必ず作る」ために起きる過分割を畳み、自然な色数 (≤k) にする。
+ * 実際は2色の画像でも、AA/JPEG ノイズや均質色の分割で複数の似た中心ができるため:
+ *   1. 知覚的に近すぎる中心 (ΔE<6) を統合する。
+ *   2. 前景比 0.6% 未満で、かつ他2色の「中間色」(線分上、AA の証拠) の微小クラスタを
+ *      最寄りの色へ吸収する。中間色でない distinct な小特徴 (白目・差し色) は保護して残す。
+ * 最低 minColors 色は残す。
+ */
+function consolidateCenters(pixels: Lab[], centers: Lab[], minColors = 2): Lab[] {
+  interface Acc {
+    l: number;
+    a: number;
+    b: number;
+    n: number;
+  }
+  const nearest = makeNearest(centers);
+  let groups: Acc[] = centers.map(() => ({ l: 0, a: 0, b: 0, n: 0 }));
+  for (const p of pixels) {
+    const c = nearest(p);
+    groups[c].l += p.l;
+    groups[c].a += p.a;
+    groups[c].b += p.b;
+    groups[c].n++;
+  }
+  groups = groups.filter((g) => g.n > 0);
+  const total = Math.max(1, pixels.length);
+  const centerOf = (g: Acc): Lab => ({ l: g.l / g.n, a: g.a / g.n, b: g.b / g.n });
+  const mergeInto = (i: number, j: number): void => {
+    groups[i].l += groups[j].l;
+    groups[i].a += groups[j].a;
+    groups[i].b += groups[j].b;
+    groups[i].n += groups[j].n;
+    groups.splice(j, 1);
+  };
+
+  const keep = new Set<Acc>();
+  for (;;) {
+    if (groups.length <= minColors) break;
+
+    // 1) 近すぎる中心を統合 (過分割を畳む)
+    let bi = -1;
+    let bj = -1;
+    let bd = Infinity;
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const d = labDist2(centerOf(groups[i]), centerOf(groups[j]));
+        if (d < bd) {
+          bd = d;
+          bi = i;
+          bj = j;
+        }
+      }
+    }
+    if (bi >= 0 && bd < CONSOLIDATE_NEAR2) {
+      mergeInto(bi, bj);
+      continue;
+    }
+
+    // 2) 単画素ノイズ、または「他2色の中間にある遷移色 (AA)」を最寄り色へ吸収。
+    //    中間色でない distinct な小特徴 (白目・差し色) は保護して残す。
+    let did = false;
+    const order = [...groups].sort((x, y) => x.n - y.n);
+    for (const s of order) {
+      if (keep.has(s)) continue;
+      const sc = centerOf(s);
+      // s より優勢な2色がつくる線分のうち最も近いものを探し、中間色か判定する。
+      // 端点を「s より大きいクラスタ」に限定することで、別の遷移色を端点に選んで
+      // 相対サイズ判定が外れるのを防ぐ。
+      let bestSeg = Infinity;
+      let ea = -1;
+      let eb = -1;
+      for (let i = 0; i < groups.length; i++) {
+        if (groups[i] === s || groups[i].n <= s.n) continue;
+        for (let j = i + 1; j < groups.length; j++) {
+          if (groups[j] === s || groups[j].n <= s.n) continue;
+          const d = distToSeg2(sc, centerOf(groups[i]), centerOf(groups[j]));
+          if (d < bestSeg) {
+            bestSeg = d;
+            ea = i;
+            eb = j;
+          }
+        }
+      }
+      // 中間色: 線分上 (ΔE<10) かつ両端色の小さい方より十分小さい (遷移色の証拠)。
+      // 端点色から外れた distinct な小特徴 (白目・差し色) は遷移色でないので保護される。
+      const isTransition =
+        bestSeg < CONSOLIDATE_BLEND2 &&
+        ea >= 0 &&
+        s.n < CONSOLIDATE_BLEND_REL * Math.min(groups[ea].n, groups[eb].n);
+      let target = -1;
+      if (isTransition) {
+        // 遷移色は端点 (優勢な2色) の近い方へ吸収する (別の遷移色に巻き込まれないように)
+        target = labDist2(sc, centerOf(groups[ea])) <= labDist2(sc, centerOf(groups[eb])) ? ea : eb;
+      }
+      if (target >= 0) {
+        const si = groups.indexOf(s);
+        if (si >= 0 && target !== si) {
+          mergeInto(target, si);
+          did = true;
+          break;
+        }
+      } else {
+        keep.add(s); // distinct な小特徴は残す
+      }
+    }
+    if (!did) break;
+  }
+  return groups.map(centerOf);
+}
+
 /**
  * 近傍多数決によるラベル平滑化 (3×3)。AA 由来の孤立画素・ギザギザを統合する。
  * エッジ保存: 元の色と多数決色が高コントラスト (contrast2 超) なら変えない。
@@ -428,7 +560,9 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
   // 指定色数 k を超えた分は近接ペアを統合して k 以下に厳守 (特徴は遠いので残る)
   const trained = kmeans(fgLab, k);
   const promoted = promoteFeatures(fgIndex, fgLab, w, h, trained, contrast2);
-  const centers = capCenters(promoted, k);
+  const capped = capCenters(promoted, k);
+  // 過分割を畳んで自然な色数にする (2色の絵が5色になるのを防ぐ)
+  const centers = consolidateCenters(fgLab, capped);
   const assign = makeNearest(centers);
 
   const sumR = new Float64Array(centers.length);

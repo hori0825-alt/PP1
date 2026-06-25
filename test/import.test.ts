@@ -102,6 +102,29 @@ describe("quantize", () => {
     }
   });
 
+  it("2色の絵は色数を多く指定しても過剰な色数にならない (過分割の抑制)", () => {
+    // 黒い四角 + 白背景の実質2色画像。境界に AA の灰色ランプ (中間色) を数段置く。
+    // colorCount=6 を指定しても、k-means の過分割は畳まれ 2 色に収まるべき。
+    const BLACK: [number, number, number, number] = [20, 20, 20, 255];
+    const img = makeImage(100, 100, WHITE);
+    paintRect(img, 25, 25, 75, 75, BLACK);
+    const ramp: [number, number, number, number][] = [
+      [200, 200, 200, 255],
+      [140, 140, 140, 255],
+      [80, 80, 80, 255],
+    ];
+    // 上下の境界に 1px 幅ずつ中間色 (黒↔白の線分上にある灰) を置く
+    ramp.forEach((g, k) => {
+      for (let x = 25; x < 75; x++) {
+        img.data.set(g, ((24 - k) * 100 + x) * 4);
+        img.data.set(g, ((75 + k) * 100 + x) * 4);
+      }
+    });
+    const map = quantize(img, { colorCount: 6, removeWhiteBackground: false });
+    // 自然な色数は黒・白の2色。AA の灰は最寄り色へ吸収される。
+    expect(map.palette.length).toBeLessThanOrEqual(2);
+  });
+
   it("透明背景は -1 として扱われる", () => {
     const img = makeImage(60, 60, [0, 0, 0, 0]);
     paintRect(img, 20, 20, 40, 40, RED);

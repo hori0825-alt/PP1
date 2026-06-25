@@ -1,7 +1,7 @@
 {
   "name": "pp1-stitch-studio",
   "private": true,
-  "version": "3.22.0",
+  "version": "3.23.0",
   "type": "module",
   "description": "Brother PP1 / Artspira 向けブラウザ刺しゅうエディタ v3 (プロ編集対応・PNG/SVG → PES/DST)",
   "scripts": {
