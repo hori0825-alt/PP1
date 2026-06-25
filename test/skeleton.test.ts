@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { mm } from "../src/core/constants";
 import { countStitches } from "../src/core/plan";
-import type { Point, Region } from "../src/core/types";
+import type { Point } from "../src/core/types";
+import type { Region } from "../src/core/region";
 import { digitizeRegions } from "../src/stitch/digitize";
 import { skeletonStitch } from "../src/stitch/skeleton";
 
