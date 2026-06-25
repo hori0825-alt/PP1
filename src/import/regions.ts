@@ -171,8 +171,12 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
     for (const o of outers) holeOf.set(o, []);
     for (const hole of holes) {
       const c = polygonCentroid(hole.vertices);
+      const holeMag = Math.abs(hole.area);
       let best: Loop | null = null;
       for (const o of outers) {
+        // 穴は必ず外周より小さい。大きければ誤包含なので候補から外す
+        // (誤割り当てで net 面積が負になり、白目などの領域が丸ごと消える不具合を防ぐ)
+        if (o.area <= holeMag) continue;
         if (o.area > (best?.area ?? Infinity)) continue;
         if (pointInPolygon(c, o.vertices)) best = o;
       }
@@ -210,7 +214,9 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
       if (outerPath.length < 3) continue;
       const holePaths = oHoles
         .map((hh) => refine(hh.vertices))
-        .filter((p) => p.length >= 3 && Math.abs(signedArea(p)) >= minArea / 4);
+        // 穴は小さくても残す: 線画の白目・リボンの抜きを塗り潰さない
+        // (穴 = 非縫い域なので針数も減る)。極小ノイズだけ落とす floor を維持。
+        .filter((p) => p.length >= 3 && Math.abs(signedArea(p)) >= Math.max(8, minArea / 16));
 
       const region: Region = {
         outer: outerPath,

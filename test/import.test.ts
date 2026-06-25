@@ -164,6 +164,25 @@ describe("extractRegions", () => {
     );
   });
 
+  it("黒い細リング (目の輪郭) は穴を保持し領域ごと除外されない (白目が消えない)", () => {
+    // 黒い円から中央をくり抜いた細いリング。穴 (白目) が保持され、
+    // 穴の誤割り当てで net 面積が負になって領域が消える不具合がないこと。
+    const BLACK: [number, number, number, number] = [20, 20, 20, 255];
+    const img = makeImage(120, 120, WHITE);
+    paintCircle(img, 60, 60, 22, BLACK);
+    paintCircle(img, 60, 60, 15, WHITE); // 中央をくり抜く
+    const map = quantize(img, {
+      colorCount: 3,
+      removeWhiteBackground: false,
+      minComponentPixels: 1,
+      smoothingPasses: 0,
+    });
+    const { regions } = extractRegions(map, opts(120));
+    const black = regions.find((r) => r.color.r < 60 && r.color.g < 60 && r.color.b < 60);
+    expect(black).toBeDefined();
+    expect(black?.holes.length).toBeGreaterThanOrEqual(1); // 白目 = 穴が残る
+  });
+
   it("離れた2つの同色矩形は2領域になる", () => {
     const img = makeImage(120, 120, [0, 0, 0, 0]);
     paintRect(img, 10, 10, 50, 50, BLUE);
