@@ -1,11 +1,5 @@
 // 線画アウトライン: 領域を骨格化 (Zhang-Suen thinning) して中心線を取り、
 // サテン列 (太い線) またはビーン (三重) 縫い (細い線) で「線」として縫う。
-//
-// 目的:
-//   - ロゴ・アニメ絵・チュートリアル風の線画を、塗り (タタミ) ではなく線として縫う。
-//   - サテンの光沢で品質を保ちつつ、塗りに比べ針数・糸切りを大幅に削減する。
-//   - analyzeStroke は単純な1本のリボン専用だが、本モジュールは分岐した線
-//     ネットワーク (ベアの輪郭など) も骨格グラフを辿って扱える。
 
 import { mm } from "../core/constants";
 import type { Region } from "../core/region";
@@ -28,7 +22,7 @@ interface Raster {
   mask: Uint8Array;
   w: number;
   h: number;
-  ox: number; // ピクセル px の中心 x = ox + (px + 0.5) * upp
+  ox: number;
   oy: number;
   upp: number;
 }
@@ -213,9 +207,7 @@ function tracePaths(skel: Uint8Array, w: number, h: number): number[][] {
     }
   };
 
-  // ノード (端点 deg=1 / 分岐 deg>=3) から辿る
   for (const i of pixels) if ((deg.get(i) ?? 0) !== 2) walkFrom(i);
-  // 残った純粋なループ (全 deg=2) を拾う
   for (const i of pixels) {
     for (const nb of neighbors(i)) {
       if (!used.has(key(i, nb))) {
@@ -225,6 +217,154 @@ function tracePaths(skel: Uint8Array, w: number, h: number): number[][] {
     }
   }
   return paths;
+}
+
+/**
+ * 分岐点で途切れた骨格パスを、方向の連続性に基づいて接続し長い線にする。
+ * 各分岐で「最も直進に近い」ペアを結合する (角度の変化が最小)。
+ */
+function chainPathsAtJunctions(rawPaths: number[][], w: number): number[][] {
+  let paths = rawPaths.filter((p) => p.length >= 2);
+  if (paths.length <= 1) return paths;
+
+  const dirAtEnd = (path: number[], end: "start" | "end"): [number, number] => {
+    if (path.length < 2) return [0, 0];
+    const look = Math.min(3, path.length - 1);
+    let a: number, b: number;
+    if (end === "end") {
+      a = path[path.length - 1];
+      b = path[path.length - 1 - look];
+    } else {
+      a = path[0];
+      b = path[look];
+    }
+    const dx = (a % w) - (b % w);
+    const dy = ((a / w) | 0) - ((b / w) | 0);
+    const l = Math.hypot(dx, dy) || 1;
+    return [dx / l, dy / l];
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    const endMap = new Map<number, { idx: number; end: "start" | "end" }[]>();
+    for (let i = 0; i < paths.length; i++) {
+      const p = paths[i];
+      if (p.length === 0) continue;
+      if (p[0] === p[p.length - 1]) continue; // loop — don't merge
+      const add = (pixel: number, end: "start" | "end") => {
+        if (!endMap.has(pixel)) endMap.set(pixel, []);
+        endMap.get(pixel)!.push({ idx: i, end });
+      };
+      add(p[0], "start");
+      add(p[p.length - 1], "end");
+    }
+
+    for (const [, entries] of endMap) {
+      if (entries.length < 2) continue;
+      const uniqueIdxs = new Set(entries.map((e) => e.idx));
+      if (uniqueIdxs.size < 2) continue;
+
+      const dirs = entries.map((e) => dirAtEnd(paths[e.idx], e.end));
+
+      // dot ≈ −1 → straight continuation (arrival directions are opposite)
+      let bestDot = 0;
+      let bestI = -1;
+      let bestJ = -1;
+      for (let i = 0; i < entries.length; i++) {
+        for (let j = i + 1; j < entries.length; j++) {
+          if (entries[i].idx === entries[j].idx) continue;
+          const dot = dirs[i][0] * dirs[j][0] + dirs[i][1] * dirs[j][1];
+          if (dot < bestDot) {
+            bestDot = dot;
+            bestI = i;
+            bestJ = j;
+          }
+        }
+      }
+      if (bestI < 0) continue;
+
+      const a = entries[bestI];
+      const b = entries[bestJ];
+      const pathA = paths[a.idx];
+      const pathB = paths[b.idx];
+      if (pathA.length === 0 || pathB.length === 0) continue;
+
+      const chainA = a.end === "end" ? pathA : [...pathA].reverse();
+      const chainB = b.end === "start" ? pathB : [...pathB].reverse();
+      paths[a.idx] = [...chainA, ...chainB.slice(1)];
+      paths[b.idx] = [];
+      changed = true;
+      break;
+    }
+    paths = paths.filter((p) => p.length > 0);
+  }
+  return paths;
+}
+
+/** パスを最近端点順に並べる (貪欲法)。長い順に開始し、次のパスは前の末端に最も近い端点から選ぶ。 */
+function sortPathsByNearest(paths: number[][], w: number): number[][] {
+  if (paths.length <= 1) return paths;
+
+  const pixDist2 = (a: number, b: number): number => {
+    const dx = (a % w) - (b % w);
+    const dy = ((a / w) | 0) - ((b / w) | 0);
+    return dx * dx + dy * dy;
+  };
+
+  const sorted: number[][] = [];
+  const used = new Set<number>();
+
+  let best = 0;
+  for (let i = 1; i < paths.length; i++) {
+    if (paths[i].length > paths[best].length) best = i;
+  }
+  sorted.push(paths[best]);
+  used.add(best);
+
+  while (sorted.length < paths.length) {
+    const last = sorted[sorted.length - 1];
+    const lastEnd = last[last.length - 1];
+    let nearest = -1;
+    let nearD = Infinity;
+    let flip = false;
+
+    for (let i = 0; i < paths.length; i++) {
+      if (used.has(i)) continue;
+      const p = paths[i];
+      const ds = pixDist2(lastEnd, p[0]);
+      const de = pixDist2(lastEnd, p[p.length - 1]);
+      const d = Math.min(ds, de);
+      if (d < nearD) {
+        nearD = d;
+        nearest = i;
+        flip = de < ds;
+      }
+    }
+    if (nearest < 0) break;
+    sorted.push(flip ? [...paths[nearest]].reverse() : paths[nearest]);
+    used.add(nearest);
+  }
+  return sorted;
+}
+
+/** ピクセル座標列の高周波ジャギを平滑化する (移動平均、端点は固定)。 */
+function smoothPixelPath(pts: Point[], iterations: number = 2): Point[] {
+  if (pts.length < 3) return pts;
+  let cur = pts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const next: Point[] = [cur[0]];
+    for (let i = 1; i < cur.length - 1; i++) {
+      next.push({
+        x: (cur[i - 1].x + cur[i].x + cur[i + 1].x) / 3,
+        y: (cur[i - 1].y + cur[i].y + cur[i + 1].y) / 3,
+      });
+    }
+    next.push(cur[cur.length - 1]);
+    cur = next;
+  }
+  return cur;
 }
 
 /** 中心線を左右へ ±half オフセットしたレール対を作る (頂点法線の平均)。 */
@@ -278,11 +418,31 @@ export function skeletonStitch(region: Region, params: SkeletonStitchParams = {}
   const r = rasterize(region, upp);
   if (!r) return { runs: [], warnings: [] };
 
-  const dist = distanceTransform(r.mask, r.w, r.h); // 半幅(px)、細線化前のマスクで計算
+  const dist = distanceTransform(r.mask, r.w, r.h);
   const skel = r.mask.slice();
   thinZhangSuen(skel, r.w, r.h);
-  const paths = tracePaths(skel, r.w, r.h);
+  let paths = tracePaths(skel, r.w, r.h);
   if (paths.length === 0) return { runs: [], warnings: [] };
+
+  // 分岐点で途切れたパスを方向連続性で接続 → 長い線にする
+  paths = chainPathsAtJunctions(paths, r.w);
+
+  // 短すぎる断片を除去 (2mm 未満)
+  const minLenPx = mm(2) / r.upp;
+  paths = paths.filter((p) => {
+    if (p.length < 3) return false;
+    let len = 0;
+    for (let i = 1; i < p.length; i++) {
+      const dx = (p[i] % r.w) - (p[i - 1] % r.w);
+      const dy = ((p[i] / r.w) | 0) - ((p[i - 1] / r.w) | 0);
+      len += Math.hypot(dx, dy);
+    }
+    return len >= minLenPx;
+  });
+  if (paths.length === 0) return { runs: [], warnings: [] };
+
+  // 最近端点順にソート → run 間ジャンプを最短化
+  paths = sortPathsByNearest(paths, r.w);
 
   const toUnit = (i: number): Point => ({
     x: r.ox + ((i % r.w) + 0.5) * r.upp,
@@ -297,9 +457,11 @@ export function skeletonStitch(region: Region, params: SkeletonStitchParams = {}
     const width = (widthsPx[Math.floor(widthsPx.length / 2)] || 0) * r.upp;
     if (width > maxWidth) {
       tooWide = true;
-      continue; // 太い面はアウトライン化しない (塗りに任せる)
+      continue;
     }
-    let center = resamplePolyline(path.map(toUnit), stitchLength);
+    // ピクセル座標を平滑化してから再サンプル
+    let center = smoothPixelPath(path.map(toUnit), 2);
+    center = resamplePolyline(center, stitchLength);
     if (center.length < 2) continue;
     if (width >= satinMinWidth) {
       const { left, right } = offsetRails(center, width / 2);
@@ -308,7 +470,6 @@ export function skeletonStitch(region: Region, params: SkeletonStitchParams = {}
       runs.push(beanRun(center));
     }
   }
-  // 全パスが太すぎてアウトライン化できなかった場合はフィルに任せる
   if (runs.length === 0 && tooWide) return { runs: [], warnings: [] };
   return { runs, warnings: [] };
 }

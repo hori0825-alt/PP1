@@ -216,7 +216,7 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
         .map((hh) => refine(hh.vertices))
         // 穴は小さくても残す: 線画の白目・リボンの抜きを塗り潰さない
         // (穴 = 非縫い域なので針数も減る)。極小ノイズだけ落とす floor を維持。
-        .filter((p) => p.length >= 3 && Math.abs(signedArea(p)) >= Math.max(8, minArea / 16));
+        .filter((p) => p.length >= 3 && Math.abs(signedArea(p)) >= Math.max(4, minArea / 32));
 
       const region: Region = {
         outer: outerPath,
