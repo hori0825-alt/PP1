@@ -59,6 +59,7 @@ import {
   restoreAllExcluded,
   restoreExcludedRegion,
   setPhotoMode,
+  setOutlineMode,
   setRegionAngle,
   setRegionFill,
   setSourceImage,
@@ -187,6 +188,7 @@ function designTab(): string {
         .join("")}
     </div>` : `<p class="note">PNG / JPG / SVG を読み込むと自動で刺繍化されます。</p>`}
     ${state.project.source.kind === "image" ? photoSection() : ""}
+    ${loaded && !state.photoMode ? outlineSection() : ""}
     ${excludedPanel()}
     ${loaded ? aiAssistSection() : ""}
   `;
@@ -204,6 +206,14 @@ function photoSection(): string {
       <label><input type="checkbox" id="photo-bg" ${p.removeBackground ? "checked" : ""}> 背景を除去</label>
       <p class="note">明暗をステッチ密度に変換します。針数が多い場合は自動で行間隔を広げます。</p>
     ` : ""}
+  `;
+}
+
+function outlineSection(): string {
+  return `
+    <h2>線画モード</h2>
+    <label><input type="checkbox" id="outline-mode" ${state.outlineMode ? "checked" : ""}> 線画として縫う (輪郭をサテンで縫い、塗らない)</label>
+    <p class="note">ロゴ・線画・ぬり絵風の絵向け。線を骨格化して中心線をサテン (細部はビーン縫い) で縫います。塗らないので針数・糸切りが大幅に減り、白い部分は縫いません。</p>
   `;
 }
 
@@ -916,6 +926,11 @@ function bindEvents(): void {
   // 写真刺繍 (PhotoStitch)
   document.getElementById("photo-mode")?.addEventListener("change", (e) => {
     setPhotoMode(state, (e.target as HTMLInputElement).checked);
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("outline-mode")?.addEventListener("change", (e) => {
+    setOutlineMode(state, (e.target as HTMLInputElement).checked);
     state.view = "stitch";
     render();
   });

@@ -23,6 +23,7 @@ import { optimizeOrder } from "../plan/order";
 import { compensateRegion, compensateSatinColumn, densityCompensatedSpacing, regionArea, regionMinExtent } from "./compensation";
 import { postprocessRuns } from "./postprocess";
 import { satinFromRegion } from "./satin";
+import { skeletonStitch } from "./skeleton";
 import { strokeStitch } from "./stroke";
 import { tatamiFill } from "./tatami";
 import { turningFill } from "./turning";
@@ -385,6 +386,23 @@ export function digitizeRegions(
           const localWarnings: string[] = [];
           const regionRuns: StitchRun[] = [];
 
+          // --- 線画 (アウトライン) モード: 領域を骨格化して中心線をサテン/ビーンで縫う ---
+          // 分岐した線ネットワークも扱える。塗らないので針数・糸切りが激減する。
+          // 白 (紙) や太い面は線でないのでスキップ (縫わない)。
+          const nearWhite = source.color.r > 235 && source.color.g > 235 && source.color.b > 235;
+          if (regionFillType === "outline") {
+            if (!nearWhite) {
+              const sk = skeletonStitch(source, { stitchLength: params.stitchLength });
+              for (const r of sk.runs) regionRuns.push({ ...r, stitchType: "satin" });
+              localWarnings.push(...sk.warnings);
+            }
+            // runs が空 (白/太い面/骨格なし) ならこの領域は縫わない (塗りに落とさない)
+            processed = postprocessRuns(regionRuns);
+            warnings.push(...localWarnings);
+            if (obj) obj.cache = { outerRef: source.outer, paramsSig, ctxSig, runs: processed, warnings: localWarnings };
+            // 以降のフィル処理はスキップ
+          } else {
+
           // --- ストローク (線): 細長い領域は中心線サテン/ランニングで縫う ---
           // リボン化した線画の二重縫いと針数増を解消する。stroke は明示指定、
           // auto は自動判定 (細長さ+幅)。下縫いは付けない (細帯に不要・針数増の元)。
@@ -480,6 +498,7 @@ export function digitizeRegions(
           processed = postprocessRuns(regionRuns);
           warnings.push(...localWarnings);
           if (obj) obj.cache = { outerRef: source.outer, paramsSig, ctxSig, runs: processed, warnings: localWarnings };
+          }
         }
       }
 

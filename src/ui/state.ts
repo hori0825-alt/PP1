@@ -154,6 +154,9 @@ export interface AppState {
   /** 3D パフィー (サテンを詰めて立体的に) */
   puffy: boolean;
 
+  /** 線画モード (ON のとき領域を骨格化して中心線サテン/ビーンで縫う。塗らない) */
+  outlineMode: boolean;
+
   // AI 補正
   aiCorrection: AiCorrectionSettings;
   aiStatus: "idle" | "loading" | "done" | "error";
@@ -214,6 +217,7 @@ export function createState(): AppState {
     photoSettings: { colorCount: 1, contrast: 1.2, brightness: 0, removeBackground: true },
     photoMode: false,
     puffy: false,
+    outlineMode: false,
     aiCorrection: {
       protectHighlights: true,
       preserveTransparency: true,
@@ -267,6 +271,12 @@ export function setPhotoMode(state: AppState, on: boolean): void {
   state.photoMode = on;
   if (on) recomputePhoto(state);
   else recomputeRegions(state);
+}
+
+/** 線画モードの切替。ON で領域を骨格化して線として縫う (塗らない) */
+export function setOutlineMode(state: AppState, on: boolean): void {
+  state.outlineMode = on;
+  recomputeStitches(state);
 }
 
 /** 布地レシピを選択し、下縫いを推奨値で初期化してステッチを再生成する */
@@ -805,7 +815,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
         trimMode: s.trimMode,
         underlay: s.underlay as UnderlayType[],
         satinUnderlay: s.satinUnderlay,
-        fillType: state.puffy ? "satin" : state.fillType,
+        fillType: state.outlineMode ? "outline" : state.puffy ? "satin" : state.fillType,
         minObjectExtent: scaledMinExtent,
         // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)。それ以外は密度倍率を適用
         satinSpacing: state.puffy
