@@ -132,8 +132,8 @@ describe("validatePlan", () => {
           thread: black,
           runs: [
             { stitches: [{ x: 0, y: 0 }, { x: mm(3), y: 0 }], connection: "trim" },
-            // 前 Run 終点 (3mm,0) から 15mm 離れた点へ糸を切らずに渡る
-            { stitches: [{ x: mm(18), y: 0 }, { x: mm(21), y: 0 }], connection: "jump" },
+            // 前 Run 終点 (3mm,0) から 30mm 離れた点へ糸を切らずに渡る
+            { stitches: [{ x: mm(33), y: 0 }, { x: mm(36), y: 0 }], connection: "jump" },
           ],
         },
       ],
