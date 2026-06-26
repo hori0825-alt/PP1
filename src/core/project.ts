@@ -99,6 +99,7 @@ export function createEmptyProject(name = "untitled"): Project {
       underlay: ["edge"],
       fabricId: "standard",
       densityScale: 1.0,
+      targetStitchCount: 12000,
     },
     regions: [],
     objects: [],

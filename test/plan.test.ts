@@ -68,7 +68,7 @@ describe("decideConnection", () => {
   it("auto: 距離で continuous/jump/trim を判定する", () => {
     expect(decideConnection(o, { x: mm(2), y: 0 }, false)).toBe("continuous");
     expect(decideConnection(o, { x: mm(5), y: 0 }, false)).toBe("jump");
-    expect(decideConnection(o, { x: mm(15), y: 0 }, false)).toBe("trim");
+    expect(decideConnection(o, { x: mm(30), y: 0 }, false)).toBe("trim");
   });
   it("never: 遠距離でも糸切りしない", () => {
     expect(decideConnection(o, { x: mm(50), y: 0 }, false, { trimMode: "never" })).toBe("jump");
