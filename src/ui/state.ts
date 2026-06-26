@@ -838,7 +838,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
   if (!opts.skipDerived && target > 0 && countStitches(result.plan) > target) {
     const before = countStitches(result.plan);
     // densityScale の上に追加倍率を掛けて段階的に粗くする
-    const steps = [1.15, 1.3, 1.5, 1.75, 2.0];
+    const steps = [1.05, 1.1, 1.15, 1.25, 1.35, 1.5, 1.75, 2.0];
     let applied = 1.0;
     for (const m of steps) {
       if (countStitches(result.plan) <= target) break;
