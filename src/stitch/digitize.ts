@@ -508,7 +508,7 @@ export function digitizeRegions(
       // 糸切り回数を抑える (=糸切り根絶の方針に沿う)。極端に長い渡りのみ糸切り。
       const isOutline = (source.fillType ?? options.fillType) === "outline";
       const effectiveConnectOptions: ConnectOptions = isOutline
-        ? { trimMode: connectOptions.trimMode, trimDistance: Math.max(connectOptions.trimDistance ?? 0, mm(30)) }
+        ? { trimMode: connectOptions.trimMode, trimDistance: Math.max(connectOptions.trimDistance ?? 0, mm(80)) }
         : connectOptions;
       const emitted: StitchRun[] = [];
       for (let i = 0; i < processed.length; i++) {
