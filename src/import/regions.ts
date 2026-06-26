@@ -225,13 +225,29 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
   const regions: Region[] = [];
   const excludedRegions: ExcludedRegion[] = [];
 
-  // 狭い背景通路を塞いだマップで穴を正しく検出する
+  // 狭い背景通路を塞いだマップで穴だけを検出する (外周は元マップから取り歪みを防ぐ)
   const closedMap = closeColorGaps(map, 3);
 
   for (let color = 0; color < map.palette.length; color++) {
-    const loops = traceLoops(closedMap, color);
-    const outers = loops.filter((l) => l.area > 0);
-    const holes = loops.filter((l) => l.area < 0);
+    // 外周: 元のマップから追跡 (正確な輪郭)
+    const origLoops = traceLoops(map, color);
+    const outers = origLoops.filter((l) => l.area > 0);
+
+    // 穴: 元マップの穴 + 閉操作マップで新たに見つかった穴
+    const origHoles = origLoops.filter((l) => l.area < 0);
+    const closedLoops = traceLoops(closedMap, color);
+    const closedHoles = closedLoops.filter((l) => l.area < 0);
+    const closedOuters = closedLoops.filter((l) => l.area > 0);
+    // 元マップの穴と重複しない閉操作マップの穴を追加
+    const holes = [...origHoles];
+    for (const ch of closedHoles) {
+      const cc = polygonCentroid(ch.vertices);
+      let dup = false;
+      for (const oh of origHoles) {
+        if (pointInPolygon(cc, oh.vertices)) { dup = true; break; }
+      }
+      if (!dup) holes.push(ch);
+    }
 
     // 穴を「重心を含む最小の外周」に割り当てる
     const holeOf = new Map<Loop, Loop[]>();
@@ -241,11 +257,29 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
       const holeMag = Math.abs(hole.area);
       let best: Loop | null = null;
       for (const o of outers) {
-        // 穴は必ず外周より小さい。大きければ誤包含なので候補から外す
-        // (誤割り当てで net 面積が負になり、白目などの領域が丸ごと消える不具合を防ぐ)
         if (o.area <= holeMag) continue;
         if (o.area > (best?.area ?? Infinity)) continue;
         if (pointInPolygon(c, o.vertices)) best = o;
+      }
+      // フォールバック: 元マップの外周がギャップで複雑化し pointInPolygon が
+      // 機能しない場合、閉操作マップの外周→元マップの外周を重心近傍で照合する
+      if (!best) {
+        let closedOuter: Loop | null = null;
+        for (const co of closedOuters) {
+          if (co.area <= holeMag) continue;
+          if (co.area > (closedOuter?.area ?? Infinity)) continue;
+          if (pointInPolygon(c, co.vertices)) closedOuter = co;
+        }
+        if (closedOuter) {
+          const cc = polygonCentroid(closedOuter.vertices);
+          let bd = Infinity;
+          for (const o of outers) {
+            if (o.area <= holeMag) continue;
+            const oc = polygonCentroid(o.vertices);
+            const d = (oc.x - cc.x) ** 2 + (oc.y - cc.y) ** 2;
+            if (d < bd) { bd = d; best = o; }
+          }
+        }
       }
       if (best) (holeOf.get(best) as Loop[]).push(hole);
     }
