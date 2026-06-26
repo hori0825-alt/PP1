@@ -600,55 +600,5 @@ export function quantize(img: RasterImage, options: QuantizeOptions): LabelMap {
     }
     labels[i] = idx;
   }
-  const map = { width: w, height: h, labels, palette };
-  closeNarrowGaps(map);
-  return map;
-}
-
-/**
- * ラベルマップの狭い背景通路を塞いで、色領域内部の白い隙間を「穴」として保持する。
- *
- * 問題: リボンの結び目の隙間など、色領域に囲まれた白い小空間が、幅1-2pxの
- * 狭い通路で外部背景と繋がっていると、領域抽出で穴ではなく外部の一部になり、
- * 色領域の境界がその隙間を塗り潰した形になる。
- *
- * 修正: 背景ピクセルのうち、色ピクセルに多く囲まれているもの (8近傍中6つ以上が色)
- * を最頻の隣接色に置換する。これで1-2px幅の通路が塞がり、内部の白が孤立して穴になる。
- * 大きな背景領域はほとんど影響されない (縁のピクセルだけ処理対象で、内部は近傍が背景)。
- */
-function closeNarrowGaps(map: LabelMap): void {
-  const { width: w, height: h, labels } = map;
-  const BG = -1;
-  for (let pass = 0; pass < 2; pass++) {
-    const fill: { idx: number; val: number }[] = [];
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const i = y * w + x;
-        if (labels[i] !== BG) continue;
-        // 8近傍の色ピクセル数をカウント
-        let colorCount = 0;
-        const freq = new Map<number, number>();
-        const check = (j: number): void => {
-          const v = labels[j];
-          if (v !== BG) {
-            colorCount++;
-            freq.set(v, (freq.get(v) ?? 0) + 1);
-          }
-        };
-        check(i - w - 1); check(i - w); check(i - w + 1);
-        check(i - 1);                    check(i + 1);
-        check(i + w - 1); check(i + w); check(i + w + 1);
-        if (colorCount < 6) continue;
-        // 最頻の隣接色を採用
-        let best = BG;
-        let bestN = 0;
-        for (const [v, n] of freq) {
-          if (n > bestN) { bestN = n; best = v; }
-        }
-        if (best !== BG) fill.push({ idx: i, val: best });
-      }
-    }
-    if (fill.length === 0) break;
-    for (const { idx, val } of fill) labels[idx] = val;
-  }
+  return { width: w, height: h, labels, palette };
 }
