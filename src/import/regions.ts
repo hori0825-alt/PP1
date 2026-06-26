@@ -125,6 +125,70 @@ function traceLoops(map: LabelMap, color: number): Loop[] {
 }
 
 /**
+ * 色ごとにモルフォロジー閉操作 (膨張→収縮) を適用し、狭い背景通路を塞いだ
+ * ラベルマップのコピーを返す。元のマップは変更しない。
+ *
+ * リボンの結び目など、色領域に囲まれた白い空間が幅1-3pxの通路で外部背景と
+ * 繋がっていると穴として検出されない。各色の画素マスクを radius px 膨張してから
+ * 同じ量だけ収縮すると、通路が塞がって内部の白が孤立し穴として検出される。
+ * 膨張→収縮は対称なので領域サイズはほぼ変わらない。
+ */
+function closeColorGaps(map: LabelMap, radius: number): LabelMap {
+  const { width: w, height: h, labels, palette } = map;
+  const closed = new Int16Array(labels);
+
+  for (let color = 0; color < palette.length; color++) {
+    const mask = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (labels[i] === color) mask[i] = 1;
+
+    // 膨張 (分離可能ボックスカーネル): 横→縦
+    const dilH = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!mask[y * w + x]) continue;
+        const x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
+        for (let nx = x0; nx <= x1; nx++) dilH[y * w + nx] = 1;
+      }
+    }
+    const dilated = new Uint8Array(w * h);
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        if (!dilH[y * w + x]) continue;
+        const y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
+        for (let ny = y0; ny <= y1; ny++) dilated[ny * w + x] = 1;
+      }
+    }
+
+    // 収縮 (分離可能ボックスカーネル): 横方向 min → 縦方向 min
+    const eroH = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let allSet = true;
+        const x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
+        for (let nx = x0; nx <= x1 && allSet; nx++) {
+          if (!dilated[y * w + nx]) allSet = false;
+        }
+        if (allSet) eroH[y * w + x] = 1;
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) {
+        let allSet = true;
+        const y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
+        for (let ny = y0; ny <= y1 && allSet; ny++) {
+          if (!eroH[ny * w + x]) allSet = false;
+        }
+        if (allSet && closed[y * w + x] === -1) {
+          closed[y * w + x] = color;
+        }
+      }
+    }
+  }
+
+  return { width: w, height: h, labels: closed, palette };
+}
+
+/**
  * ラベルマップから全色の Region を抽出する。
  * 出力座標は内部単位 (0.1mm)、原点はラベルマップ中心。
  */
@@ -161,8 +225,11 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
   const regions: Region[] = [];
   const excludedRegions: ExcludedRegion[] = [];
 
+  // 狭い背景通路を塞いだマップで穴を正しく検出する
+  const closedMap = closeColorGaps(map, 3);
+
   for (let color = 0; color < map.palette.length; color++) {
-    const loops = traceLoops(map, color);
+    const loops = traceLoops(closedMap, color);
     const outers = loops.filter((l) => l.area > 0);
     const holes = loops.filter((l) => l.area < 0);
 

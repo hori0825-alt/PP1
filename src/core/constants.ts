@@ -28,8 +28,8 @@ export const TRIM_THRESHOLDS = {
   neverTrimBelow: mm(3),
   /** これ未満は原則つなぐ (5mm) */
   preferJoinBelow: mm(5),
-  /** これ以上は糸切り候補 (25mm)。渡り糸は裏で処理できるため広めに取る */
-  trimAbove: mm(25),
+  /** これ以上は糸切り候補 (50mm)。渡り糸は裏で処理できるため広めに取る */
+  trimAbove: mm(50),
 } as const;
 
 /** タタミのデフォルト: 行間隔 0.4mm / ステッチ長 3.0mm */
