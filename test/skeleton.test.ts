@@ -1,4 +1,4 @@
-// 線画アウトライン (骨格化サテン/ビーン) のテスト。
+// 線画アウトライン (輪郭ビーン/三重ランニング) のテスト。
 
 import { describe, expect, it } from "vitest";
 import { mm } from "../src/core/constants";
@@ -26,10 +26,10 @@ function bar(lenMm: number, widthMm: number): Region {
 }
 
 describe("skeletonStitch", () => {
-  it("中幅の線はサテン1本になり、塗り(タタミ)より大幅に少ない針数", () => {
+  it("線は輪郭1ループ (三重) になり、塗り(タタミ)より大幅に少ない針数", () => {
     const region = bar(40, 1.6);
     const sk = skeletonStitch(region, {});
-    expect(sk.runs.length).toBeGreaterThanOrEqual(1);
+    expect(sk.runs.length).toBe(1); // 外周のみ → 1ループ
     const skStitches = sk.runs.reduce((s, r) => s + r.stitches.length, 0);
     expect(skStitches).toBeGreaterThan(0);
 
@@ -39,30 +39,23 @@ describe("skeletonStitch", () => {
     expect(countStitches(outline.plan)).toBeLessThan(countStitches(tatami.plan));
   });
 
-  it("十字 (分岐) は複数の線パスに分解される", () => {
-    const a = mm(2);
-    const b = mm(15);
-    const plus: Region = {
-      outer: [
-        { x: -a, y: -b },
-        { x: a, y: -b },
-        { x: a, y: -a },
-        { x: b, y: -a },
-        { x: b, y: a },
-        { x: a, y: a },
-        { x: a, y: b },
-        { x: -a, y: b },
-        { x: -a, y: a },
-        { x: -b, y: a },
-        { x: -b, y: -a },
-        { x: -a, y: -a },
-      ] as Point[],
-      holes: [],
+  it("穴のある領域は外周 + 穴を別ループでなぞる", () => {
+    const ring: Region = {
+      outer: bar(40, 40).outer,
+      holes: [bar(20, 20).outer],
       color: BLACK,
     };
-    const sk = skeletonStitch(plus, {});
-    // 分岐を通過する連続線に接続される (4腕→2貫通線)
-    expect(sk.runs.length).toBeGreaterThanOrEqual(1);
+    const sk = skeletonStitch(ring, {});
+    // 外周 1 + 穴 1 = 2 ループ
+    expect(sk.runs.length).toBe(2);
+  });
+
+  it("三重縫い: 1ループは輪郭を3回なぞる (周長/間隔の約3倍の針)", () => {
+    const region = bar(40, 1.6);
+    const sk = skeletonStitch(region, { stitchLength: mm(2) });
+    const stitches = sk.runs[0].stitches.length;
+    // 周長 ≈ 2*(40+1.6) = 83.2mm, 2mm間隔 ≈ 42点, 三重 ≈ 120+ 針
+    expect(stitches).toBeGreaterThan(90);
   });
 
   it("線画モード (outline) では白い面は縫わない", () => {
