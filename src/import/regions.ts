@@ -125,70 +125,6 @@ function traceLoops(map: LabelMap, color: number): Loop[] {
 }
 
 /**
- * 色ごとにモルフォロジー閉操作 (膨張→収縮) を適用し、狭い背景通路を塞いだ
- * ラベルマップのコピーを返す。元のマップは変更しない。
- *
- * リボンの結び目など、色領域に囲まれた白い空間が幅1-3pxの通路で外部背景と
- * 繋がっていると穴として検出されない。各色の画素マスクを radius px 膨張してから
- * 同じ量だけ収縮すると、通路が塞がって内部の白が孤立し穴として検出される。
- * 膨張→収縮は対称なので領域サイズはほぼ変わらない。
- */
-function closeColorGaps(map: LabelMap, radius: number): LabelMap {
-  const { width: w, height: h, labels, palette } = map;
-  const closed = new Int16Array(labels);
-
-  for (let color = 0; color < palette.length; color++) {
-    const mask = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) if (labels[i] === color) mask[i] = 1;
-
-    // 膨張 (分離可能ボックスカーネル): 横→縦
-    const dilH = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (!mask[y * w + x]) continue;
-        const x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
-        for (let nx = x0; nx <= x1; nx++) dilH[y * w + nx] = 1;
-      }
-    }
-    const dilated = new Uint8Array(w * h);
-    for (let x = 0; x < w; x++) {
-      for (let y = 0; y < h; y++) {
-        if (!dilH[y * w + x]) continue;
-        const y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
-        for (let ny = y0; ny <= y1; ny++) dilated[ny * w + x] = 1;
-      }
-    }
-
-    // 収縮 (分離可能ボックスカーネル): 横方向 min → 縦方向 min
-    const eroH = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let allSet = true;
-        const x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
-        for (let nx = x0; nx <= x1 && allSet; nx++) {
-          if (!dilated[y * w + nx]) allSet = false;
-        }
-        if (allSet) eroH[y * w + x] = 1;
-      }
-    }
-    for (let x = 0; x < w; x++) {
-      for (let y = 0; y < h; y++) {
-        let allSet = true;
-        const y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
-        for (let ny = y0; ny <= y1 && allSet; ny++) {
-          if (!eroH[ny * w + x]) allSet = false;
-        }
-        if (allSet && closed[y * w + x] === -1) {
-          closed[y * w + x] = color;
-        }
-      }
-    }
-  }
-
-  return { width: w, height: h, labels: closed, palette };
-}
-
-/**
  * ラベルマップから全色の Region を抽出する。
  * 出力座標は内部単位 (0.1mm)、原点はラベルマップ中心。
  */
@@ -225,29 +161,10 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
   const regions: Region[] = [];
   const excludedRegions: ExcludedRegion[] = [];
 
-  // 狭い背景通路を塞いだマップで穴だけを検出する (外周は元マップから取り歪みを防ぐ)
-  const closedMap = closeColorGaps(map, 3);
-
   for (let color = 0; color < map.palette.length; color++) {
-    // 外周: 元のマップから追跡 (正確な輪郭)
-    const origLoops = traceLoops(map, color);
-    const outers = origLoops.filter((l) => l.area > 0);
-
-    // 穴: 元マップの穴 + 閉操作マップで新たに見つかった穴
-    const origHoles = origLoops.filter((l) => l.area < 0);
-    const closedLoops = traceLoops(closedMap, color);
-    const closedHoles = closedLoops.filter((l) => l.area < 0);
-    const closedOuters = closedLoops.filter((l) => l.area > 0);
-    // 元マップの穴と重複しない閉操作マップの穴を追加
-    const holes = [...origHoles];
-    for (const ch of closedHoles) {
-      const cc = polygonCentroid(ch.vertices);
-      let dup = false;
-      for (const oh of origHoles) {
-        if (pointInPolygon(cc, oh.vertices)) { dup = true; break; }
-      }
-      if (!dup) holes.push(ch);
-    }
+    const loops = traceLoops(map, color);
+    const outers = loops.filter((l) => l.area > 0);
+    const holes = loops.filter((l) => l.area < 0);
 
     // 穴を「重心を含む最小の外周」に割り当てる
     const holeOf = new Map<Loop, Loop[]>();
@@ -260,26 +177,6 @@ export function extractRegions(map: LabelMap, options: ExtractOptions): ExtractR
         if (o.area <= holeMag) continue;
         if (o.area > (best?.area ?? Infinity)) continue;
         if (pointInPolygon(c, o.vertices)) best = o;
-      }
-      // フォールバック: 元マップの外周がギャップで複雑化し pointInPolygon が
-      // 機能しない場合、閉操作マップの外周→元マップの外周を重心近傍で照合する
-      if (!best) {
-        let closedOuter: Loop | null = null;
-        for (const co of closedOuters) {
-          if (co.area <= holeMag) continue;
-          if (co.area > (closedOuter?.area ?? Infinity)) continue;
-          if (pointInPolygon(c, co.vertices)) closedOuter = co;
-        }
-        if (closedOuter) {
-          const cc = polygonCentroid(closedOuter.vertices);
-          let bd = Infinity;
-          for (const o of outers) {
-            if (o.area <= holeMag) continue;
-            const oc = polygonCentroid(o.vertices);
-            const d = (oc.x - cc.x) ** 2 + (oc.y - cc.y) ** 2;
-            if (d < bd) { bd = d; best = o; }
-          }
-        }
       }
       if (best) (holeOf.get(best) as Loop[]).push(hole);
     }

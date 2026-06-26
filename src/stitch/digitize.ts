@@ -503,16 +503,17 @@ export function digitizeRegions(
       }
 
       // --- 接続決定 (常に最新の文脈で計算。キャッシュした本体ランは書き換えない) ---
-      // 線画モードは疎な線縫いのため、離れた同色の線島どうしも糸切りせず
-      // ジャンプで渡す方が安全 (渡り糸が密な縫いに絡まない)。糸切り距離を広げて
-      // 糸切り回数を抑える (=糸切り根絶の方針に沿う)。極端に長い渡りのみ糸切り。
-      const isOutline = (source.fillType ?? options.fillType) === "outline";
-      const effectiveConnectOptions: ConnectOptions = isOutline
-        ? { trimMode: connectOptions.trimMode, trimDistance: Math.max(connectOptions.trimDistance ?? 0, mm(80)) }
+      // auto モード: 同色ブロック内のオブジェクト間は糸切りせず jump で渡す。
+      // 糸切りは色替え時 (ブロック境界) だけに限定し、糸切り回数 ≈ 色数にする。
+      // 渡り糸は裏で処理されるため、100mm枠内の距離なら問題ない。
+      // always/never はユーザー明示指定なのでそのまま従う。
+      const userMode = connectOptions.trimMode ?? "auto";
+      const intraColorConnect: ConnectOptions = userMode === "auto"
+        ? { trimMode: "never" }
         : connectOptions;
       const emitted: StitchRun[] = [];
       for (let i = 0; i < processed.length; i++) {
-        // i === 0: 前の領域からの接続 (糸切り許可)。i > 0: 同一領域内 (糸切り禁止)
+        // i === 0: 前の領域からの接続。i > 0: 同一領域内 (糸切り禁止)
         const prevRun = i === 0 ? (runs.length > 0 ? runs[runs.length - 1] : null) : emitted[i - 1];
         const from =
           prevRun && prevRun.stitches.length > 0
@@ -522,7 +523,7 @@ export function digitizeRegions(
               : null;
         emitted.push({
           stitches: processed[i].stitches,
-          connection: decideConnection(from, processed[i].stitches[0], i > 0, effectiveConnectOptions),
+          connection: decideConnection(from, processed[i].stitches[0], i > 0, intraColorConnect),
           objectId,
           stitchType: processed[i].stitchType ?? "tatami",
         });

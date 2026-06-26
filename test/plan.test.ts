@@ -131,10 +131,10 @@ describe("digitizeRegions (縫い順・糸切り)", () => {
     expect(countTrims(plan)).toBe(0);
   });
 
-  it("同色の遠隔オブジェクト2個 (間隔50mm超) → 糸切り1回", () => {
+  it("同色の遠隔オブジェクト2個 (間隔50mm超) → auto モードでは糸切り0回 (同色内は jump)", () => {
     const regions = [square(-mm(35), 0, mm(15)), square(mm(35), 0, mm(15))];
     const { plan } = digitizeRegions(regions, "FAR");
-    expect(countTrims(plan)).toBe(1);
+    expect(countTrims(plan)).toBe(0);
   });
 
   it("分散した同色オブジェクトの総渡り距離が入力順より短くなる", () => {
