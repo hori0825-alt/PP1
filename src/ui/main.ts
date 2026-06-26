@@ -212,8 +212,8 @@ function photoSection(): string {
 function outlineSection(): string {
   return `
     <h2>線画モード</h2>
-    <label><input type="checkbox" id="outline-mode" ${state.outlineMode ? "checked" : ""}> 線画として縫う (輪郭をサテンで縫い、塗らない)</label>
-    <p class="note">ロゴ・線画・ぬり絵風の絵向け。線を骨格化して中心線をサテン (細部はビーン縫い) で縫います。塗らないので針数・糸切りが大幅に減り、白い部分は縫いません。</p>
+    <label><input type="checkbox" id="outline-mode" ${state.outlineMode ? "checked" : ""}> 線画として縫う (輪郭を三重縫いでなぞり、塗らない)</label>
+    <p class="note">ロゴ・線画・ぬり絵風の絵向け。各領域の輪郭を三重 (ビーン) ランニングステッチでなぞります。塗らないので針数・糸切りが大幅に減り、白い部分は縫いません。</p>
   `;
 }
 

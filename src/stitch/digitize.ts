@@ -386,14 +386,14 @@ export function digitizeRegions(
           const localWarnings: string[] = [];
           const regionRuns: StitchRun[] = [];
 
-          // --- 線画 (アウトライン) モード: 領域を骨格化して中心線をサテン/ビーンで縫う ---
-          // 分岐した線ネットワークも扱える。塗らないので針数・糸切りが激減する。
-          // 白 (紙) や太い面は線でないのでスキップ (縫わない)。
+          // --- 線画 (アウトライン) モード: 領域の輪郭を三重 (ビーン) 縫いでなぞる ---
+          // 外周 + 穴の各輪郭を連続ループで縫う。塗らないので針数・糸切りが激減する。
+          // 白 (紙) はスキップ (縫わない)。
           const nearWhite = source.color.r > 235 && source.color.g > 235 && source.color.b > 235;
           if (regionFillType === "outline") {
             if (!nearWhite) {
               const sk = skeletonStitch(source, { stitchLength: params.stitchLength });
-              for (const r of sk.runs) regionRuns.push({ ...r, stitchType: "satin" });
+              for (const r of sk.runs) regionRuns.push({ ...r, stitchType: "running" });
               localWarnings.push(...sk.warnings);
             }
             // runs が空 (白/太い面/骨格なし) ならこの領域は縫わない (塗りに落とさない)
@@ -503,6 +503,13 @@ export function digitizeRegions(
       }
 
       // --- 接続決定 (常に最新の文脈で計算。キャッシュした本体ランは書き換えない) ---
+      // 線画モードは疎な線縫いのため、離れた同色の線島どうしも糸切りせず
+      // ジャンプで渡す方が安全 (渡り糸が密な縫いに絡まない)。糸切り距離を広げて
+      // 糸切り回数を抑える (=糸切り根絶の方針に沿う)。極端に長い渡りのみ糸切り。
+      const isOutline = (source.fillType ?? options.fillType) === "outline";
+      const effectiveConnectOptions: ConnectOptions = isOutline
+        ? { trimMode: connectOptions.trimMode, trimDistance: Math.max(connectOptions.trimDistance ?? 0, mm(30)) }
+        : connectOptions;
       const emitted: StitchRun[] = [];
       for (let i = 0; i < processed.length; i++) {
         // i === 0: 前の領域からの接続 (糸切り許可)。i > 0: 同一領域内 (糸切り禁止)
@@ -515,7 +522,7 @@ export function digitizeRegions(
               : null;
         emitted.push({
           stitches: processed[i].stitches,
-          connection: decideConnection(from, processed[i].stitches[0], i > 0, connectOptions),
+          connection: decideConnection(from, processed[i].stitches[0], i > 0, effectiveConnectOptions),
           objectId,
           stitchType: processed[i].stitchType ?? "tatami",
         });
