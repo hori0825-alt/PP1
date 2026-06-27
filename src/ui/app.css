@@ -390,6 +390,16 @@ button.secondary:hover {
   background: #dde3e9;
 }
 
+button.danger {
+  background: #fde8e8;
+  color: #a02828;
+  border: 1px solid #e8b4b4;
+}
+
+button.danger:hover {
+  background: #f8d0d0;
+}
+
 /* プリセット・ビュータブ */
 .size-presets,
 .view-tabs {

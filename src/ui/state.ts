@@ -685,6 +685,19 @@ export function finishPenDraw(state: AppState): boolean {
   return true;
 }
 
+/** 指定した領域を削除してステッチを再生成する */
+export function deleteRegion(state: AppState, idx: number): void {
+  if (idx < 0 || idx >= state.regions.length) return;
+  state.regions = state.regions.filter((_, i) => i !== idx);
+  state.objects = state.objects.filter((_, i) => i !== idx);
+  state.project.regions = state.regions;
+  if (state.selectedRegionIndex === idx) state.selectedRegionIndex = null;
+  else if (state.selectedRegionIndex !== null && state.selectedRegionIndex > idx) {
+    state.selectedRegionIndex--;
+  }
+  recomputeStitches(state);
+}
+
 /** 装飾配置などで領域を差し替え、ステッチを再生成する */
 export function replaceRegions(state: AppState, regions: Region[]): void {
   state.regions = regions;
@@ -817,6 +830,7 @@ export function recomputeStitches(state: AppState, opts: { skipDerived?: boolean
         satinUnderlay: s.satinUnderlay,
         fillType: state.outlineMode ? "outline" : state.puffy ? "satin" : state.fillType,
         minObjectExtent: scaledMinExtent,
+        autoDensity: true,
         // 3D パフィー: サテンを詰めて盛り上げる (スポンジ併用想定)。それ以外は密度倍率を適用
         satinSpacing: state.puffy
           ? mm(0.3)

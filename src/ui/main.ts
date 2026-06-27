@@ -39,6 +39,7 @@ import {
   clearRegionAngleLines,
   createState,
   deleteBakedStitch,
+  deleteRegion,
   enterStitchEdit,
   enterVectorEdit,
   exitStitchEdit,
@@ -1830,6 +1831,33 @@ function analysisToRecommendation(a: AiAnalysis): import("../ai/types").AiRecomm
 }
 
 function bindVectorTab(): void {
+  // ペン作図ボタン (ベクタータブ内共通)
+  document.getElementById("pen-fill")?.addEventListener("click", () => {
+    if (state.vectorEdit) {
+      applyVectorEdit(state);
+    }
+    startPenDraw(state, "fill");
+    state.view = "vector";
+    render();
+  });
+  document.getElementById("pen-line")?.addEventListener("click", () => {
+    if (state.vectorEdit) {
+      applyVectorEdit(state);
+    }
+    startPenDraw(state, "line");
+    state.view = "vector";
+    render();
+  });
+  document.getElementById("pen-finish")?.addEventListener("click", () => {
+    finishPenDraw(state);
+    state.view = "stitch";
+    render();
+  });
+  document.getElementById("pen-cancel")?.addEventListener("click", () => {
+    cancelPenDraw(state);
+    render();
+  });
+
   const ve = state.vectorEdit;
   document.getElementById("ve-enter")?.addEventListener("click", () => {
     enterVectorEdit(state);
@@ -1849,6 +1877,18 @@ function bindVectorTab(): void {
     ve.selectedNode = null;
     render();
   });
+  // 糸色: ベクタータブ内のパレットで色を変更
+  document.querySelectorAll<HTMLElement>(".thread-sw").forEach((b) =>
+    b.addEventListener("click", () => {
+      const pec = Number(b.dataset.pec);
+      const th = BROTHER_PALETTE.find((t) => t.pecIndex === pec);
+      if (!th) return;
+      const shape = ve.shapes[ve.activeShape];
+      shape.color = { r: th.r, g: th.g, b: th.b, name: th.name };
+      setRegionColor(state, ve.activeShape, { r: th.r, g: th.g, b: th.b, name: th.name, code: th.code });
+      render();
+    }),
+  );
   document.querySelectorAll<HTMLElement>(".ve-tool").forEach((b) =>
     b.addEventListener("click", () => {
       ve.tool = b.dataset.tool as VectorTool;
@@ -1877,6 +1917,16 @@ function bindVectorTab(): void {
   document.getElementById("ve-all-corner")?.addEventListener("click", () => {
     vectorSetAllType(state, "corner");
     liveApplyVectorEdit(state);
+    render();
+  });
+  // 形状を削除
+  document.getElementById("ve-delete-shape")?.addEventListener("click", () => {
+    const idx = ve.activeShape;
+    applyVectorEdit(state);
+    deleteRegion(state, idx);
+    if (state.regions.length > 0) {
+      enterVectorEdit(state, Math.min(idx, state.regions.length - 1));
+    }
     render();
   });
   document.getElementById("ve-apply")?.addEventListener("click", () => {

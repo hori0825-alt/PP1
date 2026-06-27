@@ -3,6 +3,7 @@
 // 移動/追加/削除する。Snap to Artwork は元画像/SVG 由来の領域輪郭を参照する。
 
 import { mm } from "../core/constants";
+import { BROTHER_PALETTE, nearestBrotherThread } from "../export/brotherPalette";
 import { addNode, deleteNode, moveNode, pathToPolyline, setAllNodeTypes } from "../vector/path";
 import type { EditPath } from "../vector/path";
 import { snapToArtwork } from "../vector/snap";
@@ -191,13 +192,39 @@ export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, stat
 /** ベクタータブの HTML */
 export function vectorTabContent(state: AppState): string {
   const ve = state.vectorEdit;
+  const pd = state.penDraw;
+
+  if (pd) {
+    const need = pd.kind === "fill" ? 3 : 2;
+    const ready = pd.points.length >= need;
+    return `
+      <h2>手動デジタイズ (作図中)</h2>
+      <p class="note">${pd.kind === "fill" ? "面" : "線"}を作図中 — キャンバスをクリックで点を追加。${pd.points.length} 点。</p>
+      <div class="ve-tools">
+        <button id="pen-finish" ${ready ? "" : "disabled"}>確定 (ダブルクリックでも可)</button>
+        <button id="pen-cancel" class="secondary">取消</button>
+      </div>
+      <p class="note">${pd.kind === "fill" ? "3点以上で面になります。始点へ自動で閉じます。" : "2点以上で走り縫いになります。"}</p>`;
+  }
+
   if (!ve) {
     return `<p class="note">ベクター編集を開始すると、輪郭をノードとして編集できます。</p>
-      <button id="ve-enter">ベクター編集を開始</button>`;
+      <button id="ve-enter">ベクター編集を開始</button>
+      <h2>パーツの追加</h2>
+      <div class="ve-tools">
+        <button id="pen-fill">面を描く (フィル)</button>
+        <button id="pen-line">線を描く (走り縫い)</button>
+      </div>
+      <p class="note">キャンバスをクリックして点を置き、ダブルクリックで確定。</p>`;
   }
   const shape = ve.shapes[ve.activeShape];
   const pathCount = 1 + shape.holes.length;
   const node = ve.selectedNode !== null ? activePath(ve).nodes[ve.selectedNode] : null;
+  const colorThread = nearestBrotherThread(shape.color);
+  const threadGrid = BROTHER_PALETTE.map(
+    (th) =>
+      `<button class="thread-sw ${th.pecIndex === colorThread.pecIndex ? "active" : ""}" data-pec="${th.pecIndex}" title="${th.name}" style="background:rgb(${th.r},${th.g},${th.b})"></button>`,
+  ).join("");
   return `
     <h2>編集対象</h2>
     <label>形状
@@ -208,6 +235,11 @@ export function vectorTabContent(state: AppState): string {
         <option value="outer" ${ve.activePath === "outer" ? "selected" : ""}>外周</option>
         ${shape.holes.map((_, i) => `<option value="${i}" ${ve.activePath === i ? "selected" : ""}>穴 ${i + 1}</option>`).join("")}
       </select></label>` : ""}
+    <h2>糸色</h2>
+    <div class="region-color">
+      <div class="note">糸色: ${colorThread.name}（縫うとこの色になります）</div>
+      <div class="thread-grid">${threadGrid}</div>
+    </div>
     <h2>ツール</h2>
     <div class="ve-tools">
       ${(["select", "add", "delete"] as const).map((t) => `<button class="ve-tool ${ve.tool === t ? "active" : ""}" data-tool="${t}">${{ select: "選択/移動", add: "追加", delete: "削除" }[t]}</button>`).join("")}
@@ -220,6 +252,14 @@ export function vectorTabContent(state: AppState): string {
     </div>` : `<p class="note">ノードを選択すると種別を変更できます。</p>`}
     <button id="ve-all-smooth" class="secondary">全ノードをスムーズに (角丸化)</button>
     <button id="ve-all-corner" class="secondary">全ノードをコーナーに</button>
+    <h2>パーツ操作</h2>
+    <button id="ve-delete-shape" class="secondary danger">この形状を削除</button>
+    <h2>パーツの追加</h2>
+    <div class="ve-tools">
+      <button id="pen-fill">面を描く (フィル)</button>
+      <button id="pen-line">線を描く (走り縫い)</button>
+    </div>
+    <p class="note">ベクター編集を一度適用してから描画できます。</p>
     <h2>確定</h2>
     <button id="ve-apply">編集を適用 (ステッチ再生成)</button>
     <button id="ve-cancel" class="secondary">破棄</button>
