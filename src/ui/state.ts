@@ -34,6 +34,8 @@ import type { LayoutMode } from "../text/layout";
 import { editShapeToRegion, regionToEditShape } from "../vector/shape";
 import type { EditShape } from "../vector/shape";
 import type { AiAnalysis, AiCorrectionSettings, AiRecommendation } from "../ai/types";
+import type { FillRecommendation } from "../plan/fillRecommend";
+import { recommendFillTypes } from "../plan/fillRecommend";
 
 export type Mode = "easy" | "pro";
 export type ViewMode = "original" | "quantized" | "vector" | "stitch";
@@ -157,6 +159,9 @@ export interface AppState {
   /** 線画モード (ON のとき領域を骨格化して中心線サテン/ビーンで縫う。塗らない) */
   outlineMode: boolean;
 
+  /** パーツ別の縫い方提案 (提案ボタン押下後のみ非 null) */
+  fillRecommendations: FillRecommendation[] | null;
+
   // AI 補正
   aiCorrection: AiCorrectionSettings;
   aiStatus: "idle" | "loading" | "done" | "error";
@@ -218,6 +223,7 @@ export function createState(): AppState {
     photoMode: false,
     puffy: false,
     outlineMode: false,
+    fillRecommendations: null,
     aiCorrection: {
       protectHighlights: true,
       preserveTransparency: true,
@@ -686,6 +692,32 @@ export function finishPenDraw(state: AppState): boolean {
 }
 
 /** 指定した領域を削除してステッチを再生成する */
+/** 全パーツの縫い方を解析して提案を生成する */
+export function generateFillRecommendations(state: AppState): void {
+  state.fillRecommendations = recommendFillTypes(state.regions);
+}
+
+/** 提案のうち accepted=true のものを適用してステッチを再生成する */
+export function applyFillRecommendations(state: AppState): void {
+  const recs = state.fillRecommendations;
+  if (!recs) return;
+  let changed = false;
+  for (const rec of recs) {
+    if (!rec.accepted) continue;
+    const region = state.regions[rec.regionIndex];
+    if (!region) continue;
+    if (region.fillType !== rec.recommended) {
+      region.fillType = rec.recommended;
+      changed = true;
+    }
+  }
+  state.fillRecommendations = null;
+  if (changed) {
+    state.project.regions = state.regions;
+    recomputeStitches(state);
+  }
+}
+
 export function deleteRegion(state: AppState, idx: number): void {
   if (idx < 0 || idx >= state.regions.length) return;
   state.regions = state.regions.filter((_, i) => i !== idx);

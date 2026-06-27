@@ -30,6 +30,7 @@ import {
   applyApplique,
   applyAutoReduce,
   applyFabric,
+  applyFillRecommendations,
   addRegionAngleLine,
   applyVectorEdit,
   bakeObject,
@@ -44,6 +45,7 @@ import {
   enterVectorEdit,
   exitStitchEdit,
   finishPenDraw,
+  generateFillRecommendations,
   insertBakedStitch,
   liveApplyVectorEdit,
   moveBakedStitch,
@@ -351,6 +353,38 @@ function fillTypeLabel(f: FillType): string {
         : "自動 (細→サテン / 広→タタミ)";
 }
 
+function fillRecommendPanel(): string {
+  const recs = state.fillRecommendations;
+  if (!recs || recs.length === 0) return "";
+  const fillLabel = (f: string | undefined): string =>
+    f === "outline" ? "三重縫い" : f === "satin" ? "サテン" : f === "tatami" ? "タタミ" : f === "stroke" ? "線" : "自動";
+  const outlineCount = recs.filter((r) => r.accepted && r.recommended === "outline").length;
+  const fillCount = recs.filter((r) => r.accepted && r.recommended !== "outline").length;
+  return `
+    <div class="fill-rec-panel">
+      <div class="fill-rec-summary">三重縫い推奨: ${outlineCount} / 塗り: ${fillCount}</div>
+      <div class="fill-rec-list">
+        ${recs
+          .map(
+            (rec) =>
+              `<div class="fill-rec-item">
+                <label>
+                  <input type="checkbox" class="fill-rec-check" data-ri="${rec.regionIndex}" ${rec.accepted ? "checked" : ""}>
+                  <span class="swatch" style="background:rgb(${rec.color.r},${rec.color.g},${rec.color.b})"></span>
+                  <span class="fill-rec-label">パーツ${rec.regionIndex + 1}: ${rec.reason}</span>
+                  ${rec.estimatedReduction > 0 ? `<span class="fill-rec-save">-${rec.estimatedReduction}%</span>` : ""}
+                </label>
+              </div>`,
+          )
+          .join("")}
+      </div>
+      <div class="ve-tools">
+        <button id="fill-rec-apply">チェック済みを適用</button>
+        <button id="fill-rec-cancel" class="secondary">閉じる</button>
+      </div>
+    </div>`;
+}
+
 function stitchEditPanel(): string {
   const obj = stitchEditObject(state);
   const total = obj?.baked?.reduce((n, r) => n + r.stitches.length, 0) ?? 0;
@@ -445,6 +479,8 @@ function stitchTab(): string {
       <button id="fill-all-tatami">全パーツをタタミに</button>
       <button id="fill-all-clear" class="secondary">個別設定をクリア</button>
     </div>
+    <button id="fill-recommend">縫い方を自動提案 (三重縫い / 塗り)</button>
+    ${fillRecommendPanel()}
     <h2>パーツ個別設定</h2>
     ${selectedPanel}
     <h2>タタミ角度</h2>
@@ -1027,17 +1063,39 @@ function bindEvents(): void {
     recomputeStitches(state);
     render();
   });
-  // 糸色: パレットのスウォッチで選択パーツの色を変更
-  document.querySelectorAll<HTMLElement>(".thread-sw").forEach((b) =>
-    b.addEventListener("click", () => {
-      const idx = state.selectedRegionIndex;
-      if (idx === null) return;
-      const pec = Number(b.dataset.pec);
-      const th = BROTHER_PALETTE.find((t) => t.pecIndex === pec);
-      if (th) setRegionColor(state, idx, { r: th.r, g: th.g, b: th.b, name: th.name, code: th.code });
-      render();
+  // 縫い方の自動提案
+  document.getElementById("fill-recommend")?.addEventListener("click", () => {
+    generateFillRecommendations(state);
+    render();
+  });
+  document.querySelectorAll<HTMLInputElement>(".fill-rec-check").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      const ri = Number(cb.dataset.ri);
+      const rec = state.fillRecommendations?.find((r) => r.regionIndex === ri);
+      if (rec) rec.accepted = cb.checked;
     }),
   );
+  document.getElementById("fill-rec-apply")?.addEventListener("click", () => {
+    applyFillRecommendations(state);
+    render();
+  });
+  document.getElementById("fill-rec-cancel")?.addEventListener("click", () => {
+    state.fillRecommendations = null;
+    render();
+  });
+  // 糸色: パレットのスウォッチで選択パーツの色を変更 (ステッチタブ時のみ。ベクタータブは bindVectorTab で処理)
+  if (state.tab === "stitch") {
+    document.querySelectorAll<HTMLElement>(".thread-sw").forEach((b) =>
+      b.addEventListener("click", () => {
+        const idx = state.selectedRegionIndex;
+        if (idx === null) return;
+        const pec = Number(b.dataset.pec);
+        const th = BROTHER_PALETTE.find((t) => t.pecIndex === pec);
+        if (th) setRegionColor(state, idx, { r: th.r, g: th.g, b: th.b, name: th.name, code: th.code });
+        render();
+      }),
+    );
+  }
   // 縫い方: 選択中パーツの個別設定
   document.getElementById("region-fill")?.addEventListener("change", (e) => {
     const idx = state.selectedRegionIndex;

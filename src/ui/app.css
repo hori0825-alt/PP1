@@ -400,6 +400,45 @@ button.danger:hover {
   background: #f8d0d0;
 }
 
+/* 縫い方提案パネル */
+.fill-rec-panel {
+  margin: 8px 0;
+  padding: 8px;
+  background: #f0f7ff;
+  border: 1px solid #c5d8ee;
+  border-radius: 6px;
+}
+
+.fill-rec-summary {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.fill-rec-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.fill-rec-item label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fill-rec-label {
+  flex: 1;
+}
+
+.fill-rec-save {
+  color: #1a8a4a;
+  font-weight: 600;
+  font-size: 11px;
+}
+
 /* プリセット・ビュータブ */
 .size-presets,
 .view-tabs {
