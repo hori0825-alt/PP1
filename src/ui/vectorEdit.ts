@@ -109,19 +109,21 @@ function nearestSegmentIndex(path: EditPath, p: { x: number; y: number }): numbe
 export function attachVectorPointer(canvas: HTMLCanvasElement, v: Viewport, state: AppState, redraw: () => void): () => void {
   let dragging: number | null = null;
 
-  const toDesign = (ev: PointerEvent): { x: number; y: number } => {
+  const bufferXY = (ev: PointerEvent): [number, number] => {
     const rect = canvas.getBoundingClientRect();
-    return screenToDesign(v, canvas, ev.clientX - rect.left, ev.clientY - rect.top);
+    const fx = rect.width > 0 ? canvas.width / rect.width : 1;
+    const fy = rect.height > 0 ? canvas.height / rect.height : 1;
+    return [(ev.clientX - rect.left) * fx, (ev.clientY - rect.top) * fy];
   };
-  const screenXY = (ev: PointerEvent): [number, number] => {
-    const rect = canvas.getBoundingClientRect();
-    return [ev.clientX - rect.left, ev.clientY - rect.top];
+  const toDesign = (ev: PointerEvent): { x: number; y: number } => {
+    const [sx, sy] = bufferXY(ev);
+    return screenToDesign(v, canvas, sx, sy);
   };
 
   const onDown = (ev: PointerEvent): void => {
     const ve = state.vectorEdit;
     if (!ve) return;
-    const [sx, sy] = screenXY(ev);
+    const [sx, sy] = bufferXY(ev);
     const hit = hitNode(ve, v, canvas, sx, sy);
 
     if (ve.tool === "delete") {
@@ -240,10 +242,11 @@ export function vectorTabContent(state: AppState): string {
       <div class="note">糸色: ${colorThread.name}（縫うとこの色になります）</div>
       <div class="thread-grid">${threadGrid}</div>
     </div>
-    <h2>ツール</h2>
+    <h2>ノード編集ツール</h2>
     <div class="ve-tools">
-      ${(["select", "add", "delete"] as const).map((t) => `<button class="ve-tool ${ve.tool === t ? "active" : ""}" data-tool="${t}">${{ select: "選択/移動", add: "追加", delete: "削除" }[t]}</button>`).join("")}
+      ${(["select", "add", "delete"] as const).map((t) => `<button class="ve-tool ${ve.tool === t ? "active" : ""}" data-tool="${t}">${{ select: "選択/移動", add: "ノード追加", delete: "ノード削除" }[t]}</button>`).join("")}
     </div>
+    <p class="note">${ve.tool === "select" ? "キャンバスのノードをドラッグして形を変えます。" : ve.tool === "add" ? "キャンバスの輪郭線をクリックするとノードを追加します。" : "キャンバスのノードをクリックすると削除します。"}</p>
     <label><input type="checkbox" id="ve-snap" ${ve.snapEnabled ? "checked" : ""}> Snap to Artwork (下絵に吸着)</label>
     <h2>ノード</h2>
     ${node ? `<div class="ve-node-edit">

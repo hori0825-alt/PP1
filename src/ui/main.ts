@@ -1639,26 +1639,28 @@ function bindSpecialTab(): void {
     const el = document.getElementById("arr-count") as HTMLInputElement | null;
     return el ? Math.max(2, Math.min(16, Number(el.value))) : 6;
   };
-  // 手動デジタイズ (ペン)
-  document.getElementById("pen-fill")?.addEventListener("click", () => {
-    startPenDraw(state, "fill");
-    state.view = "vector";
-    render();
-  });
-  document.getElementById("pen-line")?.addEventListener("click", () => {
-    startPenDraw(state, "line");
-    state.view = "vector";
-    render();
-  });
-  document.getElementById("pen-finish")?.addEventListener("click", () => {
-    finishPenDraw(state);
-    state.view = "stitch";
-    render();
-  });
-  document.getElementById("pen-cancel")?.addEventListener("click", () => {
-    cancelPenDraw(state);
-    render();
-  });
+  // 手動デジタイズ (ペン) — 特殊タブ表示時のみ (ベクタータブ内のペンは bindVectorTab で処理)
+  if (state.tab === "special") {
+    document.getElementById("pen-fill")?.addEventListener("click", () => {
+      startPenDraw(state, "fill");
+      state.view = "vector";
+      render();
+    });
+    document.getElementById("pen-line")?.addEventListener("click", () => {
+      startPenDraw(state, "line");
+      state.view = "vector";
+      render();
+    });
+    document.getElementById("pen-finish")?.addEventListener("click", () => {
+      finishPenDraw(state);
+      state.view = "stitch";
+      render();
+    });
+    document.getElementById("pen-cancel")?.addEventListener("click", () => {
+      cancelPenDraw(state);
+      render();
+    });
+  }
   document.getElementById("arr-mx")?.addEventListener("click", () => {
     replaceRegions(state, makeMirror(state.regions, "x", 0));
     state.view = "stitch";
@@ -1861,6 +1863,7 @@ function bindVectorTab(): void {
   const ve = state.vectorEdit;
   document.getElementById("ve-enter")?.addEventListener("click", () => {
     enterVectorEdit(state);
+    state.view = "stitch";
     render();
   });
   if (!ve) return;
