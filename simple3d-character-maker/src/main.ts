@@ -4,6 +4,9 @@ import { createScene } from './viewer/scene';
 import { ViewerCameraRig } from './viewer/cameras';
 import { ViewerControls } from './viewer/controls';
 import { buildBodyMesh } from './geometry/bodyMesh';
+import { buildCalyxMesh } from './geometry/calyxMesh';
+import { buildStemMesh } from './geometry/stemMesh';
+import { buildEyeMesh, buildMouthMesh } from './geometry/faceMesh';
 import { createDefaultProjectData } from './presets/eggplant';
 import { formatMm } from './core/units';
 import type { ViewName } from './core/params';
@@ -33,6 +36,11 @@ const canvas = document.getElementById('viewer-canvas') as HTMLCanvasElement;
 const { scene, renderer, bodyGroup } = createScene(canvas);
 
 const bodyMaterial = new THREE.MeshStandardMaterial({ color: project.colors.body });
+const calyxMaterial = new THREE.MeshStandardMaterial({ color: project.colors.calyx });
+const stemMaterial = new THREE.MeshStandardMaterial({ color: project.colors.stem });
+const eyeMaterial = new THREE.MeshStandardMaterial({ color: project.colors.eye });
+const mouthMaterial = new THREE.MeshStandardMaterial({ color: project.colors.mouth });
+
 function rebuildBodyMesh(): void {
   bodyGroup.clear();
   const { geometry, warnings } = buildBodyMesh(project.body);
@@ -43,6 +51,34 @@ function rebuildBodyMesh(): void {
     // eslint-disable-next-line no-console
     console.warn('[body warnings]', warnings);
   }
+
+  const calyx = buildCalyxMesh(project.calyx, project.body.sections);
+  const calyxMesh = new THREE.Mesh(calyx.geometry, calyxMaterial);
+  calyxMesh.name = 'calyx';
+  bodyGroup.add(calyxMesh);
+  if (calyx.warnings.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn('[calyx warnings]', calyx.warnings);
+  }
+
+  const stem = buildStemMesh(project.stem, project.body.sections);
+  const stemMesh = new THREE.Mesh(stem.geometry, stemMaterial);
+  stemMesh.name = 'stem';
+  bodyGroup.add(stemMesh);
+  if (stem.warnings.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn('[stem warnings]', stem.warnings);
+  }
+
+  const eyes = buildEyeMesh(project.eyes, project.body.sections);
+  const eyeMesh = new THREE.Mesh(eyes.geometry, eyeMaterial);
+  eyeMesh.name = 'eyes';
+  bodyGroup.add(eyeMesh);
+
+  const mouth = buildMouthMesh(project.mouth, project.body.sections);
+  const mouthMesh = new THREE.Mesh(mouth.geometry, mouthMaterial);
+  mouthMesh.name = 'mouth';
+  bodyGroup.add(mouthMesh);
 }
 rebuildBodyMesh();
 

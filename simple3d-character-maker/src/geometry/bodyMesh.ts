@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BodyParams } from '../core/params';
 import { buildBodySurface } from './surface';
+import { fixOutwardWinding } from './meshUtils';
 
 export interface BodyMeshResult {
   geometry: THREE.BufferGeometry;
@@ -20,35 +21,6 @@ function findTForZ(zFn: (t: number) => number, targetZ: number): number {
     }
   }
   return (lo + hi) / 2;
-}
-
-function signedVolume(positions: number[], indices: number[]): number {
-  let vol = 0;
-  for (let i = 0; i < indices.length; i += 3) {
-    const ia = indices[i]! * 3;
-    const ib = indices[i + 1]! * 3;
-    const ic = indices[i + 2]! * 3;
-    const ax = positions[ia]!;
-    const ay = positions[ia + 1]!;
-    const az = positions[ia + 2]!;
-    const bx = positions[ib]!;
-    const by = positions[ib + 1]!;
-    const bz = positions[ib + 2]!;
-    const cxp = positions[ic]!;
-    const cyp = positions[ic + 1]!;
-    const czp = positions[ic + 2]!;
-    vol += ax * (by * czp - bz * cyp) - ay * (bx * czp - bz * cxp) + az * (bx * cyp - by * cxp);
-  }
-  return vol / 6;
-}
-
-/** すべての三角形の頂点順序を反転し、外向き/内向きを入れ替える。 */
-function reverseWinding(indices: number[]): void {
-  for (let i = 0; i < indices.length; i += 3) {
-    const tmp = indices[i + 1]!;
-    indices[i + 1] = indices[i + 2]!;
-    indices[i + 2] = tmp;
-  }
 }
 
 /**
@@ -150,9 +122,7 @@ export function buildBodyMesh(params: BodyParams): BodyMeshResult {
     }
   }
 
-  if (signedVolume(positions, indices) < 0) {
-    reverseWinding(indices);
-  }
+  fixOutwardWinding(positions, indices);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
