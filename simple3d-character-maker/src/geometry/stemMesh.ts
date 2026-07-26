@@ -33,7 +33,9 @@ export function buildStemMesh(
   if (stem.radius < 0.8) {
     warnings.push(`茎の半径が危険域です（赤警告の目安 0.8mm 未満）: ${stem.radius.toFixed(2)}mm`);
   } else if (stem.radius < 1.2) {
-    warnings.push(`茎の半径が推奨最小値を下回っています（黄警告の目安 1.2mm 未満）: ${stem.radius.toFixed(2)}mm`);
+    warnings.push(
+      `茎の半径が推奨最小値を下回っています（黄警告の目安 1.2mm 未満）: ${stem.radius.toFixed(2)}mm`,
+    );
   }
 
   const surface = buildBodySurface(bodySections);
@@ -56,7 +58,8 @@ export function buildStemMesh(
     for (let j = 0; j < RADIAL_SEGMENTS; j++) {
       const theta = (j / RADIAL_SEGMENTS) * Math.PI * 2;
       const phase = hFrac * 1.3;
-      const rE1 = stem.radius * (1 - stem.squash) * (1 + stem.distortion * Math.sin(3 * theta + phase));
+      const rE1 =
+        stem.radius * (1 - stem.squash) * (1 + stem.distortion * Math.sin(3 * theta + phase));
       const rE2 = stem.radius * (1 + stem.distortion * Math.sin(3 * theta + phase + 1.0));
       const bump = IRREGULARITY_MM * Math.cos(2 * theta + hFrac * 4.0);
 

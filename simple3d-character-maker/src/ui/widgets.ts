@@ -76,7 +76,11 @@ export function sliderField(
   return { el: row(label, input), refresh: (v) => (input.value = String(v)) };
 }
 
-export function checkboxField(label: string, value: boolean, onCommit: (v: boolean) => void): Field<boolean> {
+export function checkboxField(
+  label: string,
+  value: boolean,
+  onCommit: (v: boolean) => void,
+): Field<boolean> {
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.checked = value;
@@ -84,7 +88,11 @@ export function checkboxField(label: string, value: boolean, onCommit: (v: boole
   return { el: row(label, input), refresh: (v) => (input.checked = v) };
 }
 
-export function colorField(label: string, value: string, onCommit: (v: string) => void): Field<string> {
+export function colorField(
+  label: string,
+  value: string,
+  onCommit: (v: string) => void,
+): Field<string> {
   const input = document.createElement('input');
   input.type = 'color';
   input.value = value;

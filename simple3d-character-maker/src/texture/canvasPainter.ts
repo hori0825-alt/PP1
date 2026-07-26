@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import type { ColorParams } from '../core/params';
-import { ATLAS_PATCHES, ATLAS_SIZE, patchCenterUV, patchFillRect, type AtlasPatch, type PartKey } from './atlas';
+import {
+  ATLAS_PATCHES,
+  ATLAS_SIZE,
+  patchCenterUV,
+  patchFillRect,
+  type AtlasPatch,
+  type PartKey,
+} from './atlas';
 
 /** パーツ色から 2048x2048 のテクスチャアトラスを Canvas 上に描画する。 */
 export function paintAtlasCanvas(colors: ColorParams): HTMLCanvasElement {

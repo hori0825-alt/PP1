@@ -38,7 +38,6 @@ export function mountProjectPanel(container: HTMLElement, ctx: PanelContext): Mo
         ctx.store.replaceProject(data);
       })
       .catch((err) => {
-        // eslint-disable-next-line no-alert
         window.alert(`読み込みに失敗しました: ${err instanceof Error ? err.message : String(err)}`);
       });
   });
@@ -48,7 +47,6 @@ export function mountProjectPanel(container: HTMLElement, ctx: PanelContext): Mo
   resetBtn.textContent = '初期化';
   resetBtn.style.display = 'block';
   resetBtn.addEventListener('click', () => {
-    // eslint-disable-next-line no-alert
     if (window.confirm('プロジェクトを初期状態に戻します。よろしいですか？')) {
       ctx.store.replaceProject(createDefaultProjectData());
     }

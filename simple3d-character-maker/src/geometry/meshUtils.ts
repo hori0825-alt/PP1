@@ -22,7 +22,8 @@ export function appendGridShell(
   const baseIndex = positions.length / 3;
 
   const outerIndex = (ui: number, vi: number): number => baseIndex + ui * vCount + vi;
-  const innerIndex = (ui: number, vi: number): number => baseIndex + uCount * vCount + ui * vCount + vi;
+  const innerIndex = (ui: number, vi: number): number =>
+    baseIndex + uCount * vCount + ui * vCount + vi;
 
   for (const row of grid) {
     for (const point of row) {

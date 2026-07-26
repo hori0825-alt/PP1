@@ -10,7 +10,10 @@ function makeGeometry(positions: number[], indices: number[]): THREE.BufferGeome
 }
 
 // 外向き法線で正しく巻かれた正四面体（頂点0を原点、他3点で底面を形成）
-function tetrahedron(offset: [number, number, number] = [0, 0, 0]): { positions: number[]; indices: number[] } {
+function tetrahedron(offset: [number, number, number] = [0, 0, 0]): {
+  positions: number[];
+  indices: number[];
+} {
   const [ox, oy, oz] = offset;
   const p = [
     [0, 0, 1],

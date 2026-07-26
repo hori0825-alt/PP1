@@ -337,13 +337,15 @@ function updateDerivedPanels(): void {
   table.appendChild(header);
   for (const s of project.body.sections) {
     const tr = document.createElement('tr');
-    [s.t.toFixed(2), s.z.toFixed(1), s.rx.toFixed(1), s.ry.toFixed(1), s.n.toFixed(2)].forEach((v) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      td.style.border = '1px solid #eee';
-      td.style.padding = '2px 6px';
-      tr.appendChild(td);
-    });
+    [s.t.toFixed(2), s.z.toFixed(1), s.rx.toFixed(1), s.ry.toFixed(1), s.n.toFixed(2)].forEach(
+      (v) => {
+        const td = document.createElement('td');
+        td.textContent = v;
+        td.style.border = '1px solid #eee';
+        td.style.padding = '2px 6px';
+        tr.appendChild(td);
+      },
+    );
     table.appendChild(tr);
   }
   bottomContent.appendChild(table);
@@ -362,7 +364,9 @@ function updateDerivedPanels(): void {
 
 async function getAtlasPngBytes(): Promise<Uint8Array> {
   const sourceCanvas = atlasTexture.image as HTMLCanvasElement;
-  const blob = await new Promise<Blob | null>((resolve) => sourceCanvas.toBlob(resolve, 'image/png'));
+  const blob = await new Promise<Blob | null>((resolve) =>
+    sourceCanvas.toBlob(resolve, 'image/png'),
+  );
   if (!blob) throw new Error('テクスチャの PNG 変換に失敗しました');
   return new Uint8Array(await blob.arrayBuffer());
 }
@@ -425,7 +429,8 @@ exportPanelContainer.innerHTML = '';
   const note = document.createElement('div');
   note.style.fontSize = '11px';
   note.style.color = '#888';
-  note.textContent = 'model.obj / model.mtl / texture.png / model.glb / model.stl / project.json / print_check.txt / README_print.txt を ZIP でまとめて出力します。';
+  note.textContent =
+    'model.obj / model.mtl / texture.png / model.glb / model.stl / project.json / print_check.txt / README_print.txt を ZIP でまとめて出力します。';
   exportPanelContainer.appendChild(note);
 
   const exportBtn = document.createElement('button');

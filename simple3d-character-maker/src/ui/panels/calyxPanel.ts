@@ -23,8 +23,10 @@ export function mountCalyxPanel(container: HTMLElement, ctx: PanelContext): Moun
   );
   container.appendChild(baseTField.el);
 
-  const symmetricField = checkboxField('左右対称（全葉を同じ値にする）', project.calyx.symmetric, (v) =>
-    ctx.store.updateWithHistory((p) => (p.calyx.symmetric = v)),
+  const symmetricField = checkboxField(
+    '左右対称（全葉を同じ値にする）',
+    project.calyx.symmetric,
+    (v) => ctx.store.updateWithHistory((p) => (p.calyx.symmetric = v)),
   );
   container.appendChild(symmetricField.el);
 
@@ -52,7 +54,13 @@ export function mountCalyxPanel(container: HTMLElement, ctx: PanelContext): Moun
     title.style.color = '#666';
     box.appendChild(title);
 
-    const make = (label: string, key: LeafFieldKey, min: number, max: number, step: number): Field<number> => {
+    const make = (
+      label: string,
+      key: LeafFieldKey,
+      min: number,
+      max: number,
+      step: number,
+    ): Field<number> => {
       const field = sliderField(
         label,
         leaf[key],

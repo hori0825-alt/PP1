@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildCalyxMesh } from '../src/geometry/calyxMesh';
 import { analyzeTopology } from '../src/inspect/topology';
-import { defaultCalyxParams, defaultBodyParams, eggplantBodySections } from '../src/presets/eggplant';
+import {
+  defaultCalyxParams,
+  defaultBodyParams,
+  eggplantBodySections,
+} from '../src/presets/eggplant';
 
 describe('buildCalyxMesh (eggplant preset)', () => {
   it('produces a watertight shell for all 5 leaves (0 boundary / non-manifold edges)', () => {
@@ -25,7 +29,11 @@ describe('buildCalyxMesh (eggplant preset)', () => {
     geomA.computeBoundingBox();
     const heightA = geomA.boundingBox!.max.z;
 
-    const widerSections = eggplantBodySections.map((s) => ({ ...s, rx: s.rx * 1.5, ry: s.ry * 1.5 }));
+    const widerSections = eggplantBodySections.map((s) => ({
+      ...s,
+      rx: s.rx * 1.5,
+      ry: s.ry * 1.5,
+    }));
     const { geometry: geomB } = buildCalyxMesh(defaultCalyxParams, widerSections);
     geomB.computeBoundingBox();
     const heightB = geomB.boundingBox!.max.z;

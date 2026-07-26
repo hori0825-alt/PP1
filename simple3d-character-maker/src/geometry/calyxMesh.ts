@@ -34,17 +34,14 @@ function widthFraction(u: number): number {
   return Math.max(MIN_WIDTH_FRAC, raw);
 }
 
-function buildLeafGrid(
-  leaf: CalyxLeaf,
-  baseT: number,
-  surface: BodySurface,
-): GridShellPoint[][] {
+function buildLeafGrid(leaf: CalyxLeaf, baseT: number, surface: BodySurface): GridShellPoint[][] {
   const centerAngleRad = leaf.angle * DEG2RAD;
   const pitchRad = Math.min(Math.max(leaf.pitch, 0), 89) * DEG2RAD;
   const curvature = Math.min(Math.max(leaf.curvature, 0), 1);
 
   const eps = 1e-4;
-  const dzdtRaw = (surface.z(Math.min(baseT + eps, 1)) - surface.z(Math.max(baseT - eps, 0))) / (2 * eps);
+  const dzdtRaw =
+    (surface.z(Math.min(baseT + eps, 1)) - surface.z(Math.max(baseT - eps, 0))) / (2 * eps);
   const dzdt = Math.abs(dzdtRaw) > 1e-3 ? dzdtRaw : 1;
 
   const grid: GridShellPoint[][] = [];

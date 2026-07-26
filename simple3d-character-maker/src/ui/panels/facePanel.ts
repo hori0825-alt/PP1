@@ -17,7 +17,13 @@ export function mountFacePanel(container: HTMLElement, ctx: PanelContext): Mount
     ctx.store.updateLive((p) => (p.eyes[key] = value));
   }
 
-  const makeEye = (label: string, key: EyeFieldKey, min: number, max: number, step: number): Field<number> => {
+  const makeEye = (
+    label: string,
+    key: EyeFieldKey,
+    min: number,
+    max: number,
+    step: number,
+  ): Field<number> => {
     const field = sliderField(
       label,
       project.eyes[key],
@@ -51,7 +57,13 @@ export function mountFacePanel(container: HTMLElement, ctx: PanelContext): Mount
     ctx.store.updateLive((p) => (p.mouth[key] = value));
   }
 
-  const makeMouth = (label: string, key: MouthNumberKey, min: number, max: number, step: number): Field<number> => {
+  const makeMouth = (
+    label: string,
+    key: MouthNumberKey,
+    min: number,
+    max: number,
+    step: number,
+  ): Field<number> => {
     const field = sliderField(
       label,
       project.mouth[key],
@@ -76,14 +88,17 @@ export function mountFacePanel(container: HTMLElement, ctx: PanelContext): Mount
   const note = document.createElement('div');
   note.style.fontSize = '11px';
   note.style.color = '#888';
-  note.textContent = '※ 彫り込み(relief<0)はPhase1では見た目のみです（実際のブーリアン減算はPhase1.5）。';
+  note.textContent =
+    '※ 彫り込み(relief<0)はPhase1では見た目のみです（実際のブーリアン減算はPhase1.5）。';
   container.appendChild(note);
 
   function refresh(): void {
     const p = ctx.store.getProject();
     (Object.keys(eyeFields) as EyeFieldKey[]).forEach((key) => eyeFields[key].refresh(p.eyes[key]));
     presetField.refresh(p.mouth.preset);
-    (Object.keys(mouthFields) as MouthNumberKey[]).forEach((key) => mouthFields[key].refresh(p.mouth[key]));
+    (Object.keys(mouthFields) as MouthNumberKey[]).forEach((key) =>
+      mouthFields[key].refresh(p.mouth[key]),
+    );
   }
 
   return { refresh };

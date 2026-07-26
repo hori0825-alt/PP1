@@ -3,7 +3,11 @@ import { buildBodyMesh } from '../src/geometry/bodyMesh';
 import { buildCalyxMesh } from '../src/geometry/calyxMesh';
 import { buildStemMesh } from '../src/geometry/stemMesh';
 import { buildEyeMesh, buildMouthMesh } from '../src/geometry/faceMesh';
-import { runPrintChecks, approximateMinWallThickness, type CheckInput } from '../src/inspect/checks';
+import {
+  runPrintChecks,
+  approximateMinWallThickness,
+  type CheckInput,
+} from '../src/inspect/checks';
 import { createDefaultProjectData } from '../src/presets/eggplant';
 
 function buildInput(project = createDefaultProjectData()): CheckInput {

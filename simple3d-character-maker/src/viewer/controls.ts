@@ -5,11 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export class ViewerControls {
   private controls: OrbitControls;
 
-  constructor(
-    camera: THREE.Camera,
-    domElement: HTMLElement,
-    target: THREE.Vector3,
-  ) {
+  constructor(camera: THREE.Camera, domElement: HTMLElement, target: THREE.Vector3) {
     this.controls = new OrbitControls(camera, domElement);
     this.controls.target.copy(target);
     this.controls.enableDamping = true;

@@ -147,7 +147,10 @@ function appendLensShell(
 }
 
 /** 目を生成する（開発指示書 6.4節）。左右対称に本体表面へ配置し、法線方向へ盛り上げる。 */
-export function buildEyeMesh(eyes: EyeParams, bodySections: readonly BodySection[]): FaceMeshResult {
+export function buildEyeMesh(
+  eyes: EyeParams,
+  bodySections: readonly BodySection[],
+): FaceMeshResult {
   const warnings: string[] = [];
   const surface = buildBodySurface(bodySections);
 
@@ -188,7 +191,10 @@ export function buildEyeMesh(eyes: EyeParams, bodySections: readonly BodySection
 const MOUTH_SAMPLES = 16;
 
 /** 口を生成する（開発指示書 6.4節）。2次ベジェで小さな上向きカーブを作る。 */
-export function buildMouthMesh(mouth: MouthParams, bodySections: readonly BodySection[]): FaceMeshResult {
+export function buildMouthMesh(
+  mouth: MouthParams,
+  bodySections: readonly BodySection[],
+): FaceMeshResult {
   const warnings: string[] = [];
   const geometry = new THREE.BufferGeometry();
 

@@ -21,7 +21,11 @@ export interface BodySurface {
   normal(t: number, theta: number): Point3;
 }
 
-function superellipseComponent(theta: number, trig: (theta: number) => number, exponent: number): number {
+function superellipseComponent(
+  theta: number,
+  trig: (theta: number) => number,
+  exponent: number,
+): number {
   const v = trig(theta);
   return Math.sign(v) * Math.abs(v) ** exponent;
 }
@@ -35,12 +39,30 @@ export function buildBodySurface(sections: readonly BodySection[]): BodySurface 
     throw new Error('buildBodySurface: sections には最低 2 点が必要です');
   }
   const ts = sections.map((s) => s.t);
-  const rxFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.rx));
-  const ryFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.ry));
-  const cxFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.cx));
-  const cyFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.cy));
-  const zFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.z));
-  const nFn = makeCatmullRomInterpolator(ts, sections.map((s) => s.n));
+  const rxFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.rx),
+  );
+  const ryFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.ry),
+  );
+  const cxFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.cx),
+  );
+  const cyFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.cy),
+  );
+  const zFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.z),
+  );
+  const nFn = makeCatmullRomInterpolator(
+    ts,
+    sections.map((s) => s.n),
+  );
 
   function point(t: number, theta: number): Point3 {
     const n = nFn(t);

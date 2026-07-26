@@ -33,7 +33,12 @@ export function patchCenterUV(patch: AtlasPatch): { u: number; v: number } {
 }
 
 /** パッチの塗りつぶし矩形（外周 8px マージンを除いた内側の領域）。 */
-export function patchFillRect(patch: AtlasPatch): { x: number; y: number; width: number; height: number } {
+export function patchFillRect(patch: AtlasPatch): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
   return {
     x: patch.x0 + ATLAS_MARGIN_PX,
     y: patch.y0 + ATLAS_MARGIN_PX,

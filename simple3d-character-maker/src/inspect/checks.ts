@@ -29,9 +29,12 @@ function hasFaces(geometry: THREE.BufferGeometry): boolean {
 }
 
 function mergeAllParts(input: CheckInput): THREE.BufferGeometry {
-  const geoms = [input.bodyGeometry, input.calyxGeometry, input.stemGeometry, input.eyeGeometry].filter(
-    hasFaces,
-  );
+  const geoms = [
+    input.bodyGeometry,
+    input.calyxGeometry,
+    input.stemGeometry,
+    input.eyeGeometry,
+  ].filter(hasFaces);
   if (hasFaces(input.mouthGeometry)) geoms.push(input.mouthGeometry);
   const merged = mergeGeometries(
     geoms.map((g) => g.clone()),
@@ -47,7 +50,10 @@ function mergeAllParts(input: CheckInput): THREE.BufferGeometry {
  * 表面から内向きにレイを飛ばし、最小肉厚を近似する（6.8節「近似値・参考」）。
  * three-mesh-bvh を用いた高速な交差判定。
  */
-export function approximateMinWallThickness(geometry: THREE.BufferGeometry, sampleCount = 200): number {
+export function approximateMinWallThickness(
+  geometry: THREE.BufferGeometry,
+  sampleCount = 200,
+): number {
   if (!hasFaces(geometry)) return Infinity;
   const bvh = new MeshBVH(geometry);
   const position = geometry.getAttribute('position');
@@ -70,7 +76,11 @@ export function approximateMinWallThickness(geometry: THREE.BufferGeometry, samp
     b.fromBufferAttribute(position, ib);
     c.fromBufferAttribute(position, ic);
     THREE.Triangle.getNormal(a, b, c, normal);
-    centroid.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+    centroid
+      .copy(a)
+      .add(b)
+      .add(c)
+      .multiplyScalar(1 / 3);
 
     const origin = centroid.clone().addScaledVector(normal, -1e-3);
     const direction = normal.clone().multiplyScalar(-1);

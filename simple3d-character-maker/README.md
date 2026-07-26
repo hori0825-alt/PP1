@@ -1,0 +1,122 @@
+# Simple3D Character Maker
+
+3D モデリング未経験者でも、参考画像を見ながらナス・牛のような単純なデフォルメ
+キャラクターをブラウザ上で調整し、フルカラー3Dプリント用データ（OBJ / MTL /
+PNG / GLB / STL）を書き出せる Web アプリです。
+
+外部サーバー・APIキーは不要で、すべてブラウザ内で完結します。ユーザーの
+参照画像やプロジェクトデータは外部へ送信されません。
+
+既存の刺しゅうデジタイザアプリ（PP1 Stitch Studio）とは別プロジェクトとして、
+このリポジトリのサブディレクトリに独立した Vite プロジェクトを構成しています。
+
+## 現在の実装状況（Phase 1: ナス専用 MVP）
+
+開発指示書 rev.2 の Phase 1（6章）を実装しています。
+
+- 単位・座標系（mm・Z-up・原点=底面中心）
+- 断面制御点の Catmull-Rom 補間 + スーパー楕円による本体表面関数 `S(t, θ)`
+- 本体・ヘタ(5枚)・茎・目・口のメッシュ生成（すべて `S(t, θ)` を直接評価。
+  レイキャストは不使用のため本体の形状変更に自動追従）
+- 参照画像オーバーレイ + 2点クリック+実寸mm入力によるキャリブレーション
+- 単一マテリアル・単一テクスチャアトラス方式（2048×2048、パーツごとの単色パッチ）
+- 本体・ヘタ・茎・顔・色・印刷設定のパラメータUI（スライダーはドラッグ中
+  1操作に畳んで Undo/Redo に積む）
+- プロジェクトの保存・読込（JSON、バージョンチェック付き）、Undo/Redo、
+  未保存時の離脱確認
+- OBJ(+MTL 後挿入)・STL(バイナリ)・GLB(mm/Z-up→m/Y-up変換)・ZIP一括出力
+- 3Dプリント前検査（ウォータータイト・非多様体・法線一貫性・縮退三角形・
+  連結成分数・パーツ間埋め込み・最小径・寸法・接地・原点・三角形数・
+  テクスチャ有無・three-mesh-bvh による近似最小肉厚）
+
+Phase 1.5（Boolean Union による本体結合・厳密な自己交差判定）と
+Phase 2（牛）は未着手です。
+
+## 動作環境
+
+- Windows の Chrome / Edge を優先動作確認環境とします。
+- スマートフォンは閲覧・簡易調整程度を想定しています（詳細編集はPC向け）。
+
+## セットアップ
+
+```bash
+npm install
+```
+
+## 開発
+
+```bash
+npm run dev
+```
+
+`http://localhost:5174/simple3d-character-maker/` が開きます（`vite.config.ts`
+の `base` に合わせたパスです）。
+
+## テスト
+
+```bash
+npm test        # vitest（vitest.config.ts）
+npm run lint     # ESLint
+npm run format   # Prettier で整形
+```
+
+## ビルド
+
+```bash
+npm run build
+```
+
+型チェック（`tsc --noEmit`）と本番ビルドを行い、`dist/` に静的ファイルが
+生成されます。
+
+## GitHub Pages への配置
+
+1. `vite.config.ts` の `base`（既定 `/simple3d-character-maker/`）を、実際に
+   配置するパスに合わせて環境変数 `BASE_PATH` で上書きするか、直接編集します。
+   ```bash
+   BASE_PATH=/実際のパス/ npm run build
+   ```
+2. `dist/` の内容を GitHub Pages で配信するブランチ・ディレクトリに配置します。
+3. API キーや外部サーバーは不要なため、静的ホスティングのみで動作します。
+
+> **TODO（未決事項 #4、指示書13節）**: このプロジェクトは既存の刺しゅうアプリと
+> 同一リポジトリのサブディレクトリに置かれているため、GitHub Pages 上で
+> どのパスに配置するか（モノレポ内の1プロジェクトとして出すか、別リポジトリに
+> 切り出すか）は未確定です。確定次第 `vite.config.ts` の `base` を調整してください。
+
+## アーキテクチャ
+
+```
+src/
+  core/       params.ts（データモデル）  spline.ts  migrate.ts  units.ts
+  geometry/   surface.ts（S(t,θ)）  bodyMesh.ts  calyxMesh.ts  stemMesh.ts
+              faceMesh.ts  meshUtils.ts（共通シェル生成・巻き順補正）
+  texture/    atlas.ts（パッチ配置定数）  canvasPainter.ts
+  export/     obj.ts  glb.ts  stl.ts  zip.ts  readme.ts
+  inspect/    topology.ts（境界・非多様体・法線・連結成分）
+              checks.ts（6.8節13項目）  report.ts
+  state/      store.ts（唯一の正としての ProjectData）  history.ts  persistence.ts
+  viewer/     scene.ts  cameras.ts  overlay.ts  controls.ts
+  ui/         panels/（本体・ヘタ・茎・顔・色・印刷設定・プロジェクト）
+              graphs/  widgets.ts  referencePanel.ts
+  presets/    eggplant.ts（ナスの初期パラメータ一式）
+```
+
+- TypeScript strict。
+- UI 状態と3Dシーン状態を分離し、Three.js のオブジェクトを状態として
+  保持しません。`ProjectData`（JSON化できる純粋データ）のみを唯一の正とし、
+  3Dシーンはそこからの再生成物として扱います。
+- `npm test` で断面補間・表面関数・各パーツのウォータータイト性・巻き順の
+  一貫性・エクスポート形式・検査ロジックなどを検証しています。
+
+## 既知の制約・TODO
+
+- `PrintSettings` の最小肉厚・最小径は暫定値です（未決事項 #2）。
+- ナスの寸法（最大幅 36.7mm 等）は仮値です。実寸参照画像が確定次第
+  `src/presets/eggplant.ts` を差し替えてください（未決事項 #3）。
+- フルカラー3Dプリント業者の受入フォーマットは OBJ+MTL+PNG を前提にしています。
+  `.wrl` や `.3mf` が必要な場合は Phase 1.5 で出力形式を追加します（未決事項 #1）。
+- 口の彫り込み（`relief < 0`）は見た目のみで、実際のジオメトリ凹みは
+  Phase 1.5 の Boolean 減算まで実装しません。
+- 本体・ヘタ・茎・顔は Phase 1 の間は別パーツのまま保持し、Boolean Union に
+  よる結合と厳密な自己交差判定は Phase 1.5 で行います。

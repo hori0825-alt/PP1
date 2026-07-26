@@ -14,7 +14,13 @@ export function mountStemPanel(container: HTMLElement, ctx: PanelContext): Mount
     ctx.store.updateLive((p) => (p.stem[key] = value));
   }
 
-  const make = (label: string, key: StemFieldKey, min: number, max: number, step: number): Field<number> => {
+  const make = (
+    label: string,
+    key: StemFieldKey,
+    min: number,
+    max: number,
+    step: number,
+  ): Field<number> => {
     const field = sliderField(
       label,
       project.stem[key],

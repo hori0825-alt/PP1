@@ -6,7 +6,10 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
  * 既定では glTF 仕様に合わせて mm→m（0.001倍）・Z-up→Y-up に変換する。
  * exportSettings.glbMmZUp が true の場合のみ、mm・Z-up のまま出力する。
  */
-export async function exportGlbBinary(root: THREE.Object3D, glbMmZUp: boolean): Promise<ArrayBuffer> {
+export async function exportGlbBinary(
+  root: THREE.Object3D,
+  glbMmZUp: boolean,
+): Promise<ArrayBuffer> {
   const wrapper = new THREE.Group();
   wrapper.add(root.clone(true));
 

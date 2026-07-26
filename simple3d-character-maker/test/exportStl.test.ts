@@ -4,7 +4,10 @@ import { exportStlBinary } from '../src/export/stl';
 
 function makeTriangleMesh(): THREE.Mesh {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3),
+  );
   geometry.setIndex([0, 1, 2]);
   geometry.computeVertexNormals();
   return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());

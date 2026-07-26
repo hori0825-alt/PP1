@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import type { ProjectData, ReferenceImage } from '../core/params';
-import { createReferencePlane, computeCalibrationScale, type ReferencePlaneHandle } from '../viewer/overlay';
+import {
+  createReferencePlane,
+  computeCalibrationScale,
+  type ReferencePlaneHandle,
+} from '../viewer/overlay';
 
 export interface ReferencePanelDeps {
   getProject: () => ProjectData;
@@ -74,7 +78,6 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
       const state = calibration;
       calibration = null;
       deps.domElement.style.cursor = '';
-      // eslint-disable-next-line no-alert
       const input = window.prompt('クリックした2点間の実寸をmmで入力してください（例: 50）');
       const realLengthMm = input ? Number.parseFloat(input) : NaN;
       if (Number.isFinite(realLengthMm) && realLengthMm > 0) {
@@ -87,11 +90,14 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
             realLengthMm,
           );
           state.ref.scale = scale;
-          state.ref.calibration = { p1: { x: p1!.x, y: p1!.y }, p2: { x: p2!.x, y: p2!.y }, realLengthMm };
+          state.ref.calibration = {
+            p1: { x: p1!.x, y: p1!.y },
+            p2: { x: p2!.x, y: p2!.y },
+            realLengthMm,
+          };
           void syncPlane(state.ref);
           notifyChange();
         } catch (err) {
-          // eslint-disable-next-line no-alert
           window.alert(err instanceof Error ? err.message : String(err));
         }
       }
@@ -104,7 +110,6 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
     if (!handle) return;
     calibration = { ref, handle, points: [] };
     deps.domElement.style.cursor = 'crosshair';
-    // eslint-disable-next-line no-alert
     window.alert('画像上で実寸が分かっている2点をクリックしてください。');
   }
 
@@ -164,10 +169,12 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
       if (ref) {
         void syncPlane(ref);
 
-        section.appendChild(makeCheckboxRow('表示', ref.visible, (v) => {
-          ref.visible = v;
-          void syncPlane(ref).then(notifyChange);
-        }));
+        section.appendChild(
+          makeCheckboxRow('表示', ref.visible, (v) => {
+            ref.visible = v;
+            void syncPlane(ref).then(notifyChange);
+          }),
+        );
         section.appendChild(
           makeRangeRow('不透明度', ref.opacity, 0, 1, 0.01, (v) => {
             ref.opacity = v;
@@ -198,13 +205,17 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
             void syncPlane(ref).then(notifyChange);
           }),
         );
-        section.appendChild(makeCheckboxRow('左右反転', ref.flipX, (v) => {
-          ref.flipX = v;
-          void syncPlane(ref).then(notifyChange);
-        }));
-        section.appendChild(makeCheckboxRow('ロック', ref.locked, (v) => {
-          ref.locked = v;
-        }));
+        section.appendChild(
+          makeCheckboxRow('左右反転', ref.flipX, (v) => {
+            ref.flipX = v;
+            void syncPlane(ref).then(notifyChange);
+          }),
+        );
+        section.appendChild(
+          makeCheckboxRow('ロック', ref.locked, (v) => {
+            ref.locked = v;
+          }),
+        );
 
         const calibrateBtn = document.createElement('button');
         calibrateBtn.textContent = 'キャリブレーション（2点+実寸mm）';
@@ -226,7 +237,11 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
   render();
 }
 
-function makeCheckboxRow(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
+function makeCheckboxRow(
+  label: string,
+  value: boolean,
+  onChange: (v: boolean) => void,
+): HTMLElement {
   const row = document.createElement('div');
   row.className = 'field-row';
   const input = document.createElement('input');

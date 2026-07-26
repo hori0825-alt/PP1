@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildEyeMesh, buildMouthMesh } from '../src/geometry/faceMesh';
 import { analyzeTopology } from '../src/inspect/topology';
-import { defaultEyeParams, defaultMouthParams, eggplantBodySections } from '../src/presets/eggplant';
+import {
+  defaultEyeParams,
+  defaultMouthParams,
+  eggplantBodySections,
+} from '../src/presets/eggplant';
 
 describe('buildEyeMesh (eggplant preset)', () => {
   it('produces a watertight shell for both eyes', () => {
@@ -28,7 +32,10 @@ describe('buildMouthMesh (eggplant preset)', () => {
   });
 
   it('produces an empty geometry for preset "none"', () => {
-    const { geometry } = buildMouthMesh({ ...defaultMouthParams, preset: 'none' }, eggplantBodySections);
+    const { geometry } = buildMouthMesh(
+      { ...defaultMouthParams, preset: 'none' },
+      eggplantBodySections,
+    );
     expect(geometry.getIndex()!.count).toBe(0);
   });
 
