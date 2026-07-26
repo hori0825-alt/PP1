@@ -9,6 +9,8 @@ import { buildStemMesh } from './geometry/stemMesh';
 import { buildEyeMesh, buildMouthMesh } from './geometry/faceMesh';
 import { createDefaultProjectData } from './presets/eggplant';
 import { mountReferencePanel } from './ui/referencePanel';
+import { createAtlasTexture, assignSolidUV } from './texture/canvasPainter';
+import { ATLAS_PATCHES } from './texture/atlas';
 import { formatMm } from './core/units';
 import type { ViewName } from './core/params';
 
@@ -40,16 +42,17 @@ const project = createDefaultProjectData();
 const canvas = document.getElementById('viewer-canvas') as HTMLCanvasElement;
 const { scene, renderer, bodyGroup } = createScene(canvas);
 
-const bodyMaterial = new THREE.MeshStandardMaterial({ color: project.colors.body });
-const calyxMaterial = new THREE.MeshStandardMaterial({ color: project.colors.calyx });
-const stemMaterial = new THREE.MeshStandardMaterial({ color: project.colors.stem });
-const eyeMaterial = new THREE.MeshStandardMaterial({ color: project.colors.eye });
-const mouthMaterial = new THREE.MeshStandardMaterial({ color: project.colors.mouth });
+// 単一マテリアル・単一テクスチャアトラス方式（6.6節）。パーツごとに別マテリアルを
+// 割り当てず、全パーツがこの1つの simple3d_main 相当マテリアルを共有する。
+const atlasTexture = createAtlasTexture(project.colors);
+const mainMaterial = new THREE.MeshStandardMaterial({ map: atlasTexture });
 
 function rebuildBodyMesh(): void {
   bodyGroup.clear();
+
   const { geometry, warnings } = buildBodyMesh(project.body);
-  const mesh = new THREE.Mesh(geometry, bodyMaterial);
+  assignSolidUV(geometry, ATLAS_PATCHES.body);
+  const mesh = new THREE.Mesh(geometry, mainMaterial);
   mesh.name = 'body';
   bodyGroup.add(mesh);
   if (warnings.length > 0) {
@@ -58,7 +61,8 @@ function rebuildBodyMesh(): void {
   }
 
   const calyx = buildCalyxMesh(project.calyx, project.body.sections);
-  const calyxMesh = new THREE.Mesh(calyx.geometry, calyxMaterial);
+  assignSolidUV(calyx.geometry, ATLAS_PATCHES.calyx);
+  const calyxMesh = new THREE.Mesh(calyx.geometry, mainMaterial);
   calyxMesh.name = 'calyx';
   bodyGroup.add(calyxMesh);
   if (calyx.warnings.length > 0) {
@@ -67,7 +71,8 @@ function rebuildBodyMesh(): void {
   }
 
   const stem = buildStemMesh(project.stem, project.body.sections);
-  const stemMesh = new THREE.Mesh(stem.geometry, stemMaterial);
+  assignSolidUV(stem.geometry, ATLAS_PATCHES.stem);
+  const stemMesh = new THREE.Mesh(stem.geometry, mainMaterial);
   stemMesh.name = 'stem';
   bodyGroup.add(stemMesh);
   if (stem.warnings.length > 0) {
@@ -76,12 +81,14 @@ function rebuildBodyMesh(): void {
   }
 
   const eyes = buildEyeMesh(project.eyes, project.body.sections);
-  const eyeMesh = new THREE.Mesh(eyes.geometry, eyeMaterial);
+  assignSolidUV(eyes.geometry, ATLAS_PATCHES.eye);
+  const eyeMesh = new THREE.Mesh(eyes.geometry, mainMaterial);
   eyeMesh.name = 'eyes';
   bodyGroup.add(eyeMesh);
 
   const mouth = buildMouthMesh(project.mouth, project.body.sections);
-  const mouthMesh = new THREE.Mesh(mouth.geometry, mouthMaterial);
+  assignSolidUV(mouth.geometry, ATLAS_PATCHES.mouth);
+  const mouthMesh = new THREE.Mesh(mouth.geometry, mainMaterial);
   mouthMesh.name = 'mouth';
   bodyGroup.add(mouthMesh);
 }
