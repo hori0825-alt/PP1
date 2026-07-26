@@ -3,7 +3,7 @@ import type { ProjectData, ReferenceImage } from '../core/params';
 import { createReferencePlane, computeCalibrationScale, type ReferencePlaneHandle } from '../viewer/overlay';
 
 export interface ReferencePanelDeps {
-  project: ProjectData;
+  getProject: () => ProjectData;
   scene: THREE.Scene;
   getCamera: () => THREE.Camera;
   domElement: HTMLElement;
@@ -28,7 +28,7 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
   const raycaster = new THREE.Raycaster();
 
   function findRef(view: ReferenceImage['view']): ReferenceImage | undefined {
-    return deps.project.referenceImages.find((r) => r.view === view);
+    return deps.getProject().referenceImages.find((r) => r.view === view);
   }
 
   async function syncPlane(ref: ReferenceImage): Promise<void> {
@@ -112,7 +112,7 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      const existingIndex = deps.project.referenceImages.findIndex((r) => r.view === view);
+      const existingIndex = deps.getProject().referenceImages.findIndex((r) => r.view === view);
       const ref: ReferenceImage = {
         view,
         dataUrl,
@@ -125,11 +125,11 @@ export function mountReferencePanel(container: HTMLElement, deps: ReferencePanel
         locked: false,
       };
       if (existingIndex >= 0) {
-        const old = deps.project.referenceImages[existingIndex]!;
+        const old = deps.getProject().referenceImages[existingIndex]!;
         removePlane(old);
-        deps.project.referenceImages[existingIndex] = ref;
+        deps.getProject().referenceImages[existingIndex] = ref;
       } else {
-        deps.project.referenceImages.push(ref);
+        deps.getProject().referenceImages.push(ref);
       }
       void syncPlane(ref).then(notifyChange);
     };

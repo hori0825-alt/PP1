@@ -1,0 +1,70 @@
+import type { PanelContext, MountedPanel } from './context';
+import { sectionHeading } from '../widgets';
+import { downloadProjectJson, readProjectFile } from '../../state/persistence';
+import { createDefaultProjectData } from '../../presets/eggplant';
+
+export function mountProjectPanel(container: HTMLElement, ctx: PanelContext): MountedPanel {
+  container.innerHTML = '';
+  container.appendChild(sectionHeading('プロジェクト'));
+
+  const undoBtn = document.createElement('button');
+  undoBtn.textContent = '元に戻す (Undo)';
+  undoBtn.addEventListener('click', () => ctx.store.undo());
+  container.appendChild(undoBtn);
+
+  const redoBtn = document.createElement('button');
+  redoBtn.textContent = 'やり直す (Redo)';
+  redoBtn.addEventListener('click', () => ctx.store.redo());
+  container.appendChild(redoBtn);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'プロジェクトを保存 (JSON)';
+  saveBtn.style.display = 'block';
+  saveBtn.addEventListener('click', () => {
+    downloadProjectJson(ctx.store.getProject());
+    ctx.store.markSaved();
+    refresh();
+  });
+  container.appendChild(saveBtn);
+
+  const loadInput = document.createElement('input');
+  loadInput.type = 'file';
+  loadInput.accept = 'application/json';
+  loadInput.addEventListener('change', () => {
+    const file = loadInput.files?.[0];
+    if (!file) return;
+    readProjectFile(file)
+      .then((data) => {
+        ctx.store.replaceProject(data);
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-alert
+        window.alert(`読み込みに失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  });
+  container.appendChild(loadInput);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = '初期化';
+  resetBtn.style.display = 'block';
+  resetBtn.addEventListener('click', () => {
+    // eslint-disable-next-line no-alert
+    if (window.confirm('プロジェクトを初期状態に戻します。よろしいですか？')) {
+      ctx.store.replaceProject(createDefaultProjectData());
+    }
+  });
+  container.appendChild(resetBtn);
+
+  const statusEl = document.createElement('div');
+  statusEl.style.fontSize = '11px';
+  container.appendChild(statusEl);
+
+  function refresh(): void {
+    undoBtn.disabled = !ctx.store.history.canUndo;
+    redoBtn.disabled = !ctx.store.history.canRedo;
+    statusEl.textContent = ctx.store.dirty ? '未保存の変更があります' : '保存済み';
+  }
+  refresh();
+
+  return { refresh };
+}
