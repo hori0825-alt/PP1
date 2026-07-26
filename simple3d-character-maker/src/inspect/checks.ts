@@ -169,13 +169,17 @@ export function runPrintChecks(input: CheckInput): CheckItem[] {
     message: `茎の半径 ${minStemRadius.toFixed(2)}mm / 葉の最小厚み ${minLeafThickness.toFixed(2)}mm。`,
   });
 
-  const actualHeight = bbox.max.z - bbox.min.z;
+  // 全高との比較は本体パーツ単体のAABBで行う（茎・ヘタは本体の上に付加される
+  // 別パーツであり、指定した全高(body.totalHeight)は本体自身の寸法のため）。
+  input.bodyGeometry.computeBoundingBox();
+  const bodyBbox = input.bodyGeometry.boundingBox!;
+  const actualHeight = bodyBbox.max.z - bodyBbox.min.z;
   const heightDiff = Math.abs(actualHeight - input.project.body.totalHeight);
   results.push({
     id: 'dimensions',
     label: 'モデル寸法（AABB）',
     severity: heightDiff > 0.1 ? 'yellow' : 'green',
-    message: `全高 ${actualHeight.toFixed(2)}mm（指定 ${input.project.body.totalHeight.toFixed(2)}mm、差 ${heightDiff.toFixed(2)}mm）。`,
+    message: `本体全高 ${actualHeight.toFixed(2)}mm（指定 ${input.project.body.totalHeight.toFixed(2)}mm、差 ${heightDiff.toFixed(2)}mm）。`,
   });
 
   results.push({

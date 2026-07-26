@@ -22,6 +22,14 @@ import { mountFacePanel } from './ui/panels/facePanel';
 import { mountColorPanel } from './ui/panels/colorPanel';
 import { mountPrintPanel } from './ui/panels/printPanel';
 import { mountProjectPanel } from './ui/panels/projectPanel';
+import { runPrintChecks, type CheckItem } from './inspect/checks';
+import { formatCheckReport } from './inspect/report';
+import { exportObjText, buildMtlText } from './export/obj';
+import { exportStlBinary } from './export/stl';
+import { exportGlbBinary } from './export/glb';
+import { buildExportZip } from './export/zip';
+import { buildReadmePrintText } from './export/readme';
+import { serializeProject } from './state/persistence';
 
 const app = document.getElementById('app')!;
 app.innerHTML = `
@@ -70,6 +78,13 @@ let atlasTexture = createAtlasTexture(store.getProject().colors);
 const mainMaterial = new THREE.MeshStandardMaterial({ map: atlasTexture });
 
 let lastWarnings: string[] = [];
+let lastGeometries: {
+  body: THREE.BufferGeometry;
+  calyx: THREE.BufferGeometry;
+  stem: THREE.BufferGeometry;
+  eye: THREE.BufferGeometry;
+  mouth: THREE.BufferGeometry;
+} | null = null;
 
 function rebuildBodyMesh(): void {
   const project = store.getProject();
@@ -110,6 +125,13 @@ function rebuildBodyMesh(): void {
   bodyGroup.add(mouthMesh);
 
   lastWarnings = warnings;
+  lastGeometries = {
+    body: body.geometry,
+    calyx: calyx.geometry,
+    stem: stem.geometry,
+    eye: eyes.geometry,
+    mouth: mouth.geometry,
+  };
 }
 
 let lastPaintedColors = { ...store.getProject().colors };
@@ -206,11 +228,76 @@ const mountedPanels: MountedPanel[] = [
   mountPrintPanel(document.getElementById('panel-print')!, panelCtx),
 ];
 
-const exportPanelContainer = document.getElementById('panel-export')!;
-exportPanelContainer.innerHTML = '<h3 style="margin:8px 0 2px;font-size:12px;color:#555">エクスポート</h3><p style="font-size:11px;color:#888">（次のタスクで実装）</p>';
-
 const rightSummary = document.getElementById('panel-right-summary')!;
 const bottomContent = document.getElementById('panel-bottom-content')!;
+
+const SEVERITY_CLASS: Record<CheckItem['severity'], string> = {
+  red: 'warning-red',
+  yellow: 'warning-yellow',
+  green: 'warning-green',
+};
+const SEVERITY_MARK: Record<CheckItem['severity'], string> = { red: '●', yellow: '●', green: '●' };
+
+let lastCheckResults: CheckItem[] = [];
+
+/** 現在の3パーツジオメトリに対して6.8節の検査を実行する。 */
+function runChecksNow(): CheckItem[] {
+  if (!lastGeometries) return [];
+  const project = store.getProject();
+  lastCheckResults = runPrintChecks({
+    bodyGeometry: lastGeometries.body,
+    calyxGeometry: lastGeometries.calyx,
+    stemGeometry: lastGeometries.stem,
+    eyeGeometry: lastGeometries.eye,
+    mouthGeometry: lastGeometries.mouth,
+    project,
+    textureReady: true,
+  });
+  return lastCheckResults;
+}
+
+let checkDebounceTimer: number | undefined;
+function scheduleChecksDebounced(): void {
+  window.clearTimeout(checkDebounceTimer);
+  // パラメータ変更後500msのデバウンスで検査する（6.8節）。常時は実行しない。
+  checkDebounceTimer = window.setTimeout(() => {
+    runChecksNow();
+    renderCheckLists();
+  }, 500);
+}
+
+function renderCheckLists(): void {
+  rightSummary.querySelectorAll('.check-item').forEach((el) => el.remove());
+  const nonGreen = lastCheckResults.filter((r) => r.severity !== 'green');
+  const summaryHeading = document.createElement('div');
+  summaryHeading.className = 'check-item';
+  summaryHeading.style.marginTop = '6px';
+  summaryHeading.style.fontWeight = 'bold';
+  summaryHeading.textContent = '印刷検査（要注意項目）';
+  rightSummary.appendChild(summaryHeading);
+  if (nonGreen.length === 0) {
+    const ok = document.createElement('div');
+    ok.className = 'check-item warning-green';
+    ok.textContent = '● 警告なし';
+    rightSummary.appendChild(ok);
+  } else {
+    for (const r of nonGreen) {
+      const line = document.createElement('div');
+      line.className = `check-item ${SEVERITY_CLASS[r.severity]}`;
+      line.textContent = `${SEVERITY_MARK[r.severity]} ${r.label}: ${r.message}`;
+      rightSummary.appendChild(line);
+    }
+  }
+
+  const logContainer = bottomContent.querySelector('#check-log')!;
+  logContainer.innerHTML = '';
+  for (const r of lastCheckResults) {
+    const line = document.createElement('div');
+    line.className = SEVERITY_CLASS[r.severity];
+    line.textContent = `${SEVERITY_MARK[r.severity]} ${r.label}: ${r.message}`;
+    logContainer.appendChild(line);
+  }
+}
 
 function updateDerivedPanels(): void {
   const project = store.getProject();
@@ -226,12 +313,7 @@ function updateDerivedPanels(): void {
   widthLine.textContent = `最大幅: ${formatMm(maxRx * 2)} / 最大奥行き: ${formatMm(maxRy * 2)}`;
   rightSummary.appendChild(widthLine);
 
-  if (lastWarnings.length === 0) {
-    const ok = document.createElement('div');
-    ok.className = 'warning-green';
-    ok.textContent = '警告なし';
-    rightSummary.appendChild(ok);
-  } else {
+  if (lastWarnings.length > 0) {
     for (const w of lastWarnings) {
       const line = document.createElement('div');
       line.className = 'warning-yellow';
@@ -266,12 +348,95 @@ function updateDerivedPanels(): void {
   }
   bottomContent.appendChild(table);
 
-  if (lastWarnings.length > 0) {
-    const log = document.createElement('div');
-    log.style.marginTop = '6px';
-    log.innerHTML = lastWarnings.map((w) => `⚠ ${w}`).join('<br>');
-    bottomContent.appendChild(log);
+  const logHeading = document.createElement('div');
+  logHeading.style.marginTop = '6px';
+  logHeading.style.fontWeight = 'bold';
+  logHeading.textContent = '印刷検査ログ（6.8節・パラメータ変更後500msでデバウンス実行）';
+  bottomContent.appendChild(logHeading);
+  const logContainer = document.createElement('div');
+  logContainer.id = 'check-log';
+  bottomContent.appendChild(logContainer);
+
+  renderCheckLists();
+}
+
+async function getAtlasPngBytes(): Promise<Uint8Array> {
+  const sourceCanvas = atlasTexture.image as HTMLCanvasElement;
+  const blob = await new Promise<Blob | null>((resolve) => sourceCanvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('テクスチャの PNG 変換に失敗しました');
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+const exportStatusEl = document.createElement('div');
+exportStatusEl.style.fontSize = '11px';
+exportStatusEl.style.marginTop = '4px';
+
+async function handleExportZip(): Promise<void> {
+  const project = store.getProject();
+  const results = runChecksNow();
+  renderCheckLists();
+
+  exportStatusEl.textContent = '書き出し中…';
+  try {
+    const objText = exportObjText(bodyGroup);
+    const mtlText = buildMtlText();
+    const stlBuffer = exportStlBinary(bodyGroup);
+    const glbBuffer = await exportGlbBinary(bodyGroup, project.exportSettings.glbMmZUp);
+    const pngBytes = await getAtlasPngBytes();
+    const printCheckText = formatCheckReport(results);
+    const readmeText = buildReadmePrintText(project);
+    const projectJson = serializeProject(project);
+
+    const zipBytes = buildExportZip({
+      objText,
+      mtlText,
+      pngBytes,
+      glbBytes: new Uint8Array(glbBuffer),
+      stlBytes: new Uint8Array(stlBuffer),
+      projectJson,
+      printCheckText,
+      readmeText,
+    });
+
+    const blob = new Blob([zipBytes as BlobPart], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.exportSettings.fileNamePrefix || 'model'}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+    store.markSaved();
+    exportStatusEl.textContent = `書き出し完了（赤 ${results.filter((r) => r.severity === 'red').length} 件 / 黄 ${results.filter((r) => r.severity === 'yellow').length} 件）`;
+  } catch (err) {
+    exportStatusEl.textContent = `書き出しに失敗しました: ${err instanceof Error ? err.message : String(err)}`;
   }
+}
+
+const exportPanelContainer = document.getElementById('panel-export')!;
+exportPanelContainer.innerHTML = '';
+{
+  const heading = document.createElement('h3');
+  heading.style.margin = '8px 0 2px';
+  heading.style.fontSize = '12px';
+  heading.style.color = '#555';
+  heading.textContent = 'エクスポート';
+  exportPanelContainer.appendChild(heading);
+
+  const note = document.createElement('div');
+  note.style.fontSize = '11px';
+  note.style.color = '#888';
+  note.textContent = 'model.obj / model.mtl / texture.png / model.glb / model.stl / project.json / print_check.txt / README_print.txt を ZIP でまとめて出力します。';
+  exportPanelContainer.appendChild(note);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.textContent = 'ZIP をエクスポート';
+  exportBtn.style.display = 'block';
+  exportBtn.style.marginTop = '4px';
+  exportBtn.addEventListener('click', () => {
+    void handleExportZip();
+  });
+  exportPanelContainer.appendChild(exportBtn);
+  exportPanelContainer.appendChild(exportStatusEl);
 }
 
 function onStoreChanged(): void {
@@ -279,11 +444,14 @@ function onStoreChanged(): void {
   syncAtlasIfColorsChanged();
   for (const panel of mountedPanels) panel.refresh();
   updateDerivedPanels();
+  scheduleChecksDebounced();
 }
 store.subscribe(onStoreChanged);
 
 rebuildBodyMesh();
 updateDerivedPanels();
+runChecksNow();
+renderCheckLists();
 
 window.addEventListener('beforeunload', (e) => {
   if (store.dirty) {
