@@ -141,8 +141,8 @@ function appendLensShell(
     const ob = outerIndex(LENS_RINGS, j + 1);
     const ia = innerIndex(LENS_RINGS, j);
     const ib = innerIndex(LENS_RINGS, j + 1);
-    indices.push(oa, ob, ib);
-    indices.push(oa, ib, ia);
+    indices.push(ob, oa, ia);
+    indices.push(ob, ia, ib);
   }
 }
 

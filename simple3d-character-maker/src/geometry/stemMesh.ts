@@ -90,7 +90,7 @@ export function buildStemMesh(
     positions.push(bottom.x, bottom.y, bottom.z);
     for (let j = 0; j < RADIAL_SEGMENTS; j++) {
       const jn = (j + 1) % RADIAL_SEGMENTS;
-      indices.push(ring0 + jn, ring0 + j, centerIndex);
+      indices.push(ring0 + j, ring0 + jn, centerIndex);
     }
   }
 
@@ -102,7 +102,7 @@ export function buildStemMesh(
     positions.push(tip.x, tip.y, tip.z);
     for (let j = 0; j < RADIAL_SEGMENTS; j++) {
       const jn = (j + 1) % RADIAL_SEGMENTS;
-      indices.push(ringTop + j, ringTop + jn, centerIndex);
+      indices.push(ringTop + jn, ringTop + j, centerIndex);
     }
   }
 

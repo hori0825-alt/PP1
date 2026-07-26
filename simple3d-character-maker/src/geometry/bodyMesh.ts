@@ -84,7 +84,7 @@ export function buildBodyMesh(params: BodyParams): BodyMeshResult {
     const topRingStart = ringVertexStart[ringCount - 1]!;
     for (let j = 0; j < radialSegments; j++) {
       const jn = (j + 1) % radialSegments;
-      indices.push(topRingStart + j, topRingStart + jn, apexIndex);
+      indices.push(topRingStart + jn, topRingStart + j, apexIndex);
     }
   }
 
@@ -110,7 +110,7 @@ export function buildBodyMesh(params: BodyParams): BodyMeshResult {
     positions.push(surface.cx(tFlat), surface.cy(tFlat), 0);
     for (let j = 0; j < radialSegments; j++) {
       const jn = (j + 1) % radialSegments;
-      indices.push(skirtStart + jn, skirtStart + j, centerIndex);
+      indices.push(skirtStart + j, skirtStart + jn, centerIndex);
     }
   } else {
     const ring0Start = ringVertexStart[0]!;
@@ -118,7 +118,7 @@ export function buildBodyMesh(params: BodyParams): BodyMeshResult {
     positions.push(surface.cx(tFlat), surface.cy(tFlat), 0);
     for (let j = 0; j < radialSegments; j++) {
       const jn = (j + 1) % radialSegments;
-      indices.push(ring0Start + jn, ring0Start + j, centerIndex);
+      indices.push(ring0Start + j, ring0Start + jn, centerIndex);
     }
   }
 

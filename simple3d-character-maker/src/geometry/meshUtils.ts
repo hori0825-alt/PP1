@@ -74,8 +74,8 @@ export function appendGridShell(
     const ob = outerIndex(u1, v1);
     const ia = innerIndex(u0, v0);
     const ib = innerIndex(u1, v1);
-    indices.push(oa, ob, ib);
-    indices.push(oa, ib, ia);
+    indices.push(ob, oa, ia);
+    indices.push(ob, ia, ib);
   }
 }
 
