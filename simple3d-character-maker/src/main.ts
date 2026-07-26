@@ -8,12 +8,17 @@ import { buildCalyxMesh } from './geometry/calyxMesh';
 import { buildStemMesh } from './geometry/stemMesh';
 import { buildEyeMesh, buildMouthMesh } from './geometry/faceMesh';
 import { createDefaultProjectData } from './presets/eggplant';
+import { mountReferencePanel } from './ui/referencePanel';
 import { formatMm } from './core/units';
 import type { ViewName } from './core/params';
 
 const app = document.getElementById('app')!;
 app.innerHTML = `
-  <div id="panel-left" class="panel"><h2>プロジェクト / 本体 / ヘタ / 茎 / 顔 / 色 / 印刷設定 / エクスポート</h2><p>（今後のタスクで実装）</p></div>
+  <div id="panel-left" class="panel">
+    <h2>プロジェクト / 本体 / ヘタ / 茎 / 顔 / 色 / 印刷設定 / エクスポート</h2>
+    <p>（今後のタスクで実装）</p>
+    <div id="panel-reference"></div>
+  </div>
   <div id="viewer-container">
     <canvas id="viewer-canvas"></canvas>
     <div class="view-toolbar">
@@ -127,6 +132,13 @@ toggleProjectionBtn.addEventListener('click', () => {
 
 const dimReadout = document.getElementById('dim-readout')!;
 dimReadout.textContent = `全高: ${formatMm(project.body.totalHeight)}`;
+
+mountReferencePanel(document.getElementById('panel-reference')!, {
+  project,
+  scene,
+  getCamera: () => cameraRig.camera,
+  domElement: canvas,
+});
 
 function animate(): void {
   requestAnimationFrame(animate);
