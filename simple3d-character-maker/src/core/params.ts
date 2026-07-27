@@ -115,9 +115,117 @@ export interface ExportSettings {
   fileNamePrefix: string; // 既定 "model"
 }
 
+/**
+ * Phase 2: 牛（開発指示書 8節）。
+ * 胴体・頭は本体と同じ断面表現（BodySection・S(t,θ)）を再利用し、
+ * geometry/capsuleMesh.ts で水平向きの「浮いた」カプセル形状として生成する。
+ */
+export interface CowTorsoParams {
+  sections: BodySection[]; // t=0 尾側 → t=1 胸側
+  radialSegments: number;
+  heightSamples: number;
+  groundClearance: number; // 地面から胴体下端までの高さ（≒脚の長さの目安）mm
+}
+
+export interface CowHeadParams {
+  sections: BodySection[]; // t=0 首側 → t=1 鼻先側
+  radialSegments: number;
+  heightSamples: number;
+  tilt: number; // 首の上向き角度 deg
+}
+
+export interface CowLegParams {
+  radius: number;
+  length: number;
+  distortion: number;
+  squash: number;
+  embed: number;
+}
+
+export interface CowLegsParams {
+  front: CowLegParams;
+  back: CowLegParams;
+  spacingX: number; // 左右の脚の間隔 mm
+  frontT: number; // 前脚を付ける胴体上の t
+  backT: number; // 後脚を付ける胴体上の t
+}
+
+export interface CowEarParams {
+  sizeX: number;
+  sizeY: number;
+  tilt: number;
+  relief: number;
+  attachHeight: number; // 頭表面上の高さ位置 t
+  spacing: number; // 左右の開き角換算 mm
+}
+
+export interface CowHornParams {
+  length: number;
+  radiusStart: number;
+  radiusEnd: number;
+  tilt: number; // 外向き＋上向きの角度 deg
+  attachHeight: number; // 頭表面上の高さ位置 t
+  spacing: number;
+}
+
+export interface CowTailParams {
+  radius: number;
+  length: number;
+  tilt: number;
+  distortion: number;
+  tuftSize: number; // 先端房の半径 mm
+}
+
+export interface CowEyeParams {
+  spacing: number;
+  height: number; // 頭表面上の高さ位置 t
+  sizeX: number;
+  sizeY: number;
+  relief: number;
+}
+
+export interface CowNostrilParams {
+  spacing: number;
+  height: number; // 頭表面上の高さ位置 t（鼻先寄り）
+  size: number;
+  relief: number;
+}
+
+/** 色のみのグレー模様（8節）。表面に貼り付く小さな色パッチとして実装する。 */
+export interface CowSpotParams {
+  seed: number;
+  count: number;
+  minSize: number;
+  maxSize: number;
+}
+
+export interface CowColorParams {
+  body: string;
+  spot: string;
+  horn: string;
+  nose: string;
+  eye: string;
+}
+
+export interface CowParams {
+  torso: CowTorsoParams;
+  head: CowHeadParams;
+  legs: CowLegsParams;
+  ears: CowEarParams;
+  horns: CowHornParams;
+  tail: CowTailParams;
+  eyes: CowEyeParams;
+  nostrils: CowNostrilParams;
+  spots: CowSpotParams;
+  colors: CowColorParams;
+}
+
+export type CharacterType = 'eggplant' | 'cow';
+
 export interface ProjectData {
-  version: number; // 現在 1
+  version: number; // 現在 2
   unit: 'mm';
+  characterType: CharacterType;
   referenceImages: ReferenceImage[];
   body: BodyParams;
   calyx: CalyxParams;
@@ -125,9 +233,10 @@ export interface ProjectData {
   eyes: EyeParams;
   mouth: MouthParams;
   colors: ColorParams;
+  cow: CowParams;
   printSettings: PrintSettings;
   camera: CameraState;
   exportSettings: ExportSettings;
 }
 
-export const CURRENT_PROJECT_VERSION = 1;
+export const CURRENT_PROJECT_VERSION = 2;

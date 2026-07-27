@@ -19,4 +19,17 @@ describe('project JSON persistence', () => {
     const json = JSON.stringify({ ...project, version: CURRENT_PROJECT_VERSION + 1 });
     expect(() => deserializeProject(json)).toThrow(ProjectVersionError);
   });
+
+  it('migrates a v1 project (no characterType/cow) up to the current version', () => {
+    const v1Project = createDefaultProjectData();
+    const withoutCow = { ...v1Project, version: 1 } as Record<string, unknown>;
+    delete withoutCow.characterType;
+    delete withoutCow.cow;
+
+    const restored = deserializeProject(JSON.stringify(withoutCow));
+    expect(restored.version).toBe(CURRENT_PROJECT_VERSION);
+    expect(restored.characterType).toBe('eggplant');
+    expect(restored.cow).toBeDefined();
+    expect(restored.cow.torso.sections.length).toBeGreaterThan(0);
+  });
 });

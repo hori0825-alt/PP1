@@ -1,6 +1,143 @@
 import * as THREE from 'three';
+import type { BodySurface } from './surface';
 
 /** メッシュ生成で共通に使う小さなユーティリティ。 */
+
+/**
+ * 本体表面上の接平面における局所オフセット (dx, dy) を、本体表面パラメータ (t, θ) へ
+ * 近似変換する。dx は θ 方向（水平）、dy は t 方向（鉛直）に対応する。
+ * 小さな付着パーツ（目・耳・角・斑点など）の配置にのみ使う近似であり、
+ * S(t, θ) 自体の定義は変えない。
+ */
+export function tangentPlaneToSurface(
+  surface: BodySurface,
+  centerT: number,
+  centerTheta: number,
+  dx: number,
+  dy: number,
+): { t: number; theta: number } {
+  const bodyRadius = Math.max((surface.rx(centerT) + surface.ry(centerT)) / 2, 0.5);
+  const eps = 1e-4;
+  const dzdtRaw =
+    (surface.z(Math.min(centerT + eps, 1)) - surface.z(Math.max(centerT - eps, 0))) / (2 * eps);
+  const dzdt = Math.abs(dzdtRaw) > 1e-3 ? dzdtRaw : 1;
+
+  const theta = centerTheta + dx / bodyRadius;
+  const t = Math.min(Math.max(centerT + dy / dzdt, 0), 1);
+  return { t, theta };
+}
+
+export function surfacePointVec3(surface: BodySurface, t: number, theta: number): THREE.Vector3 {
+  const p = surface.point(t, theta);
+  return new THREE.Vector3(p.x, p.y, p.z);
+}
+
+export function surfaceNormalVec3(surface: BodySurface, t: number, theta: number): THREE.Vector3 {
+  const n = surface.normal(t, theta);
+  return new THREE.Vector3(n.x, n.y, n.z);
+}
+
+const LENS_RINGS = 5;
+const LENS_SEGMENTS = 16;
+
+/**
+ * 本体表面上に、平面内で丸く盛り上がる薄いレンズ状の立体（コイン形状）を追加する。
+ * 目・耳・角の付け根・斑点など、表面に貼り付く円形〜楕円形のパーツで共用する。
+ */
+export function appendLensShellOnSurface(
+  surface: BodySurface,
+  centerT: number,
+  centerTheta: number,
+  tiltRad: number,
+  sizeX: number,
+  sizeY: number,
+  relief: number,
+  embedMm: number,
+  positions: number[],
+  indices: number[],
+): void {
+  const baseIndex = positions.length / 3;
+  const outerCount = 1 + LENS_RINGS * LENS_SEGMENTS;
+
+  const outerIndex = (k: number, j: number): number =>
+    k === 0 ? baseIndex : baseIndex + 1 + (k - 1) * LENS_SEGMENTS + (j % LENS_SEGMENTS);
+  const innerBase = baseIndex + outerCount;
+  const innerIndex = (k: number, j: number): number =>
+    k === 0 ? innerBase : innerBase + 1 + (k - 1) * LENS_SEGMENTS + (j % LENS_SEGMENTS);
+
+  const outerPts: THREE.Vector3[] = [];
+  const innerPts: THREE.Vector3[] = [];
+
+  function computePoint(r: number, phi: number): { outer: THREE.Vector3; inner: THREE.Vector3 } {
+    const localX = sizeX * r * Math.cos(phi);
+    const localY = sizeY * r * Math.sin(phi);
+    const dx = localX * Math.cos(tiltRad) - localY * Math.sin(tiltRad);
+    const dy = localX * Math.sin(tiltRad) + localY * Math.cos(tiltRad);
+    const { t, theta } = tangentPlaneToSurface(surface, centerT, centerTheta, dx, dy);
+    const p = surfacePointVec3(surface, t, theta);
+    const n = surfaceNormalVec3(surface, t, theta);
+    return {
+      outer: p.clone().addScaledVector(n, relief),
+      inner: p.clone().addScaledVector(n, -embedMm),
+    };
+  }
+
+  const center = computePoint(0, 0);
+  outerPts.push(center.outer);
+  innerPts.push(center.inner);
+  for (let k = 1; k <= LENS_RINGS; k++) {
+    const r = k / LENS_RINGS;
+    for (let j = 0; j < LENS_SEGMENTS; j++) {
+      const phi = (j / LENS_SEGMENTS) * Math.PI * 2;
+      const pt = computePoint(r, phi);
+      outerPts.push(pt.outer);
+      innerPts.push(pt.inner);
+    }
+  }
+
+  for (const p of outerPts) positions.push(p.x, p.y, p.z);
+  for (const p of innerPts) positions.push(p.x, p.y, p.z);
+
+  // outer 面：中心からのファン + リング間のクアッド
+  for (let j = 0; j < LENS_SEGMENTS; j++) {
+    indices.push(outerIndex(0, 0), outerIndex(1, j), outerIndex(1, j + 1));
+  }
+  for (let k = 1; k < LENS_RINGS; k++) {
+    for (let j = 0; j < LENS_SEGMENTS; j++) {
+      const a = outerIndex(k, j);
+      const b = outerIndex(k + 1, j);
+      const c = outerIndex(k + 1, j + 1);
+      const d = outerIndex(k, j + 1);
+      indices.push(a, b, d);
+      indices.push(b, c, d);
+    }
+  }
+
+  // inner 面：逆向きの巻き順
+  for (let j = 0; j < LENS_SEGMENTS; j++) {
+    indices.push(innerIndex(0, 0), innerIndex(1, j + 1), innerIndex(1, j));
+  }
+  for (let k = 1; k < LENS_RINGS; k++) {
+    for (let j = 0; j < LENS_SEGMENTS; j++) {
+      const a = innerIndex(k, j);
+      const b = innerIndex(k + 1, j);
+      const c = innerIndex(k + 1, j + 1);
+      const d = innerIndex(k, j + 1);
+      indices.push(a, d, b);
+      indices.push(b, d, c);
+    }
+  }
+
+  // 外周（最外リング）で outer と inner をつなぐ側壁
+  for (let j = 0; j < LENS_SEGMENTS; j++) {
+    const oa = outerIndex(LENS_RINGS, j);
+    const ob = outerIndex(LENS_RINGS, j + 1);
+    const ia = innerIndex(LENS_RINGS, j);
+    const ib = innerIndex(LENS_RINGS, j + 1);
+    indices.push(ob, oa, ia);
+    indices.push(ob, ia, ib);
+  }
+}
 
 export interface GridShellPoint {
   outer: THREE.Vector3;
@@ -116,4 +253,120 @@ export function fixOutwardWinding(positions: number[], indices: number[]): void 
   if (signedVolume(positions, indices) < 0) {
     reverseWinding(indices);
   }
+}
+
+export interface TaperedCylinderParams {
+  /** 付け根（embed 適用前）の位置。 */
+  origin: THREE.Vector3;
+  /** 伸びる方向（内部で正規化する）。 */
+  direction: THREE.Vector3;
+  length: number;
+  radiusStart: number;
+  radiusEnd: number;
+  /** 付け根側をこの分だけ direction と逆向きに埋め込む。 */
+  embed: number;
+  squash?: number;
+  distortion?: number;
+  /** 側面のわずかな不均一さ（mm）。0 で無効。 */
+  irregularityMm?: number;
+  radialSegments?: number;
+  heightSegments?: number;
+}
+
+function orthonormalBasis(dir: THREE.Vector3): [THREE.Vector3, THREE.Vector3] {
+  const helper = Math.abs(dir.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+  const e1 = new THREE.Vector3().crossVectors(helper, dir).normalize();
+  const e2 = new THREE.Vector3().crossVectors(dir, e1).normalize();
+  return [e1, e2];
+}
+
+/**
+ * 先細り可能な、断面にわずかな歪みを持つ円柱（脚・角・しっぽ・茎などで共用）。
+ * 付け根は embed だけ逆向きに埋め込まれ、両端は点に閉じてウォータータイトにする。
+ */
+export function buildTaperedCylinder(params: TaperedCylinderParams): {
+  positions: number[];
+  indices: number[];
+} {
+  const {
+    origin,
+    direction,
+    length,
+    radiusStart,
+    radiusEnd,
+    embed,
+    squash = 0,
+    distortion = 0,
+    irregularityMm = 0,
+    radialSegments = 16,
+    heightSegments = 6,
+  } = params;
+
+  const dir = direction.clone().normalize();
+  const [e1, e2] = orthonormalBasis(dir);
+  const bottom = origin.clone().addScaledVector(dir, -embed);
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const ringStart: number[] = [];
+
+  for (let i = 0; i <= heightSegments; i++) {
+    const hFrac = i / heightSegments;
+    const radius = radiusStart + (radiusEnd - radiusStart) * hFrac;
+    const center = bottom.clone().addScaledVector(dir, hFrac * length);
+    ringStart.push(positions.length / 3);
+    for (let j = 0; j < radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const phase = hFrac * 1.3;
+      const rE1 = radius * (1 - squash) * (1 + distortion * Math.sin(3 * theta + phase));
+      const rE2 = radius * (1 + distortion * Math.sin(3 * theta + phase + 1.0));
+      const bump = irregularityMm * Math.cos(2 * theta + hFrac * 4.0);
+
+      const p = center
+        .clone()
+        .addScaledVector(e1, rE1 * Math.cos(theta))
+        .addScaledVector(e2, rE2 * Math.sin(theta))
+        .addScaledVector(dir, bump);
+      positions.push(p.x, p.y, p.z);
+    }
+  }
+
+  for (let i = 0; i < heightSegments; i++) {
+    const startA = ringStart[i]!;
+    const startB = ringStart[i + 1]!;
+    for (let j = 0; j < radialSegments; j++) {
+      const jn = (j + 1) % radialSegments;
+      const a = startA + j;
+      const b = startB + j;
+      const c = startB + jn;
+      const d = startA + jn;
+      indices.push(a, b, d);
+      indices.push(b, c, d);
+    }
+  }
+
+  // 下端キャップ（付け根。埋め込まれ隠れるがパーツ単体を閉じた立体にする）
+  {
+    const ring0 = ringStart[0]!;
+    const centerIndex = positions.length / 3;
+    positions.push(bottom.x, bottom.y, bottom.z);
+    for (let j = 0; j < radialSegments; j++) {
+      const jn = (j + 1) % radialSegments;
+      indices.push(ring0 + j, ring0 + jn, centerIndex);
+    }
+  }
+
+  // 上端キャップ（先端）
+  {
+    const ringTop = ringStart[heightSegments]!;
+    const tip = bottom.clone().addScaledVector(dir, length);
+    const centerIndex = positions.length / 3;
+    positions.push(tip.x, tip.y, tip.z);
+    for (let j = 0; j < radialSegments; j++) {
+      const jn = (j + 1) % radialSegments;
+      indices.push(ringTop + jn, ringTop + j, centerIndex);
+    }
+  }
+
+  return { positions, indices };
 }

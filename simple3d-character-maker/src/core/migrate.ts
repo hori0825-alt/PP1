@@ -1,4 +1,5 @@
 import { CURRENT_PROJECT_VERSION, type ProjectData } from './params';
+import { createDefaultCowParams } from '../presets/cow';
 
 export class ProjectVersionError extends Error {}
 
@@ -6,10 +7,15 @@ type MigrationStep = (data: Record<string, unknown>) => Record<string, unknown>;
 
 /**
  * version をキーに、「そのバージョン→次のバージョン」への変換関数を登録するチェーン。
- * Phase 1 の間は version 1 固定だが、機構は最初から用意しておく（5.1節）。
  */
 const migrations: Record<number, MigrationStep> = {
-  // 例: 1: (data) => ({ ...data, version: 2, /* 追加フィールドなど */ }),
+  // v1 (ナス専用 Phase 1 MVP) -> v2 (牛 Phase 2 追加): characterType と cow を追加する。
+  1: (data) => ({
+    ...data,
+    version: 2,
+    characterType: 'eggplant',
+    cow: createDefaultCowParams(),
+  }),
 };
 
 /**

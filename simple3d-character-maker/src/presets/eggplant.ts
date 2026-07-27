@@ -9,6 +9,7 @@ import {
   type ProjectData,
   type StemParams,
 } from '../core/params';
+import { createDefaultCowParams } from './cow';
 
 /**
  * ナスの初期断面（開発指示書 6.1節「初期断面（7断面）」）。
@@ -86,10 +87,13 @@ export const defaultColorParams: ColorParams = {
   mouth: '#2a2a2a',
 };
 
-export function createDefaultProjectData(): ProjectData {
+export function createDefaultProjectData(
+  characterType: 'eggplant' | 'cow' = 'eggplant',
+): ProjectData {
   return {
     version: CURRENT_PROJECT_VERSION,
     unit: 'mm',
+    characterType,
     referenceImages: [],
     body: structuredClone(defaultBodyParams),
     calyx: structuredClone(defaultCalyxParams),
@@ -97,6 +101,7 @@ export function createDefaultProjectData(): ProjectData {
     eyes: structuredClone(defaultEyeParams),
     mouth: structuredClone(defaultMouthParams),
     colors: structuredClone(defaultColorParams),
+    cow: createDefaultCowParams(),
     printSettings: {
       // 印刷業者の仕様確定（13節 未決事項#2 回答済み）:
       // 「実寸1mm以下の部分は折れやすいため太くする」。ここでの値は安全マージンを
