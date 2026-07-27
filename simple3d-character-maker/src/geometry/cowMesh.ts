@@ -232,24 +232,58 @@ export function buildCowMesh(cow: CowParams): CowMeshSet {
   const earsGeom = makeGeometry(earPositions, earIndices);
 
   // ---- しっぽ（軸）----
-  const tailTiltRad = cow.tail.tilt * DEG2RAD;
+  // 参考画像のしっぽは根元からいったん外側・上向きに出たあと、先端に向けて
+  // 下向きへ「フック」状に曲がる。2本のテーパー円柱を繋いで折れ線近似する。
   const tailBaseWorld = torsoWorld.point(0, Math.PI);
   const tailDirBase = new THREE.Vector3(0, 0, -1).transformDirection(torsoMatrix);
-  const tailDir = tailDirBase.clone().applyAxisAngle(new THREE.Vector3(1, 0, 0), -tailTiltRad);
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  const tailUpDir = tailDirBase.clone().applyAxisAngle(X_AXIS, 12 * DEG2RAD);
+  const tailDownDir = tailDirBase
+    .clone()
+    .applyAxisAngle(X_AXIS, -(cow.tail.tilt + 50) * DEG2RAD);
 
-  const { positions: tailPos, indices: tailIdx } = buildTaperedCylinder({
+  const seg1Length = cow.tail.length * 0.4;
+  const seg2Length = cow.tail.length * 0.6;
+  const seg1Radius = cow.tail.radius;
+  const jointRadius = cow.tail.radius * 0.85;
+  const tipRadius = cow.tail.radius * 0.6;
+
+  const seg1 = buildTaperedCylinder({
     origin: tailBaseWorld,
-    direction: tailDir,
-    length: cow.tail.length,
-    radiusStart: cow.tail.radius,
-    radiusEnd: cow.tail.radius * 0.7,
+    direction: tailUpDir,
+    length: seg1Length,
+    radiusStart: seg1Radius,
+    radiusEnd: jointRadius,
     embed: 1.5,
     distortion: cow.tail.distortion,
     radialSegments: 10,
-    heightSegments: 5,
+    heightSegments: 3,
   });
-  fixOutwardWinding(tailPos, tailIdx);
-  const tailShaftGeom = makeGeometry(tailPos, tailIdx);
+  fixOutwardWinding(seg1.positions, seg1.indices);
+
+  const jointWorld = tailBaseWorld.clone().addScaledVector(tailUpDir, seg1Length);
+  const seg2 = buildTaperedCylinder({
+    origin: jointWorld,
+    direction: tailDownDir,
+    length: seg2Length,
+    radiusStart: jointRadius,
+    radiusEnd: tipRadius,
+    embed: jointRadius, // 関節が途切れて見えないよう、前セグメントへ食い込ませる
+    distortion: cow.tail.distortion,
+    radialSegments: 10,
+    heightSegments: 4,
+  });
+  fixOutwardWinding(seg2.positions, seg2.indices);
+
+  const tailDir = tailDownDir; // 房の向き合わせに使う（先端側の方向）
+  const tailPositions: number[] = [];
+  const tailIndicesAll: number[] = [];
+  for (const seg of [seg1, seg2]) {
+    const offset = tailPositions.length / 3;
+    tailPositions.push(...seg.positions);
+    tailIndicesAll.push(...seg.indices.map((i) => i + offset));
+  }
+  const tailShaftGeom = makeGeometry(tailPositions, tailIndicesAll);
 
   if (cow.tail.radius < 0.5) {
     warnings.push('しっぽの半径が印刷業者の確定最小値(0.5mm)を下回り危険です。');
@@ -288,7 +322,7 @@ export function buildCowMesh(cow: CowParams): CowMeshSet {
     { t: 1, z: cow.tail.tuftSize * 2, rx: 0.5, ry: 0.5, cx: 0, cy: 0, n: 2.2 },
   ];
   const tuftRaw = buildCapsuleMesh({ sections: tuftSections, radialSegments: 12, heightSamples: 8 });
-  const tailTipWorld = tailBaseWorld.clone().addScaledVector(tailDir, cow.tail.length);
+  const tailTipWorld = jointWorld.clone().addScaledVector(tailDownDir, seg2Length);
   const tuftQuat = new THREE.Quaternion().setFromUnitVectors(
     new THREE.Vector3(0, 0, 1),
     tailDir.clone().normalize(),
@@ -318,11 +352,36 @@ export function buildCowMesh(cow: CowParams): CowMeshSet {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  const spotPositions: number[] = [];
-  const spotIndices: number[] = [];
+  // 参考画像の斑点は小さな水玉ではなく、首〜背中〜尾の付け根まで続く大きな
+  // 連続したまだら模様が主体。背側(+π/2 付近)に3つの大きめパッチを固定で
+  // 少しずつ重ねて配置し、連続した帯として見えるようにする。
+  const UP_THETA = Math.PI / 2;
+  const torsoSpotPositions: number[] = [];
+  const torsoSpotIndices: number[] = [];
+  const spineBand: Array<{ t: number; size: number }> = [
+    { t: 0.22, size: 5.5 },
+    { t: 0.5, size: 6 },
+    { t: 0.75, size: 5.5 },
+  ];
+  for (const band of spineBand) {
+    appendLensShellOnSurface(
+      torsoSurface,
+      band.t,
+      UP_THETA,
+      0,
+      band.size,
+      band.size,
+      0.2,
+      FEATURE_EMBED_MM,
+      torsoSpotPositions,
+      torsoSpotIndices,
+    );
+  }
+  // 加えて、パラメータ(count/minSize/maxSize/seed)で少数の小さな差し色の
+  // まだらをランダムに散らす（帯の一部を隠さない程度の大きさに留める）。
   for (let i = 0; i < cow.spots.count; i++) {
     const t = 0.1 + nextRandom() * 0.8;
-    const theta = nextRandom() * Math.PI * 2;
+    const theta = UP_THETA + (nextRandom() - 0.5) * 2.8;
     const size = cow.spots.minSize + nextRandom() * (cow.spots.maxSize - cow.spots.minSize);
     appendLensShellOnSurface(
       torsoSurface,
@@ -333,13 +392,34 @@ export function buildCowMesh(cow: CowParams): CowMeshSet {
       size * (0.7 + nextRandom() * 0.3),
       0.2,
       FEATURE_EMBED_MM,
-      spotPositions,
-      spotIndices,
+      torsoSpotPositions,
+      torsoSpotIndices,
     );
   }
-  fixOutwardWinding(spotPositions, spotIndices);
-  applyMatrixToArray(spotPositions, torsoMatrix);
-  spotAndTuftGeoms.push(makeGeometry(spotPositions, spotIndices));
+  fixOutwardWinding(torsoSpotPositions, torsoSpotIndices);
+  applyMatrixToArray(torsoSpotPositions, torsoMatrix);
+  spotAndTuftGeoms.push(makeGeometry(torsoSpotPositions, torsoSpotIndices));
+
+  // 頭側面（耳のあたり）にも1つ、大きな模様を固定で追加する（参考画像で頭の
+  // 片側が大きくグレーに覆われている点を再現する）。頭ローカル座標系で作ってから
+  // headMatrix で変換するため、胴体側の斑点とは別に処理する。
+  const headSpotPositions: number[] = [];
+  const headSpotIndices: number[] = [];
+  appendLensShellOnSurface(
+    headSurface,
+    0.45,
+    sideThetaFromBiasDeg(1, 60),
+    0,
+    3.5,
+    4,
+    0.2,
+    FEATURE_EMBED_MM,
+    headSpotPositions,
+    headSpotIndices,
+  );
+  fixOutwardWinding(headSpotPositions, headSpotIndices);
+  applyMatrixToArray(headSpotPositions, headMatrix);
+  spotAndTuftGeoms.push(makeGeometry(headSpotPositions, headSpotIndices));
 
   // ---- 目（黒）----
   const eyePositions: number[] = [];
@@ -374,8 +454,8 @@ export function buildCowMesh(cow: CowParams): CowMeshSet {
     Math.max(cow.nostrils.height - 0.15, 0),
     -Math.PI / 2,
     0,
+    3.5,
     3,
-    2.5,
     0.1,
     FEATURE_EMBED_MM,
     nosePositions,

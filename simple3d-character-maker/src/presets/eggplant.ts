@@ -17,14 +17,18 @@ import { createDefaultCowParams } from './cow';
  * 丸みの強い(ほぼ卵形〜球形に近い)シルエットに調整している。
  * TODO(未決事項 #3, 指示書 13節): 実寸参照画像が未確定のため、寸法自体は仮値。
  */
+// 参考画像は上部がすぼまった円錐状ではなく、肩まで丸みを保ったまま
+// なだらかに狭まる（ヘタが幅広い肩の上に載る）シルエットのため、
+// 上部区間の絞り込みを弱めている。
 export const eggplantBodySections: BodySection[] = [
   { t: 0.0, z: 0, rx: 5.0, ry: 5.0, cx: 0, cy: 0, n: 2.4 }, // 底面（丸みの強い先端）
-  { t: 0.15, z: 6.3, rx: 12.0, ry: 11.0, cx: 0, cy: 0.2, n: 2.2 },
-  { t: 0.32, z: 13.4, rx: 18.0, ry: 16.0, cx: 0, cy: 0.4, n: 2.1 },
-  { t: 0.5, z: 21.0, rx: 20.0, ry: 18.0, cx: 0, cy: 0.5, n: 2.0 }, // 最大幅付近
-  { t: 0.68, z: 28.6, rx: 17.0, ry: 15.0, cx: 0, cy: 0.4, n: 2.0 },
-  { t: 0.85, z: 35.7, rx: 9.0, ry: 8.0, cx: 0, cy: 0.2, n: 2.2 }, // 絞り
-  { t: 1.0, z: 42.0, rx: 4.0, ry: 4.0, cx: 0, cy: 0, n: 2.4 }, // 上端（丸い肩）
+  { t: 0.15, z: 6.3, rx: 10.5, ry: 9.5, cx: 0, cy: 0.2, n: 2.2 },
+  { t: 0.32, z: 13.4, rx: 14.5, ry: 13.0, cx: 0, cy: 0.4, n: 2.1 },
+  { t: 0.5, z: 21.0, rx: 16.0, ry: 14.5, cx: 0, cy: 0.5, n: 2.0 }, // 最大幅付近
+  { t: 0.65, z: 27.3, rx: 15.0, ry: 13.5, cx: 0, cy: 0.4, n: 2.0 },
+  { t: 0.8, z: 33.6, rx: 13.0, ry: 11.0, cx: 0, cy: 0.2, n: 2.1 }, // 肩（丸みを保つ）
+  { t: 0.93, z: 39.1, rx: 5.5, ry: 5.0, cx: 0, cy: 0.1, n: 2.2 }, // ヘタの土台へ首を絞る
+  { t: 1.0, z: 42.0, rx: 1.5, ry: 1.5, cx: 0, cy: 0, n: 2.3 }, // 上端（ヘタで覆われる小さな先端）
 ];
 
 export const defaultBodyParams: BodyParams = {
@@ -36,36 +40,42 @@ export const defaultBodyParams: BodyParams = {
   flatBottomHeight: 1.5,
 };
 
+// 参考画像（粘土フィギュア）のヘタは、葉が垂れ下がらず本体の肩に沿って
+// 隣同士がほぼ密着する丸いスカラップ状の「花冠」に見える。そのため
+// pitch/curvature をほぼ0にして葉を垂らさず、width を広げて隣の葉と
+// 重ねることで連続した花冠シルエットを作る。
 export const defaultCalyxParams: CalyxParams = {
-  baseT: 0.93,
+  baseT: 0.97,
   symmetric: true,
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
-    length: 6,
-    width: 14,
-    thickness: 1.5,
-    pitch: 12,
-    curvature: 0.2,
-    embed: 1.0,
+    length: 2.5,
+    width: 6.5,
+    thickness: 1.8,
+    pitch: 4,
+    curvature: 0.05,
+    embed: 0.8,
   })),
 };
 
+// 参考画像のヘタ中央には、花冠から立ち上がる短く丸い太めの芽（茎）がある。
 export const defaultStemParams: StemParams = {
-  radius: 1.5,
-  length: 4,
-  tilt: 5,
-  squash: 0.1,
-  distortion: 0.1,
-  embed: 1.0,
+  radius: 1.8,
+  length: 3.2,
+  tilt: 4,
+  squash: 0.05,
+  distortion: 0.05,
+  embed: 0.8,
 };
 
 // TODO: EyeParams.height / MouthParams.height の単位は指示書に明記がないため、
 // 本体表面パラメータ t（0..1）として扱う。spacing / sizeX / sizeY は mm。
+// 参考画像の目は縦長の小さな楕円（現在より一回り小さく、やや上寄り）。
 export const defaultEyeParams: EyeParams = {
-  spacing: 9,
-  height: 0.58,
-  sizeX: 1.8,
-  sizeY: 3.0,
+  spacing: 7.5,
+  height: 0.64,
+  sizeX: 1.2,
+  sizeY: 2.0,
   tilt: 0,
   relief: 0.3,
 };
@@ -76,7 +86,7 @@ export const defaultMouthParams: MouthParams = {
   curveHeight: 2,
   thickness: 1.2,
   relief: 0.3,
-  height: 0.4,
+  height: 0.46,
 };
 
 export const defaultColorParams: ColorParams = {

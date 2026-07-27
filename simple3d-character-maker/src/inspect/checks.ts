@@ -120,11 +120,13 @@ function countExpectedParts(input: CheckInput): number {
     const mouth = input.project.mouth.preset === 'none' ? 0 : 1;
     return 1 /* body */ + calyxLeaves + 1 /* stem */ + eyes + mouth;
   }
-  // 牛（8節）: 胴体・頭・脚4本・耳2枚・しっぽの軸 (body group)
-  //          + 斑点N個+房1 (spots group) + 角2本 (horns) + 鼻先パッチ+鼻孔2 (nose) + 目2 (eyes)
+  // 牛（8節）: 胴体・頭・脚4本・耳2枚・しっぽの軸2段 (body group)
+  //          + 背中の固定斑点3+頭側の固定斑点1+ランダムN個+房1 (spots group)
+  //          + 角2本 (horns) + 鼻先パッチ+鼻孔2 (nose) + 目2 (eyes)
   const cow = input.project.cow;
-  const bodyGroupParts = 1 /* torso */ + 1 /* head */ + 4 /* legs */ + 2 /* ears */ + 1; /* tail shaft */
-  const spotsGroupParts = cow.spots.count + 1 /* tuft */;
+  const bodyGroupParts =
+    1 /* torso */ + 1 /* head */ + 4 /* legs */ + 2 /* ears */ + 2; /* tail shaft (2segments) */
+  const spotsGroupParts = 3 /* spine band */ + 1 /* head spot */ + cow.spots.count + 1; /* tuft */
   return bodyGroupParts + spotsGroupParts + 2 /* horns */ + 3 /* nose+nostrils */ + 2; /* eyes */
 }
 
