@@ -1,8 +1,9 @@
-import type { CalyxLeaf } from '../../core/params';
 import type { PanelContext, MountedPanel } from './context';
 import { sliderField, checkboxField, sectionHeading, type Field } from '../widgets';
 
-type LeafFieldKey = keyof CalyxLeaf;
+// pitch/curvature は現在のドーム形状生成では未使用（将来拡張用に予約）のため
+// UI には出さない。
+type LeafFieldKey = 'angle' | 'length' | 'width' | 'thickness' | 'embed';
 
 export function mountCalyxPanel(container: HTMLElement, ctx: PanelContext): MountedPanel {
   container.innerHTML = '';
@@ -76,12 +77,10 @@ export function mountCalyxPanel(container: HTMLElement, ctx: PanelContext): Moun
 
     const fields: Record<LeafFieldKey, Field<number>> = {
       angle: make('方位角(deg)', 'angle', 0, 360, 1),
-      length: make('長さ(mm)', 'length', 1, 40, 0.5),
-      width: make('幅(mm)', 'width', 1, 30, 0.5),
-      thickness: make('厚み(mm)', 'thickness', 0.3, 4, 0.1),
-      pitch: make('下向き角度(deg)', 'pitch', 0, 89, 1),
-      curvature: make('下向き曲率', 'curvature', 0, 1, 0.05),
-      embed: make('本体への埋め込み(mm)', 'embed', 0, 3, 0.05),
+      length: make('谷からの張り出し量(mm)', 'length', 0.5, 12, 0.25),
+      width: make('影響角度幅(deg)', 'width', 10, 90, 1),
+      thickness: make('ドームの盛り上がり高さ(mm)', 'thickness', 0.3, 6, 0.1),
+      embed: make('本体への埋め込み(mm)', 'embed', 0, 4, 0.05),
     };
     leafFields.push(fields);
     container.appendChild(box);

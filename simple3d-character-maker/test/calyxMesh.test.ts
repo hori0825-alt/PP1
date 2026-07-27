@@ -24,10 +24,10 @@ describe('buildCalyxMesh (eggplant preset)', () => {
     expect(warnings.some((w) => w.includes('埋め込み'))).toBe(true);
   });
 
-  it('follows the body surface when body sections change (no independent world-space geometry)', () => {
+  it('follows the body surface when body sections change (radial footprint tracks the neck radius)', () => {
     const { geometry: geomA } = buildCalyxMesh(defaultCalyxParams, eggplantBodySections);
     geomA.computeBoundingBox();
-    const heightA = geomA.boundingBox!.max.z;
+    const widthA = geomA.boundingBox!.max.x - geomA.boundingBox!.min.x;
 
     const widerSections = eggplantBodySections.map((s) => ({
       ...s,
@@ -36,10 +36,11 @@ describe('buildCalyxMesh (eggplant preset)', () => {
     }));
     const { geometry: geomB } = buildCalyxMesh(defaultCalyxParams, widerSections);
     geomB.computeBoundingBox();
-    const heightB = geomB.boundingBox!.max.z;
+    const widthB = geomB.boundingBox!.max.x - geomB.boundingBox!.min.x;
 
-    // 本体を太くすると同じ baseT でも表面の z が変わるため、ヘタの位置も追従して変化するはず。
-    expect(heightA).not.toBeCloseTo(heightB, 3);
+    // 本体を太くすると同じ baseT でも首の半径が変わるため、ヘタの外周（谷の半径）も
+    // 追従して広がるはず（ドームの盛り上がり高さ自体は首の太さに依存しない設計）。
+    expect(widthB).toBeGreaterThan(widthA);
   });
 
   it('keeps the default body totalHeight consistent for reference', () => {

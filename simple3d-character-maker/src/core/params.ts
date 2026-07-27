@@ -29,13 +29,20 @@ export interface BodyParams {
   flatBottomHeight: number; // 底面平坦化の高さ mm（既定 1.0）
 }
 
+/**
+ * ヘタの1裂片（花冠のスカラップ状の膨らみ1つ分）。
+ * ヘタ全体は本体の首の上に載る、連続した1つの「盛り上がったドーム」として
+ * 生成され、この裂片ごとの角度・幅・張り出し量を合成してドームの外周形状
+ * （スカラップ）を決める（calyxMesh.ts 参照。個々の花びらを別パーツとしては
+ * 生成しない＝本体半径に縛られず外側へ張り出せる）。
+ */
 export interface CalyxLeaf {
   angle: number; // 中心からの方位角 deg
-  length: number; // mm
-  width: number; // mm
-  thickness: number; // mm
-  pitch: number; // 下向き角度 deg
-  curvature: number; // 下向き曲率 0..1
+  length: number; // この裂片が谷から外側へどれだけ張り出すか mm
+  width: number; // この裂片の影響が及ぶ角度幅（半値幅）deg
+  thickness: number; // ドームの盛り上がり高さ mm
+  pitch: number; // 未使用（将来拡張用に予約）
+  curvature: number; // 未使用（将来拡張用に予約）
   embed: number; // 本体への埋め込み量 mm（0.8〜1.5 推奨）
 }
 
