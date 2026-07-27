@@ -124,7 +124,6 @@ export interface CowTorsoParams {
   sections: BodySection[]; // t=0 尾側 → t=1 胸側
   radialSegments: number;
   heightSamples: number;
-  groundClearance: number; // 地面から胴体下端までの高さ（≒脚の長さの目安）mm
 }
 
 export interface CowHeadParams {
@@ -155,8 +154,8 @@ export interface CowEarParams {
   sizeY: number;
   tilt: number;
   relief: number;
-  attachHeight: number; // 頭表面上の高さ位置 t
-  spacing: number; // 左右の開き角換算 mm
+  attachHeight: number; // 頭表面上の、鼻先方向の位置 t
+  spacing: number; // 側面(θ=0/π)から上方向へ寄せる角度 deg（大きいほど頭頂に近い）
 }
 
 export interface CowHornParams {
@@ -164,8 +163,8 @@ export interface CowHornParams {
   radiusStart: number;
   radiusEnd: number;
   tilt: number; // 外向き＋上向きの角度 deg
-  attachHeight: number; // 頭表面上の高さ位置 t
-  spacing: number;
+  attachHeight: number; // 頭表面上の、鼻先方向の位置 t
+  spacing: number; // 側面(θ=0/π)から上方向へ寄せる角度 deg（大きいほど頭頂中央に近い）
 }
 
 export interface CowTailParams {
@@ -177,16 +176,16 @@ export interface CowTailParams {
 }
 
 export interface CowEyeParams {
-  spacing: number;
-  height: number; // 頭表面上の高さ位置 t
+  spacing: number; // 側面(θ=0/π)から上方向へ寄せる角度 deg
+  height: number; // 頭表面上の、鼻先方向の位置 t
   sizeX: number;
   sizeY: number;
   relief: number;
 }
 
 export interface CowNostrilParams {
-  spacing: number;
-  height: number; // 頭表面上の高さ位置 t（鼻先寄り）
+  spacing: number; // 側面(θ=0/π)から上方向へ寄せる角度 deg（負値で下方向）
+  height: number; // 頭表面上の、鼻先方向の位置 t（鼻先寄り）
   size: number;
   relief: number;
 }

@@ -32,7 +32,6 @@ export const defaultCowTorsoParams: CowTorsoParams = {
   sections: cowTorsoSections,
   radialSegments: 32,
   heightSamples: 24,
-  groundClearance: 14,
 };
 
 export const cowHeadSections: BodySection[] = [
@@ -58,12 +57,12 @@ export const defaultCowLegsParams: CowLegsParams = {
 };
 
 export const defaultCowEarParams: CowEarParams = {
-  sizeX: 4,
-  sizeY: 5,
+  sizeX: 4.5,
+  sizeY: 5.5,
   tilt: 20,
-  relief: 0.5,
-  attachHeight: 0.72,
-  spacing: 6,
+  relief: 1.8,
+  attachHeight: 0.55,
+  spacing: 45,
 };
 
 export const defaultCowHornParams: CowHornParams = {
@@ -71,8 +70,8 @@ export const defaultCowHornParams: CowHornParams = {
   radiusStart: 2,
   radiusEnd: 0.8,
   tilt: 35,
-  attachHeight: 0.85,
-  spacing: 4,
+  attachHeight: 0.3,
+  spacing: 38,
 };
 
 export const defaultCowTailParams: CowTailParams = {
@@ -84,15 +83,15 @@ export const defaultCowTailParams: CowTailParams = {
 };
 
 export const defaultCowEyeParams: CowEyeParams = {
-  spacing: 7,
-  height: 0.55,
+  spacing: 15,
+  height: 0.8,
   sizeX: 1.3,
   sizeY: 1.6,
   relief: 0.3,
 };
 
 export const defaultCowNostrilParams: CowNostrilParams = {
-  spacing: 2.5,
+  spacing: -15,
   height: 0.95,
   size: 0.8,
   relief: 0.15,
