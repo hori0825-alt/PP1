@@ -1,11 +1,38 @@
+import type { CharacterType } from '../../core/params';
 import type { PanelContext, MountedPanel } from './context';
 import { sectionHeading } from '../widgets';
 import { downloadProjectJson, readProjectFile } from '../../state/persistence';
 import { createDefaultProjectData } from '../../presets/eggplant';
 
+const CHARACTER_TYPE_LABELS: Record<CharacterType, string> = {
+  eggplant: 'ナス',
+  cow: '牛',
+};
+
 export function mountProjectPanel(container: HTMLElement, ctx: PanelContext): MountedPanel {
   container.innerHTML = '';
   container.appendChild(sectionHeading('プロジェクト'));
+
+  const characterTypeRow = document.createElement('div');
+  characterTypeRow.className = 'field-row';
+  const characterTypeLabel = document.createElement('label');
+  characterTypeLabel.textContent = 'キャラクター';
+  const characterTypeSelect = document.createElement('select');
+  (Object.keys(CHARACTER_TYPE_LABELS) as CharacterType[]).forEach((key) => {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = CHARACTER_TYPE_LABELS[key];
+    characterTypeSelect.appendChild(option);
+  });
+  characterTypeSelect.value = ctx.store.getProject().characterType;
+  characterTypeSelect.addEventListener('change', () => {
+    ctx.store.updateWithHistory(
+      (p) => (p.characterType = characterTypeSelect.value as CharacterType),
+    );
+  });
+  characterTypeRow.appendChild(characterTypeLabel);
+  characterTypeRow.appendChild(characterTypeSelect);
+  container.appendChild(characterTypeRow);
 
   const undoBtn = document.createElement('button');
   undoBtn.textContent = '元に戻す (Undo)';
@@ -58,6 +85,7 @@ export function mountProjectPanel(container: HTMLElement, ctx: PanelContext): Mo
   container.appendChild(statusEl);
 
   function refresh(): void {
+    characterTypeSelect.value = ctx.store.getProject().characterType;
     undoBtn.disabled = !ctx.store.history.canUndo;
     redoBtn.disabled = !ctx.store.history.canRedo;
     statusEl.textContent = ctx.store.dirty ? '未保存の変更があります' : '保存済み';

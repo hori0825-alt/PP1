@@ -15,7 +15,17 @@ export interface AtlasPatch {
   y1: number;
 }
 
-export type PartKey = 'body' | 'calyx' | 'stem' | 'eye' | 'mouth';
+export type PartKey =
+  | 'body'
+  | 'calyx'
+  | 'stem'
+  | 'eye'
+  | 'mouth'
+  | 'cowBody'
+  | 'cowSpots'
+  | 'cowHorns'
+  | 'cowNose'
+  | 'cowEyes';
 
 export const ATLAS_PATCHES: Record<PartKey, AtlasPatch> = {
   body: { x0: 0, y0: 0, x1: 1024, y1: 1024 },
@@ -23,6 +33,12 @@ export const ATLAS_PATCHES: Record<PartKey, AtlasPatch> = {
   stem: { x0: 1536, y0: 0, x1: 1792, y1: 256 },
   eye: { x0: 1024, y0: 512, x1: 1280, y1: 768 },
   mouth: { x0: 1280, y0: 512, x1: 1536, y1: 768 },
+  // 牛（8節）: ナスと共存できるよう、まだ使われていない下半分に配置する。
+  cowBody: { x0: 0, y0: 1024, x1: 1024, y1: 2048 },
+  cowSpots: { x0: 1024, y0: 1024, x1: 1536, y1: 1536 },
+  cowHorns: { x0: 1536, y0: 1024, x1: 1792, y1: 1280 },
+  cowNose: { x0: 1024, y0: 1536, x1: 1536, y1: 2048 },
+  cowEyes: { x0: 1536, y0: 1280, x1: 1792, y1: 1536 },
 };
 
 /** パッチ中心の UV 座標（0..1）を返す。ベタ塗りのため境界からの多少のずれは影響しない。 */

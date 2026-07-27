@@ -3,6 +3,7 @@ import { buildBodyMesh } from '../src/geometry/bodyMesh';
 import { buildCalyxMesh } from '../src/geometry/calyxMesh';
 import { buildStemMesh } from '../src/geometry/stemMesh';
 import { buildEyeMesh, buildMouthMesh } from '../src/geometry/faceMesh';
+import { buildCowMesh } from '../src/geometry/cowMesh';
 import {
   runPrintChecks,
   approximateMinWallThickness,
@@ -17,6 +18,7 @@ function buildInput(project = createDefaultProjectData()): CheckInput {
   const eyes = buildEyeMesh(project.eyes, project.body.sections);
   const mouth = buildMouthMesh(project.mouth, project.body.sections);
   return {
+    characterType: 'eggplant',
     bodyGeometry: body.geometry,
     calyxGeometry: calyx.geometry,
     stemGeometry: stem.geometry,
@@ -65,6 +67,50 @@ describe('runPrintChecks (eggplant preset, default params)', () => {
     const project = createDefaultProjectData();
     project.calyx.leaves.forEach((l) => (l.embed = 0));
     const results = runPrintChecks(buildInput(project));
+    expect(results.find((r) => r.id === 'intersection-depth')!.severity).toBe('red');
+  });
+});
+
+function buildCowInput(project = createDefaultProjectData('cow')): CheckInput {
+  const cowMesh = buildCowMesh(project.cow);
+  return {
+    characterType: 'cow',
+    bodyGeometry: cowMesh.body.geometry,
+    spotsGeometry: cowMesh.spots.geometry,
+    hornsGeometry: cowMesh.horns.geometry,
+    noseGeometry: cowMesh.nose.geometry,
+    eyesGeometry: cowMesh.eyes.geometry,
+    project,
+    textureReady: true,
+  };
+}
+
+describe('runPrintChecks (cow preset, default params)', () => {
+  it('reports all-green for topology checks on the default well-formed model', () => {
+    const results = runPrintChecks(buildCowInput());
+    const byId = new Map(results.map((r) => [r.id, r]));
+    expect(byId.get('boundary-edges')!.severity).toBe('green');
+    expect(byId.get('non-manifold-edges')!.severity).toBe('green');
+    expect(byId.get('normal-consistency')!.severity).toBe('green');
+    expect(byId.get('degenerate-triangles')!.severity).toBe('green');
+    expect(byId.get('ground-contact')!.severity).toBe('green');
+    expect(byId.get('texture')!.severity).toBe('green');
+    expect(byId.get('dimensions')!.severity).toBe('green');
+  });
+
+  it('flags too-thin legs as red', () => {
+    const project = createDefaultProjectData('cow');
+    project.cow.legs.front.radius = 0.3;
+    project.cow.legs.back.radius = 0.3;
+    const results = runPrintChecks(buildCowInput(project));
+    expect(results.find((r) => r.id === 'min-diameter')!.severity).toBe('red');
+  });
+
+  it('flags insufficient leg embed as red', () => {
+    const project = createDefaultProjectData('cow');
+    project.cow.legs.front.embed = 0;
+    project.cow.legs.back.embed = 0;
+    const results = runPrintChecks(buildCowInput(project));
     expect(results.find((r) => r.id === 'intersection-depth')!.severity).toBe('red');
   });
 });

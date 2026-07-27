@@ -7,12 +7,13 @@ import { buildBodyMesh } from './geometry/bodyMesh';
 import { buildCalyxMesh } from './geometry/calyxMesh';
 import { buildStemMesh } from './geometry/stemMesh';
 import { buildEyeMesh, buildMouthMesh } from './geometry/faceMesh';
+import { buildCowMesh } from './geometry/cowMesh';
 import { createDefaultProjectData } from './presets/eggplant';
 import { mountReferencePanel } from './ui/referencePanel';
 import { createAtlasTexture, assignSolidUV } from './texture/canvasPainter';
 import { ATLAS_PATCHES } from './texture/atlas';
 import { formatMm } from './core/units';
-import type { ViewName } from './core/params';
+import type { BodySection, CharacterType, ViewName } from './core/params';
 import { ProjectStore } from './state/store';
 import type { PanelContext, MountedPanel } from './ui/panels/context';
 import { mountBodyPanel } from './ui/panels/bodyPanel';
@@ -20,9 +21,10 @@ import { mountCalyxPanel } from './ui/panels/calyxPanel';
 import { mountStemPanel } from './ui/panels/stemPanel';
 import { mountFacePanel } from './ui/panels/facePanel';
 import { mountColorPanel } from './ui/panels/colorPanel';
+import { mountCowPanel } from './ui/panels/cowPanel';
 import { mountPrintPanel } from './ui/panels/printPanel';
 import { mountProjectPanel } from './ui/panels/projectPanel';
-import { runPrintChecks, type CheckItem } from './inspect/checks';
+import { runPrintChecks, type CheckItem, type CheckInput } from './inspect/checks';
 import { formatCheckReport } from './inspect/report';
 import { exportObjText, buildMtlText } from './export/obj';
 import { exportStlBinary } from './export/stl';
@@ -36,11 +38,12 @@ app.innerHTML = `
   <div id="panel-left" class="panel">
     <div id="panel-project"></div>
     <div id="panel-reference"></div>
-    <div id="panel-body"></div>
-    <div id="panel-calyx"></div>
-    <div id="panel-stem"></div>
-    <div id="panel-face"></div>
-    <div id="panel-color"></div>
+    <div id="panel-body" class="eggplant-only"></div>
+    <div id="panel-calyx" class="eggplant-only"></div>
+    <div id="panel-stem" class="eggplant-only"></div>
+    <div id="panel-face" class="eggplant-only"></div>
+    <div id="panel-color" class="eggplant-only"></div>
+    <div id="panel-cow" class="cow-only"></div>
     <div id="panel-print"></div>
     <div id="panel-export"></div>
   </div>
@@ -74,21 +77,33 @@ const { scene, renderer, bodyGroup } = createScene(canvas);
 
 // 単一マテリアル・単一テクスチャアトラス方式（6.6節）。パーツごとに別マテリアルを
 // 割り当てず、全パーツがこの1つの simple3d_main 相当マテリアルを共有する。
-let atlasTexture = createAtlasTexture(store.getProject().colors);
+// ナス・牛どちらのパッチも常に塗っておき、キャラクタータイプの切り替えだけで
+// テクスチャを作り直さずに済むようにする。
+let atlasTexture = createAtlasTexture(store.getProject().colors, store.getProject().cow.colors);
 const mainMaterial = new THREE.MeshStandardMaterial({ map: atlasTexture });
 
 let lastWarnings: string[] = [];
-let lastGeometries: {
-  body: THREE.BufferGeometry;
-  calyx: THREE.BufferGeometry;
-  stem: THREE.BufferGeometry;
-  eye: THREE.BufferGeometry;
-  mouth: THREE.BufferGeometry;
-} | null = null;
+type LastGeometries =
+  | {
+      characterType: 'eggplant';
+      body: THREE.BufferGeometry;
+      calyx: THREE.BufferGeometry;
+      stem: THREE.BufferGeometry;
+      eye: THREE.BufferGeometry;
+      mouth: THREE.BufferGeometry;
+    }
+  | {
+      characterType: 'cow';
+      body: THREE.BufferGeometry;
+      spots: THREE.BufferGeometry;
+      horns: THREE.BufferGeometry;
+      nose: THREE.BufferGeometry;
+      eyes: THREE.BufferGeometry;
+    };
+let lastGeometries: LastGeometries | null = null;
 
-function rebuildBodyMesh(): void {
+function rebuildEggplantMesh(): void {
   const project = store.getProject();
-  bodyGroup.clear();
   const warnings: string[] = [];
 
   const body = buildBodyMesh(project.body);
@@ -130,6 +145,7 @@ function rebuildBodyMesh(): void {
 
   lastWarnings = warnings;
   lastGeometries = {
+    characterType: 'eggplant',
     body: body.geometry,
     calyx: calyx.geometry,
     stem: stem.geometry,
@@ -138,38 +154,113 @@ function rebuildBodyMesh(): void {
   };
 }
 
+function rebuildCowMesh(): void {
+  const project = store.getProject();
+  const cowMeshSet = buildCowMesh(project.cow);
+
+  assignSolidUV(cowMeshSet.body.geometry, ATLAS_PATCHES.cowBody);
+  const bodyMesh = new THREE.Mesh(cowMeshSet.body.geometry, mainMaterial);
+  bodyMesh.name = 'cowBody';
+  bodyGroup.add(bodyMesh);
+
+  assignSolidUV(cowMeshSet.spots.geometry, ATLAS_PATCHES.cowSpots);
+  const spotsMesh = new THREE.Mesh(cowMeshSet.spots.geometry, mainMaterial);
+  spotsMesh.name = 'cowSpots';
+  bodyGroup.add(spotsMesh);
+
+  assignSolidUV(cowMeshSet.horns.geometry, ATLAS_PATCHES.cowHorns);
+  const hornsMesh = new THREE.Mesh(cowMeshSet.horns.geometry, mainMaterial);
+  hornsMesh.name = 'cowHorns';
+  bodyGroup.add(hornsMesh);
+
+  assignSolidUV(cowMeshSet.nose.geometry, ATLAS_PATCHES.cowNose);
+  const noseMesh = new THREE.Mesh(cowMeshSet.nose.geometry, mainMaterial);
+  noseMesh.name = 'cowNose';
+  bodyGroup.add(noseMesh);
+
+  assignSolidUV(cowMeshSet.eyes.geometry, ATLAS_PATCHES.cowEyes);
+  const eyesMesh = new THREE.Mesh(cowMeshSet.eyes.geometry, mainMaterial);
+  eyesMesh.name = 'cowEyes';
+  bodyGroup.add(eyesMesh);
+
+  lastWarnings = cowMeshSet.body.warnings;
+  lastGeometries = {
+    characterType: 'cow',
+    body: cowMeshSet.body.geometry,
+    spots: cowMeshSet.spots.geometry,
+    horns: cowMeshSet.horns.geometry,
+    nose: cowMeshSet.nose.geometry,
+    eyes: cowMeshSet.eyes.geometry,
+  };
+}
+
+function rebuildBodyMesh(): void {
+  bodyGroup.clear();
+  const project = store.getProject();
+  if (project.characterType === 'cow') {
+    rebuildCowMesh();
+  } else {
+    rebuildEggplantMesh();
+  }
+}
+
 let lastPaintedColors = { ...store.getProject().colors };
+let lastPaintedCowColors = { ...store.getProject().cow.colors };
 
 function rebuildAtlasTexture(): void {
   atlasTexture.dispose();
-  atlasTexture = createAtlasTexture(store.getProject().colors);
+  const project = store.getProject();
+  atlasTexture = createAtlasTexture(project.colors, project.cow.colors);
   mainMaterial.map = atlasTexture;
   mainMaterial.needsUpdate = true;
-  lastPaintedColors = { ...store.getProject().colors };
+  lastPaintedColors = { ...project.colors };
+  lastPaintedCowColors = { ...project.cow.colors };
 }
 
 /**
  * undo/redo・プロジェクト読込は色を含む全フィールドを一括で戻すため、
  * それらの経路でも色が変わっていればアトラスを再生成する。
  * ただしスライダードラッグ中に毎回テクスチャを作り直すのは重いため、
- * 実際に色が変わったときだけ再生成する。
+ * 実際に色が変わったときだけ再生成する。ナス・牛どちらの色も常に監視する
+ * （キャラクタータイプを切り替えた直後にも正しい色で描画されるように）。
  */
 function syncAtlasIfColorsChanged(): void {
-  const colors = store.getProject().colors;
-  const changed = (Object.keys(colors) as Array<keyof typeof colors>).some(
-    (key) => colors[key] !== lastPaintedColors[key],
-  );
+  const project = store.getProject();
+  const colors = project.colors;
+  const cowColors = project.cow.colors;
+  const changed =
+    (Object.keys(colors) as Array<keyof typeof colors>).some(
+      (key) => colors[key] !== lastPaintedColors[key],
+    ) ||
+    (Object.keys(cowColors) as Array<keyof typeof cowColors>).some(
+      (key) => cowColors[key] !== lastPaintedCowColors[key],
+    );
   if (changed) rebuildAtlasTexture();
 }
 
+/** キャラクタータイプに応じたおおよそのカメラ注視点（高さ）。 */
+function cameraTargetZFor(characterType: CharacterType): number {
+  if (characterType === 'cow') {
+    const project = store.getProject();
+    // 胴体断面の平均的な高さ（脚の可視長でおおよその設置高を見積もる）。
+    const legVisible = Math.max(
+      project.cow.legs.front.length - project.cow.legs.front.embed,
+      project.cow.legs.back.length - project.cow.legs.back.embed,
+      0.1,
+    );
+    return legVisible + 10;
+  }
+  return store.getProject().body.totalHeight / 2;
+}
+
 const cameraRig = new ViewerCameraRig();
-cameraRig.setTarget(new THREE.Vector3(0, 0, store.getProject().body.totalHeight / 2));
+cameraRig.setTarget(new THREE.Vector3(0, 0, cameraTargetZFor(store.getProject().characterType)));
 cameraRig.setDistance(store.getProject().camera.distanceMm);
 
 const controls = new ViewerControls(
   cameraRig.camera,
   canvas,
-  new THREE.Vector3(0, 0, store.getProject().body.totalHeight / 2),
+  new THREE.Vector3(0, 0, cameraTargetZFor(store.getProject().characterType)),
 );
 
 const viewerContainer = document.getElementById('viewer-container')!;
@@ -229,8 +320,20 @@ const mountedPanels: MountedPanel[] = [
   mountStemPanel(document.getElementById('panel-stem')!, panelCtx),
   mountFacePanel(document.getElementById('panel-face')!, panelCtx),
   mountColorPanel(document.getElementById('panel-color')!, panelCtx),
+  mountCowPanel(document.getElementById('panel-cow')!, panelCtx),
   mountPrintPanel(document.getElementById('panel-print')!, panelCtx),
 ];
+
+/** ナス専用・牛専用パネルの表示/非表示をキャラクタータイプに合わせて切り替える。 */
+function updatePanelVisibility(): void {
+  const characterType = store.getProject().characterType;
+  document.querySelectorAll<HTMLElement>('.eggplant-only').forEach((el) => {
+    el.style.display = characterType === 'eggplant' ? '' : 'none';
+  });
+  document.querySelectorAll<HTMLElement>('.cow-only').forEach((el) => {
+    el.style.display = characterType === 'cow' ? '' : 'none';
+  });
+}
 
 const rightSummary = document.getElementById('panel-right-summary')!;
 const bottomContent = document.getElementById('panel-bottom-content')!;
@@ -244,19 +347,33 @@ const SEVERITY_MARK: Record<CheckItem['severity'], string> = { red: '●', yello
 
 let lastCheckResults: CheckItem[] = [];
 
-/** 現在の3パーツジオメトリに対して6.8節の検査を実行する。 */
+/** 現在のジオメトリに対して6.8節の検査を実行する（ナス・牛それぞれの構成で）。 */
 function runChecksNow(): CheckItem[] {
   if (!lastGeometries) return [];
   const project = store.getProject();
-  lastCheckResults = runPrintChecks({
-    bodyGeometry: lastGeometries.body,
-    calyxGeometry: lastGeometries.calyx,
-    stemGeometry: lastGeometries.stem,
-    eyeGeometry: lastGeometries.eye,
-    mouthGeometry: lastGeometries.mouth,
-    project,
-    textureReady: true,
-  });
+  const input: CheckInput =
+    lastGeometries.characterType === 'eggplant'
+      ? {
+          characterType: 'eggplant',
+          bodyGeometry: lastGeometries.body,
+          calyxGeometry: lastGeometries.calyx,
+          stemGeometry: lastGeometries.stem,
+          eyeGeometry: lastGeometries.eye,
+          mouthGeometry: lastGeometries.mouth,
+          project,
+          textureReady: true,
+        }
+      : {
+          characterType: 'cow',
+          bodyGeometry: lastGeometries.body,
+          spotsGeometry: lastGeometries.spots,
+          hornsGeometry: lastGeometries.horns,
+          noseGeometry: lastGeometries.nose,
+          eyesGeometry: lastGeometries.eyes,
+          project,
+          textureReady: true,
+        };
+  lastCheckResults = runPrintChecks(input);
   return lastCheckResults;
 }
 
@@ -303,30 +420,7 @@ function renderCheckLists(): void {
   }
 }
 
-function updateDerivedPanels(): void {
-  const project = store.getProject();
-  dimReadout.textContent = `全高: ${formatMm(project.body.totalHeight)}`;
-
-  rightSummary.innerHTML = '';
-  const heightLine = document.createElement('div');
-  heightLine.textContent = `全高: ${formatMm(project.body.totalHeight)}`;
-  rightSummary.appendChild(heightLine);
-  const maxRx = Math.max(...project.body.sections.map((s) => s.rx));
-  const maxRy = Math.max(...project.body.sections.map((s) => s.ry));
-  const widthLine = document.createElement('div');
-  widthLine.textContent = `最大幅: ${formatMm(maxRx * 2)} / 最大奥行き: ${formatMm(maxRy * 2)}`;
-  rightSummary.appendChild(widthLine);
-
-  if (lastWarnings.length > 0) {
-    for (const w of lastWarnings) {
-      const line = document.createElement('div');
-      line.className = 'warning-yellow';
-      line.textContent = `⚠ ${w}`;
-      rightSummary.appendChild(line);
-    }
-  }
-
-  bottomContent.innerHTML = '';
+function appendSectionTable(container: HTMLElement, sections: readonly BodySection[]): void {
   const table = document.createElement('table');
   table.style.fontSize = '11px';
   table.style.borderCollapse = 'collapse';
@@ -339,7 +433,7 @@ function updateDerivedPanels(): void {
     header.appendChild(th);
   });
   table.appendChild(header);
-  for (const s of project.body.sections) {
+  for (const s of sections) {
     const tr = document.createElement('tr');
     [s.t.toFixed(2), s.z.toFixed(1), s.rx.toFixed(1), s.ry.toFixed(1), s.n.toFixed(2)].forEach(
       (v) => {
@@ -352,7 +446,61 @@ function updateDerivedPanels(): void {
     );
     table.appendChild(tr);
   }
-  bottomContent.appendChild(table);
+  container.appendChild(table);
+}
+
+function updateDerivedPanels(): void {
+  const project = store.getProject();
+  updatePanelVisibility();
+
+  rightSummary.innerHTML = '';
+  bottomContent.innerHTML = '';
+
+  if (project.characterType === 'eggplant') {
+    dimReadout.textContent = `全高: ${formatMm(project.body.totalHeight)}`;
+
+    const heightLine = document.createElement('div');
+    heightLine.textContent = `全高: ${formatMm(project.body.totalHeight)}`;
+    rightSummary.appendChild(heightLine);
+    const maxRx = Math.max(...project.body.sections.map((s) => s.rx));
+    const maxRy = Math.max(...project.body.sections.map((s) => s.ry));
+    const widthLine = document.createElement('div');
+    widthLine.textContent = `最大幅: ${formatMm(maxRx * 2)} / 最大奥行き: ${formatMm(maxRy * 2)}`;
+    rightSummary.appendChild(widthLine);
+  } else {
+    const torso = project.cow.torso.sections;
+    const totalLength = torso[torso.length - 1]?.z ?? 0;
+    dimReadout.textContent = `胴体長: ${formatMm(totalLength)}`;
+
+    const lengthLine = document.createElement('div');
+    lengthLine.textContent = `胴体長(尾→胸): ${formatMm(totalLength)}`;
+    rightSummary.appendChild(lengthLine);
+    const maxRx = Math.max(...torso.map((s) => s.rx));
+    const maxRy = Math.max(...torso.map((s) => s.ry));
+    const widthLine = document.createElement('div');
+    widthLine.textContent = `最大幅: ${formatMm(maxRx * 2)} / 最大奥行き: ${formatMm(maxRy * 2)}`;
+    rightSummary.appendChild(widthLine);
+  }
+
+  if (lastWarnings.length > 0) {
+    for (const w of lastWarnings) {
+      const line = document.createElement('div');
+      line.className = 'warning-yellow';
+      line.textContent = `⚠ ${w}`;
+      rightSummary.appendChild(line);
+    }
+  }
+
+  if (project.characterType === 'eggplant') {
+    appendSectionTable(bottomContent, project.body.sections);
+  } else {
+    const heading = document.createElement('div');
+    heading.style.fontSize = '11px';
+    heading.style.color = '#666';
+    heading.textContent = '胴体 断面表';
+    bottomContent.appendChild(heading);
+    appendSectionTable(bottomContent, project.cow.torso.sections);
+  }
 
   const logHeading = document.createElement('div');
   logHeading.style.marginTop = '6px';

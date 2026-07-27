@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ColorParams } from '../core/params';
+import type { ColorParams, CowColorParams } from '../core/params';
 import {
   ATLAS_PATCHES,
   ATLAS_SIZE,
@@ -9,8 +9,12 @@ import {
   type PartKey,
 } from './atlas';
 
-/** パーツ色から 2048x2048 のテクスチャアトラスを Canvas 上に描画する。 */
-export function paintAtlasCanvas(colors: ColorParams): HTMLCanvasElement {
+/**
+ * パーツ色から 2048x2048 のテクスチャアトラスを Canvas 上に描画する。
+ * ナス・牛のどちらのキャラクタータイプでも同じアトラスを使い回せるよう、
+ * 両方の色を常に描画しておく（未使用パッチが残っても実害はない）。
+ */
+export function paintAtlasCanvas(colors: ColorParams, cowColors: CowColorParams): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = ATLAS_SIZE;
   canvas.height = ATLAS_SIZE;
@@ -29,6 +33,11 @@ export function paintAtlasCanvas(colors: ColorParams): HTMLCanvasElement {
     stem: colors.stem,
     eye: colors.eye,
     mouth: colors.mouth,
+    cowBody: cowColors.body,
+    cowSpots: cowColors.spot,
+    cowHorns: cowColors.horn,
+    cowNose: cowColors.nose,
+    cowEyes: cowColors.eye,
   };
 
   for (const key of Object.keys(ATLAS_PATCHES) as PartKey[]) {
@@ -40,8 +49,8 @@ export function paintAtlasCanvas(colors: ColorParams): HTMLCanvasElement {
   return canvas;
 }
 
-export function createAtlasTexture(colors: ColorParams): THREE.CanvasTexture {
-  const canvas = paintAtlasCanvas(colors);
+export function createAtlasTexture(colors: ColorParams, cowColors: CowColorParams): THREE.CanvasTexture {
+  const canvas = paintAtlasCanvas(colors, cowColors);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;

@@ -13,15 +13,27 @@ export interface CheckItem {
   message: string;
 }
 
-export interface CheckInput {
-  bodyGeometry: THREE.BufferGeometry;
-  calyxGeometry: THREE.BufferGeometry;
-  stemGeometry: THREE.BufferGeometry;
-  eyeGeometry: THREE.BufferGeometry;
-  mouthGeometry: THREE.BufferGeometry;
-  project: ProjectData;
-  textureReady: boolean;
-}
+export type CheckInput =
+  | {
+      characterType: 'eggplant';
+      bodyGeometry: THREE.BufferGeometry;
+      calyxGeometry: THREE.BufferGeometry;
+      stemGeometry: THREE.BufferGeometry;
+      eyeGeometry: THREE.BufferGeometry;
+      mouthGeometry: THREE.BufferGeometry;
+      project: ProjectData;
+      textureReady: boolean;
+    }
+  | {
+      characterType: 'cow';
+      bodyGeometry: THREE.BufferGeometry;
+      spotsGeometry: THREE.BufferGeometry;
+      hornsGeometry: THREE.BufferGeometry;
+      noseGeometry: THREE.BufferGeometry;
+      eyesGeometry: THREE.BufferGeometry;
+      project: ProjectData;
+      textureReady: boolean;
+    };
 
 function hasFaces(geometry: THREE.BufferGeometry): boolean {
   const index = geometry.getIndex();
@@ -29,13 +41,21 @@ function hasFaces(geometry: THREE.BufferGeometry): boolean {
 }
 
 function mergeAllParts(input: CheckInput): THREE.BufferGeometry {
-  const geoms = [
-    input.bodyGeometry,
-    input.calyxGeometry,
-    input.stemGeometry,
-    input.eyeGeometry,
-  ].filter(hasFaces);
-  if (hasFaces(input.mouthGeometry)) geoms.push(input.mouthGeometry);
+  const geoms: THREE.BufferGeometry[] =
+    input.characterType === 'eggplant'
+      ? [input.bodyGeometry, input.calyxGeometry, input.stemGeometry, input.eyeGeometry].filter(
+          hasFaces,
+        )
+      : [
+          input.bodyGeometry,
+          input.spotsGeometry,
+          input.hornsGeometry,
+          input.noseGeometry,
+          input.eyesGeometry,
+        ].filter(hasFaces);
+  if (input.characterType === 'eggplant' && hasFaces(input.mouthGeometry)) {
+    geoms.push(input.mouthGeometry);
+  }
   const merged = mergeGeometries(
     geoms.map((g) => g.clone()),
     false,
@@ -93,11 +113,19 @@ export function approximateMinWallThickness(
   return minThickness;
 }
 
-function countExpectedParts(project: ProjectData): number {
-  const calyxLeaves = project.calyx.leaves.length;
-  const eyes = 2;
-  const mouth = project.mouth.preset === 'none' ? 0 : 1;
-  return 1 /* body */ + calyxLeaves + 1 /* stem */ + eyes + mouth;
+function countExpectedParts(input: CheckInput): number {
+  if (input.characterType === 'eggplant') {
+    const calyxLeaves = input.project.calyx.leaves.length;
+    const eyes = 2;
+    const mouth = input.project.mouth.preset === 'none' ? 0 : 1;
+    return 1 /* body */ + calyxLeaves + 1 /* stem */ + eyes + mouth;
+  }
+  // 牛（8節）: 胴体・頭・脚4本・耳2枚・しっぽの軸 (body group)
+  //          + 斑点N個+房1 (spots group) + 角2本 (horns) + 鼻先パッチ+鼻孔2 (nose) + 目2 (eyes)
+  const cow = input.project.cow;
+  const bodyGroupParts = 1 /* torso */ + 1 /* head */ + 4 /* legs */ + 2 /* ears */ + 1; /* tail shaft */
+  const spotsGroupParts = cow.spots.count + 1 /* tuft */;
+  return bodyGroupParts + spotsGroupParts + 2 /* horns */ + 3 /* nose+nostrils */ + 2; /* eyes */
 }
 
 /** 3Dプリント検査（開発指示書 6.8節）。判定結果を赤・黄・緑で返す純関数。 */
@@ -148,7 +176,7 @@ export function runPrintChecks(input: CheckInput): CheckItem[] {
         : `面積がほぼ0の三角形が ${topology.degenerateTriangleCount} 枚あります。`,
   });
 
-  const expectedParts = countExpectedParts(input.project);
+  const expectedParts = countExpectedParts(input);
   results.push({
     id: 'connected-components',
     label: '連結成分数',
@@ -157,52 +185,103 @@ export function runPrintChecks(input: CheckInput): CheckItem[] {
   });
 
   // パーツ間の交差深さ: 本アプリでは埋め込み量をパラメータとして直接生成しているため
-  // （calyxMesh.ts / stemMesh.ts が normal 方向へ -embed だけオフセットして作る）、
+  // （calyxMesh.ts / stemMesh.ts / cowMesh.ts が normal 方向へ -embed だけオフセットして作る）、
   // 生成パラメータそのものが実際の埋め込み深さと一致する。three-mesh-bvh による
   // 幾何的な再計測は 6.8節の最小肉厚チェックで用いる。
-  const embedDepths = [...input.project.calyx.leaves.map((l) => l.embed), input.project.stem.embed];
-  const minEmbed = Math.min(...embedDepths);
-  results.push({
-    id: 'intersection-depth',
-    label: 'パーツ間の交差深さ',
-    severity:
-      minEmbed <= 0
-        ? 'red'
-        : minEmbed < input.project.printSettings.minCalyxEmbedMm
-          ? 'yellow'
-          : 'green',
-    message: `最小埋め込み量 ${minEmbed.toFixed(2)}mm。`,
-  });
+  if (input.characterType === 'eggplant') {
+    const embedDepths = [
+      ...input.project.calyx.leaves.map((l) => l.embed),
+      input.project.stem.embed,
+    ];
+    const minEmbed = Math.min(...embedDepths);
+    results.push({
+      id: 'intersection-depth',
+      label: 'パーツ間の交差深さ',
+      severity:
+        minEmbed <= 0
+          ? 'red'
+          : minEmbed < input.project.printSettings.minCalyxEmbedMm
+            ? 'yellow'
+            : 'green',
+      message: `最小埋め込み量 ${minEmbed.toFixed(2)}mm。`,
+    });
+  } else {
+    const minEmbed = Math.min(input.project.cow.legs.front.embed, input.project.cow.legs.back.embed);
+    results.push({
+      id: 'intersection-depth',
+      label: 'パーツ間の交差深さ（脚の埋め込み）',
+      severity:
+        minEmbed <= 0
+          ? 'red'
+          : minEmbed < input.project.printSettings.minCalyxEmbedMm
+            ? 'yellow'
+            : 'green',
+      message: `最小埋め込み量 ${minEmbed.toFixed(2)}mm。`,
+    });
+  }
 
   // 印刷業者仕様確定値（13節 未決事項#2 回答済み）: 実寸1mm未満は折れやすく赤警告。
   // 黄警告は printSettings.minStemRadiusMm の安全マージンで判定する。
-  const minStemRadius = input.project.stem.radius;
-  const minLeafThickness = Math.min(...input.project.calyx.leaves.map((l) => l.thickness));
-  const minDiameter = Math.min(minStemRadius, minLeafThickness);
-  results.push({
-    id: 'min-diameter',
-    label: '茎・葉先の最小径',
-    severity:
-      minDiameter < 0.5
-        ? 'red'
-        : minDiameter < input.project.printSettings.minStemRadiusMm
-          ? 'yellow'
-          : 'green',
-    message: `茎の半径 ${minStemRadius.toFixed(2)}mm / 葉の最小厚み ${minLeafThickness.toFixed(2)}mm。`,
-  });
+  if (input.characterType === 'eggplant') {
+    const minStemRadius = input.project.stem.radius;
+    const minLeafThickness = Math.min(...input.project.calyx.leaves.map((l) => l.thickness));
+    const minDiameter = Math.min(minStemRadius, minLeafThickness);
+    results.push({
+      id: 'min-diameter',
+      label: '茎・葉先の最小径',
+      severity:
+        minDiameter < 0.5
+          ? 'red'
+          : minDiameter < input.project.printSettings.minStemRadiusMm
+            ? 'yellow'
+            : 'green',
+      message: `茎の半径 ${minStemRadius.toFixed(2)}mm / 葉の最小厚み ${minLeafThickness.toFixed(2)}mm。`,
+    });
+  } else {
+    const cow = input.project.cow;
+    const minDiameter = Math.min(
+      cow.legs.front.radius,
+      cow.legs.back.radius,
+      cow.tail.radius,
+      cow.horns.radiusEnd,
+    );
+    results.push({
+      id: 'min-diameter',
+      label: '脚・しっぽ・角の最小径',
+      severity:
+        minDiameter < 0.5
+          ? 'red'
+          : minDiameter < input.project.printSettings.minStemRadiusMm
+            ? 'yellow'
+            : 'green',
+      message: `脚・しっぽ・角の最小半径 ${minDiameter.toFixed(2)}mm。`,
+    });
+  }
 
-  // 全高との比較は本体パーツ単体のAABBで行う（茎・ヘタは本体の上に付加される
-  // 別パーツであり、指定した全高(body.totalHeight)は本体自身の寸法のため）。
-  input.bodyGeometry.computeBoundingBox();
-  const bodyBbox = input.bodyGeometry.boundingBox!;
-  const actualHeight = bodyBbox.max.z - bodyBbox.min.z;
-  const heightDiff = Math.abs(actualHeight - input.project.body.totalHeight);
-  results.push({
-    id: 'dimensions',
-    label: 'モデル寸法（AABB）',
-    severity: heightDiff > 0.1 ? 'yellow' : 'green',
-    message: `本体全高 ${actualHeight.toFixed(2)}mm（指定 ${input.project.body.totalHeight.toFixed(2)}mm、差 ${heightDiff.toFixed(2)}mm）。`,
-  });
+  if (input.characterType === 'eggplant') {
+    // 全高との比較は本体パーツ単体のAABBで行う（茎・ヘタは本体の上に付加される
+    // 別パーツであり、指定した全高(body.totalHeight)は本体自身の寸法のため）。
+    input.bodyGeometry.computeBoundingBox();
+    const bodyBbox = input.bodyGeometry.boundingBox!;
+    const actualHeight = bodyBbox.max.z - bodyBbox.min.z;
+    const heightDiff = Math.abs(actualHeight - input.project.body.totalHeight);
+    results.push({
+      id: 'dimensions',
+      label: 'モデル寸法（AABB）',
+      severity: heightDiff > 0.1 ? 'yellow' : 'green',
+      message: `本体全高 ${actualHeight.toFixed(2)}mm（指定 ${input.project.body.totalHeight.toFixed(2)}mm、差 ${heightDiff.toFixed(2)}mm）。`,
+    });
+  } else {
+    // 牛は四足の全長・全高を単一の指定寸法と比較する概念がないため、参考情報として報告する。
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    results.push({
+      id: 'dimensions',
+      label: 'モデル寸法（AABB・参考）',
+      severity: 'green',
+      message: `全体サイズ 幅${size.x.toFixed(1)}mm × 奥行き${size.y.toFixed(1)}mm × 高さ${size.z.toFixed(1)}mm。`,
+    });
+  }
 
   results.push({
     id: 'ground-contact',
