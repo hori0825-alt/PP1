@@ -17,18 +17,18 @@ import { createDefaultCowParams } from './cow';
  * 丸みの強い(ほぼ卵形〜球形に近い)シルエットに調整している。
  * TODO(未決事項 #3, 指示書 13節): 実寸参照画像が未確定のため、寸法自体は仮値。
  */
-// 参考画像は上部がすぼまった円錐状ではなく、肩まで丸みを保ったまま
-// なだらかに狭まる（ヘタが幅広い肩の上に載る）シルエットのため、
-// 上部区間の絞り込みを弱めている。
+// 参考画像は「肩」で急に絞られる壺型ではなく、卵形のまま連続的になだらかに
+// 先細っていく（首のくびれが無い）シルエットのため、最大幅から上端まで
+// 単調になだらかに減少する一本のカーブになるよう区間を組み直している。
 export const eggplantBodySections: BodySection[] = [
-  { t: 0.0, z: 0, rx: 5.0, ry: 5.0, cx: 0, cy: 0, n: 2.4 }, // 底面（丸みの強い先端）
-  { t: 0.15, z: 6.3, rx: 10.5, ry: 9.5, cx: 0, cy: 0.2, n: 2.2 },
-  { t: 0.32, z: 13.4, rx: 14.5, ry: 13.0, cx: 0, cy: 0.4, n: 2.1 },
-  { t: 0.5, z: 21.0, rx: 16.0, ry: 14.5, cx: 0, cy: 0.5, n: 2.0 }, // 最大幅付近
-  { t: 0.65, z: 27.3, rx: 15.0, ry: 13.5, cx: 0, cy: 0.4, n: 2.0 },
-  { t: 0.8, z: 33.6, rx: 13.0, ry: 11.0, cx: 0, cy: 0.2, n: 2.1 }, // 肩（丸みを保つ）
-  { t: 0.93, z: 39.1, rx: 5.5, ry: 5.0, cx: 0, cy: 0.1, n: 2.2 }, // ヘタの土台へ首を絞る
-  { t: 1.0, z: 42.0, rx: 1.5, ry: 1.5, cx: 0, cy: 0, n: 2.3 }, // 上端（ヘタで覆われる小さな先端）
+  { t: 0.0, z: 0, rx: 4.5, ry: 4.5, cx: 0, cy: 0, n: 2.4 }, // 底面（丸みの強い先端）
+  { t: 0.18, z: 7.6, rx: 11.5, ry: 10.5, cx: 0, cy: 0.2, n: 2.2 },
+  { t: 0.36, z: 15.1, rx: 15.0, ry: 13.5, cx: 0, cy: 0.4, n: 2.1 },
+  { t: 0.52, z: 21.8, rx: 16.0, ry: 14.5, cx: 0, cy: 0.5, n: 2.0 }, // 最大幅付近
+  { t: 0.68, z: 28.6, rx: 14.0, ry: 12.5, cx: 0, cy: 0.4, n: 2.05 },
+  { t: 0.82, z: 34.4, rx: 10.5, ry: 9.5, cx: 0, cy: 0.25, n: 2.15 },
+  { t: 0.93, z: 39.1, rx: 7.0, ry: 6.5, cx: 0, cy: 0.1, n: 2.2 },
+  { t: 1.0, z: 42.0, rx: 4.0, ry: 4.0, cx: 0, cy: 0, n: 2.3 }, // 上端（ヘタが載る、くびれの無い先細り）
 ];
 
 export const defaultBodyParams: BodyParams = {
@@ -45,12 +45,12 @@ export const defaultBodyParams: BodyParams = {
 // pitch/curvature をほぼ0にして葉を垂らさず、width を広げて隣の葉と
 // 重ねることで連続した花冠シルエットを作る。
 export const defaultCalyxParams: CalyxParams = {
-  baseT: 0.97,
+  baseT: 0.94,
   symmetric: true,
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
-    length: 2.5,
-    width: 6.5,
+    length: 3,
+    width: 8,
     thickness: 1.8,
     pitch: 4,
     curvature: 0.05,
@@ -58,11 +58,12 @@ export const defaultCalyxParams: CalyxParams = {
   })),
 };
 
-// 参考画像のヘタ中央には、花冠から立ち上がる短く丸い太めの芽（茎）がある。
+// 参考画像のヘタ中央には、花冠から立ち上がりコンマ状に丸くカーブする、
+// 根元が太く先端が丸まった芽（茎）がある。
 export const defaultStemParams: StemParams = {
-  radius: 1.8,
-  length: 3.2,
-  tilt: 4,
+  radius: 1.6,
+  length: 6.5,
+  tilt: 10,
   squash: 0.05,
   distortion: 0.05,
   embed: 0.8,

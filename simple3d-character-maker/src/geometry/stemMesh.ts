@@ -41,24 +41,60 @@ export function buildStemMesh(
   const surface = buildBodySurface(bodySections);
   const apex = new THREE.Vector3(surface.cx(1), surface.cy(1), surface.z(1));
 
+  // 参考画像の茎はまっすぐな棒ではなく、根元からやや起き上がり先端に向けて
+  // 一方向へ丸くカーブする「コンマ」状の形をしている。2段のテーパー円柱を
+  // 繋いで折れ線近似することで、そのカーブを再現する（牛のしっぽと同じ手法）。
   const tiltRad = stem.tilt * DEG2RAD;
-  const dir = new THREE.Vector3(0, -Math.sin(tiltRad), Math.cos(tiltRad));
+  const dir1 = new THREE.Vector3(Math.sin(tiltRad), 0, Math.cos(tiltRad));
+  const dir2 = new THREE.Vector3(
+    Math.sin(tiltRad + 42 * DEG2RAD),
+    0,
+    Math.cos(tiltRad + 42 * DEG2RAD),
+  );
 
-  const { positions, indices } = buildTaperedCylinder({
+  const seg1Length = stem.length * 0.55;
+  const seg2Length = stem.length * 0.45;
+  const jointRadius = stem.radius * 0.8;
+  const tipRadius = stem.radius * 0.5;
+
+  const seg1 = buildTaperedCylinder({
     origin: apex,
-    direction: dir,
-    length: stem.length,
+    direction: dir1,
+    length: seg1Length,
     radiusStart: stem.radius,
-    radiusEnd: stem.radius,
+    radiusEnd: jointRadius,
     embed: stem.embed,
     squash: stem.squash,
     distortion: stem.distortion,
     irregularityMm: IRREGULARITY_MM,
     radialSegments: RADIAL_SEGMENTS,
-    heightSegments: HEIGHT_SEGMENTS,
+    heightSegments: Math.ceil(HEIGHT_SEGMENTS / 2),
   });
+  fixOutwardWinding(seg1.positions, seg1.indices);
 
-  fixOutwardWinding(positions, indices);
+  const jointWorld = apex.clone().addScaledVector(dir1, seg1Length);
+  const seg2 = buildTaperedCylinder({
+    origin: jointWorld,
+    direction: dir2,
+    length: seg2Length,
+    radiusStart: jointRadius,
+    radiusEnd: tipRadius,
+    embed: jointRadius, // 関節が途切れて見えないよう前セグメントへ食い込ませる
+    squash: stem.squash,
+    distortion: stem.distortion,
+    irregularityMm: IRREGULARITY_MM,
+    radialSegments: RADIAL_SEGMENTS,
+    heightSegments: Math.ceil(HEIGHT_SEGMENTS / 2),
+  });
+  fixOutwardWinding(seg2.positions, seg2.indices);
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+  for (const seg of [seg1, seg2]) {
+    const offset = positions.length / 3;
+    positions.push(...seg.positions);
+    indices.push(...seg.indices.map((i) => i + offset));
+  }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
