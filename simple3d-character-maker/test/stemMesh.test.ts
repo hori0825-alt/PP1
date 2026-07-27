@@ -22,7 +22,7 @@ describe('buildStemMesh (eggplant preset)', () => {
   it('embeds the bottom end below the body apex by at least the embed amount', () => {
     const { geometry } = buildStemMesh(defaultStemParams, eggplantBodySections);
     geometry.computeBoundingBox();
-    const apexZ = 50; // eggplant preset totalHeight
+    const apexZ = 42; // eggplant preset totalHeight
     // 埋め込み分だけ頂点より下から始まっているはず
     expect(geometry.boundingBox!.min.z).toBeLessThan(apexZ);
   });

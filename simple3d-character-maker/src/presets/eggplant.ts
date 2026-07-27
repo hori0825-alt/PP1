@@ -12,77 +12,78 @@ import {
 
 /**
  * ナスの初期断面（開発指示書 6.1節「初期断面（7断面）」）。
- * TODO(未決事項 #3, 指示書 13節): 実寸参照画像が未確定のため、最大幅 36.7mm は仮値。
- * 参照画像が確定し次第、この値を差し替える。
+ * 参考イラスト（丸みの強いデフォルメ・パステルカラー）に合わせて、
+ * 丸みの強い(ほぼ卵形〜球形に近い)シルエットに調整している。
+ * TODO(未決事項 #3, 指示書 13節): 実寸参照画像が未確定のため、寸法自体は仮値。
  */
 export const eggplantBodySections: BodySection[] = [
-  { t: 0.0, z: 0, rx: 2.0, ry: 2.0, cx: 0, cy: 0, n: 2.2 }, // 底面（丸みのある先端）
-  { t: 0.15, z: 7.5, rx: 10.0, ry: 9.0, cx: 0, cy: 0.5, n: 2.2 },
-  { t: 0.3, z: 15, rx: 15.5, ry: 13.5, cx: 0, cy: 1.0, n: 2.0 },
-  { t: 0.5, z: 25, rx: 18.35, ry: 15.5, cx: 0, cy: 1.5, n: 2.0 }, // 最大幅付近
-  { t: 0.7, z: 35, rx: 16.0, ry: 14.0, cx: 0, cy: 2.0, n: 2.0 },
-  { t: 0.88, z: 44, rx: 8.0, ry: 7.0, cx: 0, cy: 2.5, n: 2.3 }, // 絞り
-  { t: 1.0, z: 50, rx: 1.2, ry: 1.2, cx: 0, cy: 3.0, n: 2.5 }, // 上端
+  { t: 0.0, z: 0, rx: 5.0, ry: 5.0, cx: 0, cy: 0, n: 2.4 }, // 底面（丸みの強い先端）
+  { t: 0.15, z: 6.3, rx: 12.0, ry: 11.0, cx: 0, cy: 0.2, n: 2.2 },
+  { t: 0.32, z: 13.4, rx: 18.0, ry: 16.0, cx: 0, cy: 0.4, n: 2.1 },
+  { t: 0.5, z: 21.0, rx: 20.0, ry: 18.0, cx: 0, cy: 0.5, n: 2.0 }, // 最大幅付近
+  { t: 0.68, z: 28.6, rx: 17.0, ry: 15.0, cx: 0, cy: 0.4, n: 2.0 },
+  { t: 0.85, z: 35.7, rx: 9.0, ry: 8.0, cx: 0, cy: 0.2, n: 2.2 }, // 絞り
+  { t: 1.0, z: 42.0, rx: 4.0, ry: 4.0, cx: 0, cy: 0, n: 2.4 }, // 上端（丸い肩）
 ];
 
 export const defaultBodyParams: BodyParams = {
-  totalHeight: 50,
+  totalHeight: 42,
   sections: eggplantBodySections,
   radialSegments: 64,
   heightSamples: 64,
   symmetricX: true,
-  flatBottomHeight: 1.0,
+  flatBottomHeight: 1.5,
 };
 
 export const defaultCalyxParams: CalyxParams = {
-  baseT: 0.9,
+  baseT: 0.93,
   symmetric: true,
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
-    length: 12,
-    width: 6,
-    thickness: 1.2,
-    pitch: 35,
-    curvature: 0.5,
+    length: 6,
+    width: 14,
+    thickness: 1.5,
+    pitch: 12,
+    curvature: 0.2,
     embed: 1.0,
   })),
 };
 
 export const defaultStemParams: StemParams = {
-  radius: 2.5,
-  length: 12,
-  tilt: 8,
-  squash: 0.15,
-  distortion: 0.2,
-  embed: 1.2,
+  radius: 1.5,
+  length: 4,
+  tilt: 5,
+  squash: 0.1,
+  distortion: 0.1,
+  embed: 1.0,
 };
 
 // TODO: EyeParams.height / MouthParams.height の単位は指示書に明記がないため、
 // 本体表面パラメータ t（0..1）として扱う。spacing / sizeX / sizeY は mm。
 export const defaultEyeParams: EyeParams = {
-  spacing: 8,
-  height: 0.62,
-  sizeX: 1.6,
-  sizeY: 3.2,
-  tilt: 5,
-  relief: 0.4,
+  spacing: 9,
+  height: 0.58,
+  sizeX: 1.8,
+  sizeY: 3.0,
+  tilt: 0,
+  relief: 0.3,
 };
 
 export const defaultMouthParams: MouthParams = {
   preset: 'soft',
-  width: 6,
+  width: 7,
   curveHeight: 2,
-  thickness: 1,
+  thickness: 1.2,
   relief: 0.3,
-  height: 0.45,
+  height: 0.4,
 };
 
 export const defaultColorParams: ColorParams = {
-  body: '#5b2a86',
-  calyx: '#4f7942',
-  stem: '#4f7942',
-  eye: '#1a1a1a',
-  mouth: '#1a1a1a',
+  body: '#d9c2e0',
+  calyx: '#bfe0c0',
+  stem: '#bfe0c0',
+  eye: '#2a2a2a',
+  mouth: '#2a2a2a',
 };
 
 export function createDefaultProjectData(): ProjectData {
@@ -109,7 +110,7 @@ export function createDefaultProjectData(): ProjectData {
       view: 'perspective',
       orthographic: false,
       distanceMm: 150,
-      target: { x: 0, y: 0, z: 25 },
+      target: { x: 0, y: 0, z: 21 },
     },
     exportSettings: {
       glbMmZUp: false,
