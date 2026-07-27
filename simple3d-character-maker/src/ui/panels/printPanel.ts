@@ -12,7 +12,8 @@ export function mountPrintPanel(container: HTMLElement, ctx: PanelContext): Moun
   note.style.fontSize = '11px';
   note.style.color = '#888';
   note.textContent =
-    'TODO(未決事項#2): 業者指定の最小肉厚・最小径が未確定のため、下記は暫定値です。';
+    '印刷業者仕様確定値: 実寸1mm未満の部分は折れやすいため赤警告になります。' +
+    '下記は黄警告（安全マージン）のしきい値です。';
   container.appendChild(note);
 
   const project = ctx.store.getProject();

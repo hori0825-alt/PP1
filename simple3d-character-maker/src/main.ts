@@ -105,7 +105,11 @@ function rebuildBodyMesh(): void {
   bodyGroup.add(calyxMesh);
   warnings.push(...calyx.warnings);
 
-  const stem = buildStemMesh(project.stem, project.body.sections);
+  const stem = buildStemMesh(
+    project.stem,
+    project.body.sections,
+    project.printSettings.minStemRadiusMm,
+  );
   assignSolidUV(stem.geometry, ATLAS_PATCHES.stem);
   const stemMesh = new THREE.Mesh(stem.geometry, mainMaterial);
   stemMesh.name = 'stem';

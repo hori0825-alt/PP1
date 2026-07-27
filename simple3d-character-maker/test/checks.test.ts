@@ -48,7 +48,7 @@ describe('runPrintChecks (eggplant preset, default params)', () => {
 
   it('flags a too-thin stem as red/yellow depending on severity', () => {
     const project = createDefaultProjectData();
-    project.stem.radius = 0.5;
+    project.stem.radius = 0.3;
     const results = runPrintChecks(buildInput(project));
     expect(results.find((r) => r.id === 'min-diameter')!.severity).toBe('red');
   });

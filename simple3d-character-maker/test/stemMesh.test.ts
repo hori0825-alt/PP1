@@ -11,12 +11,12 @@ describe('buildStemMesh (eggplant preset)', () => {
     expect(stats.nonManifoldEdgeCount).toBe(0);
   });
 
-  it('warns on radius below 1.2mm (yellow) and 0.8mm (red)', () => {
-    const yellow = buildStemMesh({ ...defaultStemParams, radius: 1.0 }, eggplantBodySections);
+  it('warns on radius below the yellow threshold (0.75mm) and the confirmed red minimum (0.5mm)', () => {
+    const yellow = buildStemMesh({ ...defaultStemParams, radius: 0.6 }, eggplantBodySections);
     expect(yellow.warnings.some((w) => w.includes('半径'))).toBe(true);
 
-    const red = buildStemMesh({ ...defaultStemParams, radius: 0.5 }, eggplantBodySections);
-    expect(red.warnings.some((w) => w.includes('危険域'))).toBe(true);
+    const red = buildStemMesh({ ...defaultStemParams, radius: 0.3 }, eggplantBodySections);
+    expect(red.warnings.some((w) => w.includes('危険'))).toBe(true);
   });
 
   it('embeds the bottom end below the body apex by at least the embed amount', () => {

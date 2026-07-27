@@ -165,17 +165,29 @@ export function runPrintChecks(input: CheckInput): CheckItem[] {
   results.push({
     id: 'intersection-depth',
     label: 'パーツ間の交差深さ',
-    severity: minEmbed <= 0 ? 'red' : minEmbed < 0.8 ? 'yellow' : 'green',
+    severity:
+      minEmbed <= 0
+        ? 'red'
+        : minEmbed < input.project.printSettings.minCalyxEmbedMm
+          ? 'yellow'
+          : 'green',
     message: `最小埋め込み量 ${minEmbed.toFixed(2)}mm。`,
   });
 
+  // 印刷業者仕様確定値（13節 未決事項#2 回答済み）: 実寸1mm未満は折れやすく赤警告。
+  // 黄警告は printSettings.minStemRadiusMm の安全マージンで判定する。
   const minStemRadius = input.project.stem.radius;
   const minLeafThickness = Math.min(...input.project.calyx.leaves.map((l) => l.thickness));
   const minDiameter = Math.min(minStemRadius, minLeafThickness);
   results.push({
     id: 'min-diameter',
     label: '茎・葉先の最小径',
-    severity: minDiameter < 0.8 ? 'red' : minDiameter < 1.2 ? 'yellow' : 'green',
+    severity:
+      minDiameter < 0.5
+        ? 'red'
+        : minDiameter < input.project.printSettings.minStemRadiusMm
+          ? 'yellow'
+          : 'green',
     message: `茎の半径 ${minStemRadius.toFixed(2)}mm / 葉の最小厚み ${minLeafThickness.toFixed(2)}mm。`,
   });
 
@@ -225,7 +237,13 @@ export function runPrintChecks(input: CheckInput): CheckItem[] {
   results.push({
     id: 'min-thickness-approx',
     label: '最小厚み（近似値・参考）',
-    severity: minThickness < 3 ? 'yellow' : 'green',
+    // 印刷業者仕様確定値: 実寸1mm未満は折れやすいため赤。黄は printSettings.minWallThicknessMm。
+    severity:
+      minThickness < 1
+        ? 'red'
+        : minThickness < input.project.printSettings.minWallThicknessMm
+          ? 'yellow'
+          : 'green',
     message: `近似最小肉厚 約${Number.isFinite(minThickness) ? minThickness.toFixed(2) : '不明'}mm（参考値）。`,
   });
 

@@ -97,8 +97,12 @@ export function createDefaultProjectData(): ProjectData {
     mouth: structuredClone(defaultMouthParams),
     colors: structuredClone(defaultColorParams),
     printSettings: {
-      minWallThicknessMm: 3.0, // TODO(未決事項 #2): 業者指定値待ち。参考値。
-      minStemRadiusMm: 1.2, // TODO(未決事項 #2): 業者指定値待ち。参考値。
+      // 印刷業者の仕様確定（13節 未決事項#2 回答済み）:
+      // 「実寸1mm以下の部分は折れやすいため太くする」。ここでの値は安全マージンを
+      // 含めた黄警告の目安（赤警告は inspect/checks.ts・geometry/stemMesh.ts で
+      // 確定仕様値そのもの=1mmを直接しきい値として使用）。
+      minWallThicknessMm: 2.0,
+      minStemRadiusMm: 0.75, // 直径1.5mm相当（確定仕様の直径1mmに安全マージン）
       minCalyxEmbedMm: 0.8,
     },
     camera: {

@@ -20,6 +20,10 @@ function orthonormalBasis(dir: THREE.Vector3): [THREE.Vector3, THREE.Vector3] {
   return [e1, e2];
 }
 
+// 印刷業者仕様確定値（13節 未決事項#2 回答済み）: 実寸1mm未満（半径0.5mm未満）は
+// 折れやすく赤警告。黄警告のしきい値は printSettings.minStemRadiusMm で調整可能。
+const CONFIRMED_MIN_RADIUS_MM = 0.5;
+
 /**
  * 茎を生成する（開発指示書 6.3節）。
  * しずく型ではなく、断面に緩やかな歪みを持つ短い崩れた円柱として作る。
@@ -28,13 +32,16 @@ function orthonormalBasis(dir: THREE.Vector3): [THREE.Vector3, THREE.Vector3] {
 export function buildStemMesh(
   stem: StemParams,
   bodySections: readonly BodySection[],
+  minStemRadiusYellowMm = 0.75,
 ): StemMeshResult {
   const warnings: string[] = [];
-  if (stem.radius < 0.8) {
-    warnings.push(`茎の半径が危険域です（赤警告の目安 0.8mm 未満）: ${stem.radius.toFixed(2)}mm`);
-  } else if (stem.radius < 1.2) {
+  if (stem.radius < CONFIRMED_MIN_RADIUS_MM) {
     warnings.push(
-      `茎の半径が推奨最小値を下回っています（黄警告の目安 1.2mm 未満）: ${stem.radius.toFixed(2)}mm`,
+      `茎の半径が印刷業者の確定最小値を下回り危険です（赤警告の目安 ${CONFIRMED_MIN_RADIUS_MM}mm 未満）: ${stem.radius.toFixed(2)}mm`,
+    );
+  } else if (stem.radius < minStemRadiusYellowMm) {
+    warnings.push(
+      `茎の半径が推奨最小値を下回っています（黄警告の目安 ${minStemRadiusYellowMm}mm 未満）: ${stem.radius.toFixed(2)}mm`,
     );
   }
 
