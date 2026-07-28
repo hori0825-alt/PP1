@@ -23,7 +23,7 @@ describe('ProjectStore', () => {
     expect(store.undo()).toBe(true);
     expect(store.getProject().body.totalHeight).toBe(60);
     expect(store.undo()).toBe(true);
-    expect(store.getProject().body.totalHeight).toBe(42);
+    expect(store.getProject().body.totalHeight).toBe(46);
     expect(store.undo()).toBe(false); // 履歴が尽きた
 
     expect(store.redo()).toBe(true);
@@ -39,7 +39,7 @@ describe('ProjectStore', () => {
 
     expect(store.getProject().body.totalHeight).toBe(60);
     expect(store.undo()).toBe(true);
-    expect(store.getProject().body.totalHeight).toBe(42); // 1回のundoでドラッグ開始前まで戻る
+    expect(store.getProject().body.totalHeight).toBe(46); // 1回のundoでドラッグ開始前まで戻る
   });
 
   it('replaceProject resets history and dirty flag', () => {

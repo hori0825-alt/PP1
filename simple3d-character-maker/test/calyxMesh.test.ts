@@ -44,6 +44,6 @@ describe('buildCalyxMesh (eggplant preset)', () => {
   });
 
   it('keeps the default body totalHeight consistent for reference', () => {
-    expect(defaultBodyParams.totalHeight).toBe(42);
+    expect(defaultBodyParams.totalHeight).toBe(46);
   });
 });
