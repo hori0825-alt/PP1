@@ -44,19 +44,18 @@ export const defaultBodyParams: BodyParams = {
   flatBottomHeight: 1.5,
 };
 
-// 参考画像を計測すると、ヘタ（花冠）の最大幅は本体の首（ヘタが載る位置）の
-// 実際の半径よりも明らかに大きく張り出しており、個々の花びらというより
-// 連続した1枚のスカラップ状ドームに見える（calyxMesh.ts 参照）。
-// width は裂片1つの影響角度幅(半値幅deg)、length は谷からの張り出し量(mm)、
-// thickness はドーム全体の盛り上がり高さ(mm)。
+// 参考画像のヘタは、本体のかなり先端寄りの狭い首の上に、丸くコロンとした
+// 裂片が5枚集まって咲く小ぶりな花冠に見える（calyxMesh.ts 参照）。
+// length は裂片中心が谷からどれだけ離れるか(mm)、width は裂片の見た目の
+// 半径(mm)、thickness は裂片の盛り上がり高さ(mm)。
 export const defaultCalyxParams: CalyxParams = {
-  baseT: 0.96,
+  baseT: 0.98,
   symmetric: true,
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
-    length: 4.5,
-    width: 38,
-    thickness: 2.5,
+    length: 2.5,
+    width: 5,
+    thickness: 3,
     pitch: 0,
     curvature: 0,
     embed: 2,

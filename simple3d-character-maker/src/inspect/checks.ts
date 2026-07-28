@@ -115,11 +115,12 @@ export function approximateMinWallThickness(
 
 function countExpectedParts(input: CheckInput): number {
   if (input.characterType === 'eggplant') {
-    // ヘタは裂片ごとの別パーツではなく、1つの連続したドーム形状として生成する
-    // （calyxMesh.ts）ため連結成分は1つ。茎は2段のテーパー円柱（stemMesh.ts）。
+    // ヘタは土台のドーム1つ + 裂片ごとに独立した丸いドーム（calyxMesh.ts）。
+    // 茎は2段のテーパー円柱（stemMesh.ts）。
+    const calyxParts = 1 /* 土台 */ + input.project.calyx.leaves.length;
     const eyes = 2;
     const mouth = input.project.mouth.preset === 'none' ? 0 : 1;
-    return 1 /* body */ + 1 /* calyx (unified dome) */ + 2 /* stem (2 segments) */ + eyes + mouth;
+    return 1 /* body */ + calyxParts + 2 /* stem (2 segments) */ + eyes + mouth;
   }
   // 牛（8節）: 胴体・頭・脚4本・耳2枚・しっぽの軸2段 (body group)
   //          + 背中の固定斑点3+頭側の固定斑点1+ランダムN個+房1 (spots group)

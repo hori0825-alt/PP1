@@ -38,9 +38,9 @@ export interface BodyParams {
  */
 export interface CalyxLeaf {
   angle: number; // 中心からの方位角 deg
-  length: number; // この裂片が谷から外側へどれだけ張り出すか mm
-  width: number; // この裂片の影響が及ぶ角度幅（半値幅）deg
-  thickness: number; // ドームの盛り上がり高さ mm
+  length: number; // この裂片の中心が谷からどれだけ外側へ離れるか mm
+  width: number; // 裂片の見た目の半径 mm（隣接裂片と重なる最小値未満にはならない）
+  thickness: number; // 裂片の盛り上がり高さ mm
   pitch: number; // 未使用（将来拡張用に予約）
   curvature: number; // 未使用（将来拡張用に予約）
   embed: number; // 本体への埋め込み量 mm（0.8〜1.5 推奨）
