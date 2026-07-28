@@ -77,8 +77,8 @@ export function mountCalyxPanel(container: HTMLElement, ctx: PanelContext): Moun
 
     const fields: Record<LeafFieldKey, Field<number>> = {
       angle: make('方位角(deg)', 'angle', 0, 360, 1),
-      length: make('中心からの張り出し量(mm)', 'length', 0, 8, 0.25),
-      width: make('裂片の半径(mm)', 'width', 2, 12, 0.25),
+      length: make('谷のくびれの広さ(mm)', 'length', 0, 8, 0.25),
+      width: make('裂片先端までの半径(mm)', 'width', 2, 14, 0.25),
       thickness: make('盛り上がり高さ(mm)', 'thickness', 0.3, 6, 0.1),
       embed: make('本体への埋め込み(mm)', 'embed', 0, 4, 0.05),
     };

@@ -9,24 +9,108 @@ export interface CalyxMeshResult {
 }
 
 const DEG2RAD = Math.PI / 180;
-const DOME_RINGS = 5;
-const DOME_SEGMENTS = 20;
+const DOME_RINGS = 6;
+const DOME_SEGMENTS = 64;
+// 谷（裂片の間）でも盛り上がりを完全にゼロにはせず、土台の厚みを残す。
+const VALLEY_HEIGHT_FRAC = 0.35;
+// スカラップの尖り具合（1=正弦的な丸み、大きいほど山頂が平らで谷が鋭くなる）。
+const LOBE_SHARPNESS = 1.15;
+
+interface LeafAngle {
+  angleRad: number; // 0..2π 昇順
+  radius: number; // この裂片の先端までの半径 mm（中心軸から）
+  height: number; // この裂片位置での盛り上がり高さ mm
+  embed: number; // この裂片位置での埋め込み量 mm
+}
 
 /**
- * ワールド空間の任意の点を中心にした、丸いドーム状の盛り上がり（花びら1枚や
- * 中央の土台に使う）を positions/indices へ追加する。本体表面には縛られず、
- * 独立した閉じた立体として生成する（本体との位置関係は呼び出し側が center で
- * 指定する）。
+ * ヘタ（花冠）を生成する（開発指示書 6.2節）。
+ * 参考画像のヘタは、個々の花びらが別々の丸い塊としてではなく、本体の首の上に
+ * 載る「1枚の連続した、ふちが波打つ丸いキャップ」として見える。首よりも
+ * はっきり外側まで張り出し（実測で首幅の約1.6倍）、外周が5箇所で丸く
+ * 尖った星型（スカラップ）になっている。そこで、中心軸からの半径と盛り上がり
+ * 高さの両方を方位角φの関数として連続的に変化させた、1枚のドーム状サーフェス
+ * として生成する（裂片ごとに独立したボール状の盛り上がりにはしない）。
+ * レイキャストは使わず本体表面関数を直接評価するため、本体の断面パラメータを
+ * 変更すると自動的に追従する。
  */
-function appendWorldDome(
-  center: THREE.Vector3,
-  radius: number,
-  height: number,
-  embedDepth: number,
-  positions: number[],
-  indices: number[],
-): void {
-  const baseIndex = positions.length / 3;
+export function buildCalyxMesh(
+  calyx: CalyxParams,
+  bodySections: readonly BodySection[],
+): CalyxMeshResult {
+  const warnings: string[] = [];
+  const surface = buildBodySurface(bodySections);
+
+  for (const leaf of calyx.leaves) {
+    if (leaf.embed < 0.8) {
+      warnings.push(`ヘタの埋め込み量が推奨範囲(0.8〜1.5mm)未満です: ${leaf.embed.toFixed(2)}mm`);
+    }
+  }
+
+  const baseT = calyx.baseT;
+  const centerAxis = new THREE.Vector3(surface.cx(baseT), surface.cy(baseT), surface.z(baseT));
+  const neckRadius = Math.max((surface.rx(baseT) + surface.ry(baseT)) / 2, 1);
+
+  // 裂片同士の谷（キャップの一番くびれた部分）の半径。首よりわずかに大きく
+  // 保ち、裂片の張り出し量(length)の平均で少し広げる。
+  const avgLength =
+    calyx.leaves.reduce((sum, l) => sum + l.length, 0) / Math.max(calyx.leaves.length, 1);
+  const valleyRadius = neckRadius * 1.15 + avgLength * 0.5;
+
+  const avgThickness =
+    calyx.leaves.reduce((sum, l) => sum + l.thickness, 0) / Math.max(calyx.leaves.length, 1);
+  const avgEmbed =
+    calyx.leaves.reduce((sum, l) => sum + l.embed, 0) / Math.max(calyx.leaves.length, 1);
+
+  // 裂片を角度順に並べ、隣り合う裂片間を波型に補間するための配列を作る
+  // （最後に先頭を +2π して周回を閉じる）。
+  const sorted: LeafAngle[] = calyx.leaves
+    .map((l) => ({
+      angleRad: ((l.angle % 360) + 360) % 360 * DEG2RAD,
+      radius: Math.max(l.width, valleyRadius + 0.5),
+      height: l.thickness,
+      embed: l.embed,
+    }))
+    .sort((a, b) => a.angleRad - b.angleRad);
+  if (sorted.length > 0) {
+    const first = sorted[0]!;
+    sorted.push({ ...first, angleRad: first.angleRad + Math.PI * 2 });
+  }
+
+  function profileAt(phiRad: number): { radius: number; height: number; embed: number } {
+    if (sorted.length <= 1) {
+      return { radius: valleyRadius, height: avgThickness, embed: avgEmbed };
+    }
+    // phi を最初の裂片角度を基準に [0, 2π) の範囲へ正規化する
+    let phi = phiRad;
+    const base = sorted[0]!.angleRad;
+    while (phi < base) phi += Math.PI * 2;
+    while (phi >= base + Math.PI * 2) phi -= Math.PI * 2;
+
+    let i = 0;
+    while (i < sorted.length - 2 && sorted[i + 1]!.angleRad <= phi) i++;
+    const a = sorted[i]!;
+    const b = sorted[i + 1]!;
+    const span = Math.max(b.angleRad - a.angleRad, 1e-6);
+    const frac = Math.min(Math.max((phi - a.angleRad) / span, 0), 1);
+
+    // frac=0 と frac=1（各裂片の頂点）で1、frac=0.5（谷）で0になる丸い波形
+    const shape = Math.pow(Math.abs(Math.cos(Math.PI * frac)), LOBE_SHARPNESS);
+    const peakRadius = a.radius + (b.radius - a.radius) * frac;
+    const peakHeight = a.height + (b.height - a.height) * frac;
+    const peakEmbed = a.embed + (b.embed - a.embed) * frac;
+
+    return {
+      radius: valleyRadius + (peakRadius - valleyRadius) * shape,
+      height: peakHeight * (VALLEY_HEIGHT_FRAC + (1 - VALLEY_HEIGHT_FRAC) * shape),
+      embed: peakEmbed,
+    };
+  }
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  const baseIndex = 0;
   const outerCount = 1 + DOME_RINGS * DOME_SEGMENTS;
   const outerIndex = (k: number, j: number): number =>
     k === 0 ? baseIndex : baseIndex + 1 + (k - 1) * DOME_SEGMENTS + (j % DOME_SEGMENTS);
@@ -34,26 +118,28 @@ function appendWorldDome(
   const innerIndex = (k: number, j: number): number =>
     k === 0 ? innerBase : innerBase + 1 + (k - 1) * DOME_SEGMENTS + (j % DOME_SEGMENTS);
 
-  function surfacePoint(rFrac: number, phiRad: number): THREE.Vector3 {
-    const actualR = rFrac * radius;
-    const z = height * Math.cos((rFrac * Math.PI) / 2); // 中心で height、外周で0
-    return center.clone().add(new THREE.Vector3(actualR * Math.cos(phiRad), actualR * Math.sin(phiRad), z));
-  }
-
   const outerPts: THREE.Vector3[] = [];
   const innerPts: THREE.Vector3[] = [];
+
+  // 中心（頂上）の1点：全方位で共有する山頂の高さは、全裂片の平均高さとする
   {
-    const p = surfacePoint(0, 0);
+    const p = centerAxis.clone().add(new THREE.Vector3(0, 0, avgThickness));
     outerPts.push(p);
-    innerPts.push(p.clone().addScaledVector(new THREE.Vector3(0, 0, 1), -embedDepth));
+    innerPts.push(p.clone().add(new THREE.Vector3(0, 0, -avgEmbed)));
   }
+
   for (let k = 1; k <= DOME_RINGS; k++) {
     const rFrac = k / DOME_RINGS;
     for (let j = 0; j < DOME_SEGMENTS; j++) {
       const phiRad = (j / DOME_SEGMENTS) * Math.PI * 2;
-      const p = surfacePoint(rFrac, phiRad);
+      const { radius, height, embed } = profileAt(phiRad);
+      const actualR = rFrac * radius;
+      const z = height * Math.cos((rFrac * Math.PI) / 2);
+      const p = centerAxis
+        .clone()
+        .add(new THREE.Vector3(actualR * Math.cos(phiRad), actualR * Math.sin(phiRad), z));
       outerPts.push(p);
-      innerPts.push(p.clone().addScaledVector(new THREE.Vector3(0, 0, 1), -embedDepth));
+      innerPts.push(p.clone().add(new THREE.Vector3(0, 0, -embed)));
     }
   }
 
@@ -98,76 +184,6 @@ function appendWorldDome(
     const ib = innerIndex(DOME_RINGS, j + 1);
     indices.push(ob, oa, ia);
     indices.push(ob, ia, ib);
-  }
-}
-
-/**
- * ヘタ（花冠）を生成する（開発指示書 6.2節）。
- * 参考画像は、個々の花びらが本体表面に薄く貼り付いた形ではなく、それぞれが
- * 丸みのある独立した盛り上がり（コロンとした裂片）として、本体の首の実際の
- * 半径より外側まではっきり張り出して見える。そのため本体上の1点（首の中心軸）
- * を基準に、（1）土台となる小さな丸いドームと、（2）各裂片(leaf)ごとに
- * 独立した丸いドーム状の盛り上がりを、少し重なり合うよう配置して合成する
- * （ブーリアン結合はせず、この方式では重なりを許容する）。
- * レイキャストは使わず本体表面関数を直接評価するため、本体の断面パラメータを
- * 変更すると自動的に追従する。
- */
-export function buildCalyxMesh(
-  calyx: CalyxParams,
-  bodySections: readonly BodySection[],
-): CalyxMeshResult {
-  const warnings: string[] = [];
-  const surface = buildBodySurface(bodySections);
-
-  for (const leaf of calyx.leaves) {
-    if (leaf.embed < 0.8) {
-      warnings.push(`ヘタの埋め込み量が推奨範囲(0.8〜1.5mm)未満です: ${leaf.embed.toFixed(2)}mm`);
-    }
-  }
-
-  const baseT = calyx.baseT;
-  const centerAxis = new THREE.Vector3(surface.cx(baseT), surface.cy(baseT), surface.z(baseT));
-  const neckRadius = Math.max((surface.rx(baseT) + surface.ry(baseT)) / 2, 1);
-  const valleyRadius = neckRadius + 0.5;
-  const avgThickness =
-    calyx.leaves.reduce((sum, l) => sum + l.thickness, 0) / Math.max(calyx.leaves.length, 1);
-  const avgEmbed =
-    calyx.leaves.reduce((sum, l) => sum + l.embed, 0) / Math.max(calyx.leaves.length, 1);
-
-  const positions: number[] = [];
-  const indices: number[] = [];
-
-  // 隣り合う裂片どうしが確実に重なり合うよう、裂片の等角度間隔（想定）から
-  // 必要な半径を逆算する。裂片同士が重ならないと谷の部分に本体が
-  // 露出した隙間ができてしまうため、少し余裕(15%)を持たせて重ねる。
-  const leafCount = Math.max(calyx.leaves.length, 1);
-  const angleStepRad = (2 * Math.PI) / leafCount;
-
-  // 土台（裂片どうしの谷を埋める丸い台座）。裂片の中心距離まで届かせておくことで、
-  // 裂片の盛り上がりが浅い部分でも本体が露出しないようにする。
-  const avgLength =
-    calyx.leaves.reduce((sum, l) => sum + l.length, 0) / Math.max(calyx.leaves.length, 1);
-  const cupRadius = valleyRadius + avgLength * 0.5;
-  appendWorldDome(centerAxis, cupRadius, avgThickness * 0.5, avgEmbed, positions, indices);
-
-  // 各裂片：首の外側に少しずつ間隔を空けて配置した、丸い盛り上がり
-  for (const leaf of calyx.leaves) {
-    const angleRad = leaf.angle * DEG2RAD;
-    const petalCenterDist = valleyRadius + leaf.length * 0.5;
-    const petalCenter = centerAxis
-      .clone()
-      .add(
-        new THREE.Vector3(
-          petalCenterDist * Math.cos(angleRad),
-          petalCenterDist * Math.sin(angleRad),
-          0,
-        ),
-      );
-    // width は裂片の見た目の大きさ(半径mm)を直接指定する。ただし隣の裂片との
-    // 間に隙間ができないよう、等角度間隔から逆算した最小半径を下回らせない。
-    const minOverlapRadius = petalCenterDist * Math.sin(angleStepRad / 2) * 1.15;
-    const petalRadius = Math.max(leaf.width, minOverlapRadius, 1);
-    appendWorldDome(petalCenter, petalRadius, leaf.thickness, leaf.embed, positions, indices);
   }
 
   fixOutwardWinding(positions, indices);

@@ -32,7 +32,8 @@ export const eggplantBodySections: BodySection[] = [
   { t: 0.7, z: 29.4, rx: 17.1, ry: 15.4, cx: 0, cy: 0.4, n: 2.0 },
   { t: 0.8, z: 33.6, rx: 15.5, ry: 14.0, cx: 0, cy: 0.3, n: 2.05 },
   { t: 0.9, z: 37.8, rx: 13.4, ry: 12.1, cx: 0, cy: 0.2, n: 2.1 },
-  { t: 1.0, z: 42.0, rx: 6.5, ry: 6.0, cx: 0, cy: 0, n: 2.2 }, // 上端（ヘタが載る首）
+  { t: 0.95, z: 39.9, rx: 8.0, ry: 7.2, cx: 0, cy: 0.08, n: 2.2 }, // 首へ向けての橋渡し断面
+  { t: 1.0, z: 42.0, rx: 2.3, ry: 2.1, cx: 0, cy: 0, n: 2.3 }, // 上端（ヘタが載る、すぼまった細い首）
 ];
 
 export const defaultBodyParams: BodyParams = {
@@ -44,18 +45,18 @@ export const defaultBodyParams: BodyParams = {
   flatBottomHeight: 1.5,
 };
 
-// 参考画像のヘタは、本体のかなり先端寄りの狭い首の上に、丸くコロンとした
-// 裂片が5枚集まって咲く小ぶりな花冠に見える（calyxMesh.ts 参照）。
-// length は裂片中心が谷からどれだけ離れるか(mm)、width は裂片の見た目の
-// 半径(mm)、thickness は裂片の盛り上がり高さ(mm)。
+// 参考画像のヘタは、本体のかなり先端寄りの狭い首の上に載る、ふちが波打つ
+// 星形の1枚のキャップに見える（実測で首幅の約1.6倍まで外側へ張り出す）。
+// width は裂片先端までの中心軸からの半径(mm)、length は谷（裂片の間）の
+// 半径を広げる量(mm)、thickness は裂片頂点での盛り上がり高さ(mm)。
 export const defaultCalyxParams: CalyxParams = {
   baseT: 0.98,
   symmetric: true,
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
     length: 2.5,
-    width: 5,
-    thickness: 3,
+    width: 7.5,
+    thickness: 3.5,
     pitch: 0,
     curvature: 0,
     embed: 2,

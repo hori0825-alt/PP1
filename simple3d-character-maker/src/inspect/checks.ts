@@ -115,9 +115,9 @@ export function approximateMinWallThickness(
 
 function countExpectedParts(input: CheckInput): number {
   if (input.characterType === 'eggplant') {
-    // ヘタは土台のドーム1つ + 裂片ごとに独立した丸いドーム（calyxMesh.ts）。
+    // ヘタは方位角で半径・高さを連続的に波打たせた1枚のドーム（calyxMesh.ts）。
     // 茎は2段のテーパー円柱（stemMesh.ts）。
-    const calyxParts = 1 /* 土台 */ + input.project.calyx.leaves.length;
+    const calyxParts = 1;
     const eyes = 2;
     const mouth = input.project.mouth.preset === 'none' ? 0 : 1;
     return 1 /* body */ + calyxParts + 2 /* stem (2 segments) */ + eyes + mouth;
