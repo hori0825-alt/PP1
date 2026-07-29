@@ -41,15 +41,18 @@ export function buildStemMesh(
   const surface = buildBodySurface(bodySections);
   const apex = new THREE.Vector3(surface.cx(1), surface.cy(1), surface.z(1));
 
-  // 参考画像の茎はまっすぐな棒ではなく、根元からやや起き上がり先端に向けて
-  // 一方向へ丸くカーブする「コンマ」状の形をしている。2段のテーパー円柱を
-  // 繋いで折れ線近似することで、そのカーブを再現する（牛のしっぽと同じ手法）。
-  const tiltRad = stem.tilt * DEG2RAD;
+  // 参考画像の茎はほぼまっすぐ上へ伸び、先端にかけてごくわずかに丸みを
+  // 帯びる程度で、大きく傾いたコンマ状ではない。2段のテーパー円柱を
+  // 繋いで、その「ほぼ直立＋先端の柔らかい丸み」を近似する
+  // （牛のしっぽと同じ手法だが、傾き幅は控えめにしてある）。
+  // 参考画像は正面から見て茎がわずかに-X側(向かって左)へ傾いて見えるため、
+  // 符号を反転させて同じ向きにしている。
+  const tiltRad = -stem.tilt * DEG2RAD;
   const dir1 = new THREE.Vector3(Math.sin(tiltRad), 0, Math.cos(tiltRad));
   const dir2 = new THREE.Vector3(
-    Math.sin(tiltRad + 42 * DEG2RAD),
+    Math.sin(tiltRad - 16 * DEG2RAD),
     0,
-    Math.cos(tiltRad + 42 * DEG2RAD),
+    Math.cos(tiltRad - 16 * DEG2RAD),
   );
 
   const seg1Length = stem.length * 0.55;

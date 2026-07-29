@@ -61,7 +61,7 @@ export const defaultCalyxParams: CalyxParams = {
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
     length: 2.5,
-    width: 19,
+    width: 17,
     thickness: 7.5,
     pitch: 0,
     curvature: 0,
@@ -74,7 +74,7 @@ export const defaultCalyxParams: CalyxParams = {
 export const defaultStemParams: StemParams = {
   radius: 2.6,
   length: 22,
-  tilt: 10,
+  tilt: 5,
   squash: 0.05,
   distortion: 0.05,
   embed: 0.8,
