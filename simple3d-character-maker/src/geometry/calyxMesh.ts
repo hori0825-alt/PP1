@@ -9,28 +9,51 @@ export interface CalyxMeshResult {
 }
 
 const DEG2RAD = Math.PI / 180;
-const DOME_RINGS = 6;
+const DOME_RINGS = 8;
 const DOME_SEGMENTS = 64;
-// 谷（裂片の間）でも盛り上がりを完全にゼロにはせず、土台の厚みを残す。
-const VALLEY_HEIGHT_FRAC = 0.35;
-// スカラップの尖り具合（1=正弦的な丸み、大きいほど山頂が平らで谷が鋭くなる）。
-const LOBE_SHARPNESS = 1.15;
 
-interface LeafAngle {
-  angleRad: number; // 0..2π 昇順
-  radius: number; // この裂片の先端までの半径 mm（中心軸から）
-  height: number; // この裂片位置での盛り上がり高さ mm
-  embed: number; // この裂片位置での埋め込み量 mm
+interface Bump {
+  cx: number; // 中心軸からの相対XY位置 mm
+  cy: number;
+  radius: number; // このドームの半径 mm（この範囲外では寄与ゼロ）
+  height: number; // このドーム自身の中心での盛り上がり高さ mm
+}
+
+/** ある(x,y)地点での1つのドーム（cos形状）の寄与高さ。範囲外なら0。 */
+function bumpHeightAt(bump: Bump, x: number, y: number): number {
+  const d = Math.hypot(x - bump.cx, y - bump.cy);
+  if (d >= bump.radius) return 0;
+  return bump.height * Math.cos(((d / bump.radius) * Math.PI) / 2);
+}
+
+/**
+ * 中心軸から角度phiの方向へ光線を伸ばしたとき、そのドームの外周円との
+ * 交点までの距離（=その方向にドームが届く最大半径）。届かなければ null。
+ */
+function bumpReachAtAngle(bump: Bump, phiRad: number): number | null {
+  const dirX = Math.cos(phiRad);
+  const dirY = Math.sin(phiRad);
+  const centerDist = Math.hypot(bump.cx, bump.cy);
+  const d = bump.cx * dirX + bump.cy * dirY; // 中心からの射影距離
+  const perp2 = centerDist * centerDist - d * d; // 光線からドーム中心までの垂直距離の2乗
+  const disc = bump.radius * bump.radius - perp2;
+  if (disc < 0) return null;
+  const reach = d + Math.sqrt(disc);
+  return reach > 0 ? reach : null;
 }
 
 /**
  * ヘタ（花冠）を生成する（開発指示書 6.2節）。
- * 参考画像のヘタは、個々の花びらが別々の丸い塊としてではなく、本体の首の上に
- * 載る「1枚の連続した、ふちが波打つ丸いキャップ」として見える。首よりも
- * はっきり外側まで張り出し（実測で首幅の約1.6倍）、外周が5箇所で丸く
- * 尖った星型（スカラップ）になっている。そこで、中心軸からの半径と盛り上がり
- * 高さの両方を方位角φの関数として連続的に変化させた、1枚のドーム状サーフェス
- * として生成する（裂片ごとに独立したボール状の盛り上がりにはしない）。
+ * 参考画像のヘタは、正面から見ても5枚の裂片それぞれが個別の丸い盛り上がりの
+ * 頂点を持ち、裂片の間で高さが沈み込む「波打つ」輪郭になっている。中心1点だけを
+ * 頂上とする円錐状のドームでは、方位角によらず常に中心が最高点になるため、
+ * 正面から見ると滑らかな円錐にしか見えず、この波打ちを再現できない。
+ * そこで、土台となる中央の丸いドーム（cup）と、裂片ごとに中心が異なる
+ * 独立したドーム（bump、各裂片自身の位置で最大高さになる）を用意し、
+ * 各点での高さを「その点でのすべてのドーム寄与の最大値」として合成する
+ * （金属球状のブレンドと同様の考え方）。外周の輪郭（半径）も、各裂片ドームが
+ * 実際に届く範囲から幾何学的に導出するため、裂片同士は必ず滑らかに融合し、
+ * 谷に本体が露出する隙間はできない。
  * レイキャストは使わず本体表面関数を直接評価するため、本体の断面パラメータを
  * 変更すると自動的に追従する。
  */
@@ -51,60 +74,51 @@ export function buildCalyxMesh(
   const centerAxis = new THREE.Vector3(surface.cx(baseT), surface.cy(baseT), surface.z(baseT));
   const neckRadius = Math.max((surface.rx(baseT) + surface.ry(baseT)) / 2, 1);
 
-  // 裂片同士の谷（キャップの一番くびれた部分）の半径。首よりわずかに大きく
-  // 保ち、裂片の張り出し量(length)の平均で少し広げる。
   const avgLength =
     calyx.leaves.reduce((sum, l) => sum + l.length, 0) / Math.max(calyx.leaves.length, 1);
-  const valleyRadius = neckRadius * 1.15 + avgLength * 0.5;
-
   const avgThickness =
     calyx.leaves.reduce((sum, l) => sum + l.thickness, 0) / Math.max(calyx.leaves.length, 1);
   const avgEmbed =
     calyx.leaves.reduce((sum, l) => sum + l.embed, 0) / Math.max(calyx.leaves.length, 1);
 
-  // 裂片を角度順に並べ、隣り合う裂片間を波型に補間するための配列を作る
-  // （最後に先頭を +2π して周回を閉じる）。
-  const sorted: LeafAngle[] = calyx.leaves
-    .map((l) => ({
-      angleRad: ((l.angle % 360) + 360) % 360 * DEG2RAD,
-      radius: Math.max(l.width, valleyRadius + 0.5),
-      height: l.thickness,
-      embed: l.embed,
-    }))
-    .sort((a, b) => a.angleRad - b.angleRad);
-  if (sorted.length > 0) {
-    const first = sorted[0]!;
-    sorted.push({ ...first, angleRad: first.angleRad + Math.PI * 2 });
+  // 土台となる中央の丸いドーム（全裂片の谷を埋め、キャップ全体の下地の厚みになる）。
+  const cupRadius = neckRadius * 1.15 + avgLength * 0.5;
+  const cupHeight = avgThickness * 0.45;
+  const cup: Bump = { cx: 0, cy: 0, radius: cupRadius, height: cupHeight };
+
+  // 各裂片ドーム：中心軸からの距離と半径をどちらも width の半分にする
+  // （＝ドームの円が必ず中心軸を通る）ことで、(1) 裂片の先端までの距離が
+  // ちょうど width になり、(2) 隣接する裂片・中央cupの両方と確実に重なって
+  // 谷に本体が露出する隙間ができない、という2条件を単純な式だけで満たす。
+  const bumps: Bump[] = calyx.leaves.map((leaf) => {
+    const angleRad = leaf.angle * DEG2RAD;
+    const petalCenterDist = Math.max(leaf.width, 1) * 0.5;
+    return {
+      cx: petalCenterDist * Math.cos(angleRad),
+      cy: petalCenterDist * Math.sin(angleRad),
+      radius: petalCenterDist,
+      height: leaf.thickness,
+    };
+  });
+
+  function heightAt(x: number, y: number): number {
+    let h = bumpHeightAt(cup, x, y);
+    for (const b of bumps) h = Math.max(h, bumpHeightAt(b, x, y));
+    return h;
   }
 
-  function profileAt(phiRad: number): { radius: number; height: number; embed: number } {
-    if (sorted.length <= 1) {
-      return { radius: valleyRadius, height: avgThickness, embed: avgEmbed };
+  // 外周（輪郭）はcupRadius全体ではなく、本体の首を覆うのに必要な最小半径
+  // だけを下限にする。cupRadiusをそのまま下限にすると谷でも常にcupRadius
+  // まで広がってしまい、星形のスカラップがほとんど見えなくなる。
+  const minRimRadius = neckRadius * 1.1;
+
+  function outerRadiusAt(phiRad: number): number {
+    let r = minRimRadius;
+    for (const b of bumps) {
+      const reach = bumpReachAtAngle(b, phiRad);
+      if (reach !== null && reach > r) r = reach;
     }
-    // phi を最初の裂片角度を基準に [0, 2π) の範囲へ正規化する
-    let phi = phiRad;
-    const base = sorted[0]!.angleRad;
-    while (phi < base) phi += Math.PI * 2;
-    while (phi >= base + Math.PI * 2) phi -= Math.PI * 2;
-
-    let i = 0;
-    while (i < sorted.length - 2 && sorted[i + 1]!.angleRad <= phi) i++;
-    const a = sorted[i]!;
-    const b = sorted[i + 1]!;
-    const span = Math.max(b.angleRad - a.angleRad, 1e-6);
-    const frac = Math.min(Math.max((phi - a.angleRad) / span, 0), 1);
-
-    // frac=0 と frac=1（各裂片の頂点）で1、frac=0.5（谷）で0になる丸い波形
-    const shape = Math.pow(Math.abs(Math.cos(Math.PI * frac)), LOBE_SHARPNESS);
-    const peakRadius = a.radius + (b.radius - a.radius) * frac;
-    const peakHeight = a.height + (b.height - a.height) * frac;
-    const peakEmbed = a.embed + (b.embed - a.embed) * frac;
-
-    return {
-      radius: valleyRadius + (peakRadius - valleyRadius) * shape,
-      height: peakHeight * (VALLEY_HEIGHT_FRAC + (1 - VALLEY_HEIGHT_FRAC) * shape),
-      embed: peakEmbed,
-    };
+    return r;
   }
 
   const positions: number[] = [];
@@ -121,9 +135,9 @@ export function buildCalyxMesh(
   const outerPts: THREE.Vector3[] = [];
   const innerPts: THREE.Vector3[] = [];
 
-  // 中心（頂上）の1点：全方位で共有する山頂の高さは、全裂片の平均高さとする
+  // 中心の1点（すべての裂片から離れているため、cup自身の中心高さになる）
   {
-    const p = centerAxis.clone().add(new THREE.Vector3(0, 0, avgThickness));
+    const p = centerAxis.clone().add(new THREE.Vector3(0, 0, heightAt(0, 0)));
     outerPts.push(p);
     innerPts.push(p.clone().add(new THREE.Vector3(0, 0, -avgEmbed)));
   }
@@ -132,14 +146,14 @@ export function buildCalyxMesh(
     const rFrac = k / DOME_RINGS;
     for (let j = 0; j < DOME_SEGMENTS; j++) {
       const phiRad = (j / DOME_SEGMENTS) * Math.PI * 2;
-      const { radius, height, embed } = profileAt(phiRad);
-      const actualR = rFrac * radius;
-      const z = height * Math.cos((rFrac * Math.PI) / 2);
-      const p = centerAxis
-        .clone()
-        .add(new THREE.Vector3(actualR * Math.cos(phiRad), actualR * Math.sin(phiRad), z));
+      const outerR = outerRadiusAt(phiRad);
+      const actualR = rFrac * outerR;
+      const x = actualR * Math.cos(phiRad);
+      const y = actualR * Math.sin(phiRad);
+      const z = heightAt(x, y);
+      const p = centerAxis.clone().add(new THREE.Vector3(x, y, z));
       outerPts.push(p);
-      innerPts.push(p.clone().add(new THREE.Vector3(0, 0, -embed)));
+      innerPts.push(p.clone().add(new THREE.Vector3(0, 0, -avgEmbed)));
     }
   }
 
