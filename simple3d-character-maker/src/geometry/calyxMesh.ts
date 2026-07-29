@@ -81,22 +81,29 @@ export function buildCalyxMesh(
   const avgEmbed =
     calyx.leaves.reduce((sum, l) => sum + l.embed, 0) / Math.max(calyx.leaves.length, 1);
 
-  // 土台となる中央の丸いドーム（全裂片の谷を埋め、キャップ全体の下地の厚みになる）。
-  const cupRadius = neckRadius * 1.15 + avgLength * 0.5;
+  // 土台となる中央の丸いドーム（全裂片の谷を埋め、本体の首を覆うのに必要な
+  // 最小限の半径だけ持たせる）。この半径をそのまま外周の下限にも使うことで、
+  // 「高さが自然にゼロへ落ちる場所」と「輪郭の下限」を一致させ、谷に
+  // 高さゼロの平らな縁（見た目上のツバ）ができてしまうのを防ぐ。
+  const cupRadius = neckRadius * 1.1 + avgLength * 0.15;
   const cupHeight = avgThickness * 0.45;
   const cup: Bump = { cx: 0, cy: 0, radius: cupRadius, height: cupHeight };
 
-  // 各裂片ドーム：中心軸からの距離と半径をどちらも width の半分にする
-  // （＝ドームの円が必ず中心軸を通る）ことで、(1) 裂片の先端までの距離が
-  // ちょうど width になり、(2) 隣接する裂片・中央cupの両方と確実に重なって
-  // 谷に本体が露出する隙間ができない、という2条件を単純な式だけで満たす。
+  // 各裂片ドーム：中心をwidthの55%の距離に置き、ドーム自身の半径は残り45%に
+  // 抑える。中心からの距離と半径を同じ(50%ずつ)にすると、盛り上がりの
+  // なだらかな裾野が中心近くから輪郭いっぱいまで間延びして広がってしまい、
+  // 「本体に貼り付いた平らなツバ」のように見えてしまう。半径を控えめにして
+  // ドーム自身は輪郭付近に留めることで、丸くコロンと盛り上がった裂片に近い
+  // シルエットになる（中心寄りの隙間はcupが埋める）。
   const bumps: Bump[] = calyx.leaves.map((leaf) => {
     const angleRad = leaf.angle * DEG2RAD;
-    const petalCenterDist = Math.max(leaf.width, 1) * 0.5;
+    const reach = Math.max(leaf.width, 1);
+    const bumpRadius = reach * 0.45;
+    const petalCenterDist = reach - bumpRadius;
     return {
       cx: petalCenterDist * Math.cos(angleRad),
       cy: petalCenterDist * Math.sin(angleRad),
-      radius: petalCenterDist,
+      radius: bumpRadius,
       height: leaf.thickness,
     };
   });
@@ -107,13 +114,11 @@ export function buildCalyxMesh(
     return h;
   }
 
-  // 外周（輪郭）はcupRadius全体ではなく、本体の首を覆うのに必要な最小半径
-  // だけを下限にする。cupRadiusをそのまま下限にすると谷でも常にcupRadius
-  // まで広がってしまい、星形のスカラップがほとんど見えなくなる。
-  const minRimRadius = neckRadius * 1.1;
-
+  // 外周（輪郭）は「cupとすべての裂片ドームのうち、その方位角で実際に
+  // 届く最大距離」として求める。cupの半径そのものを下限にすることで、
+  // 高さがゼロになる場所と輪郭の下限が必ず一致し、平らな縁ができない。
   function outerRadiusAt(phiRad: number): number {
-    let r = minRimRadius;
+    let r = cupRadius;
     for (const b of bumps) {
       const reach = bumpReachAtAngle(b, phiRad);
       if (reach !== null && reach > r) r = reach;

@@ -27,9 +27,15 @@ import { createDefaultCowParams } from './cow';
 // なお本体の「首下～底面」の高さに対する最大幅の比は実測で約0.81。
 // 幅の分布(各tでの相対幅)を変えずにこの比を再現するため、全高を42→46mmへ
 // 引き伸ばしている（rx/ry・cx/cyは据え置き、zのみ46/42倍）。
+// 底面付近(t=0〜0.15)は実測で非常に急に丸く広がる(t=0.04で最大幅の25%、
+// t=0.10で64%に達する)。7断面のみだと補間曲線がなだらかになりすぎて
+// この急峻な丸みを再現できないため、t=0.05/0.08/0.15に断面を追加している。
 export const eggplantBodySections: BodySection[] = [
   { t: 0.0, z: 0, rx: 4.0, ry: 3.8, cx: 0, cy: 0, n: 2.3 }, // 底面（丸く小さくすぼまる先端）
-  { t: 0.1, z: 4.6, rx: 12.0, ry: 10.8, cx: 0, cy: 0.15, n: 2.1 },
+  { t: 0.05, z: 2.3, rx: 9.0, ry: 8.1, cx: 0, cy: 0.05, n: 2.4 },
+  { t: 0.08, z: 3.68, rx: 11.1, ry: 10.0, cx: 0, cy: 0.1, n: 2.2 },
+  { t: 0.1, z: 4.6, rx: 11.9, ry: 10.7, cx: 0, cy: 0.15, n: 2.15 },
+  { t: 0.15, z: 6.9, rx: 15.2, ry: 13.7, cx: 0, cy: 0.22, n: 2.05 },
   { t: 0.2, z: 9.2, rx: 16.5, ry: 14.9, cx: 0, cy: 0.3, n: 2.0 },
   { t: 0.3, z: 13.8, rx: 17.8, ry: 16.1, cx: 0, cy: 0.4, n: 2.0 },
   { t: 0.4, z: 18.4, rx: 18.5, ry: 16.7, cx: 0, cy: 0.45, n: 2.0 },
@@ -61,8 +67,8 @@ export const defaultCalyxParams: CalyxParams = {
   leaves: Array.from({ length: 5 }, (_, i) => ({
     angle: (360 / 5) * i,
     length: 2.5,
-    width: 17,
-    thickness: 7.5,
+    width: 15,
+    thickness: 6.5,
     pitch: 0,
     curvature: 0,
     embed: 2,
