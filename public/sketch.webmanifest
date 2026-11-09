@@ -1,0 +1,13 @@
+{
+  "name": "PP1 Sketch — 描いた絵をそのまま刺繍に",
+  "short_name": "PP1 Sketch",
+  "start_url": "./sketch.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "./sketch-icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "./sketch-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

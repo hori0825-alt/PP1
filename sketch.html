@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="PP1 Sketch" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="manifest" href="./sketch.webmanifest" />
+    <link rel="apple-touch-icon" href="./sketch-icon-180.png" />
+    <title>PP1 Sketch — 描いた絵をそのまま刺繍に</title>
+  </head>
+  <body>
+    <header id="top">
+      <div class="brand">
+        <b>PP1 Sketch</b>
+        <span id="ver" class="ver"></span>
+      </div>
+      <div class="group">
+        <button id="undo" class="icon" title="取り消し (2本指タップ)">↶</button>
+        <button id="redo" class="icon" title="やり直し (3本指タップ)">↷</button>
+      </div>
+      <div class="seg" id="modeSeg">
+        <button data-mode="draw" class="on">描く</button>
+        <button data-mode="stitch">刺繍プレビュー</button>
+      </div>
+      <div id="chips" class="chips"></div>
+      <button id="exportBtn" class="primary">PES を保存</button>
+      <button id="menuBtn" class="icon" title="メニュー">⋯</button>
+    </header>
+
+    <div id="main">
+      <nav id="tools">
+        <button data-tool="pen" class="tool on" title="ペン (線)"><span>✏️</span><small>ペン</small></button>
+        <button data-tool="bucket" class="tool" title="バケツ塗り"><span>🪣</span><small>塗る</small></button>
+        <button data-tool="lasso" class="tool" title="塗りペン (囲んだ所を塗る)"><span>🖌️</span><small>塗りペン</small></button>
+        <button data-tool="ellipse" class="tool" title="円"><span>◯</span><small>円</small></button>
+        <button data-tool="rect" class="tool" title="四角"><span>▭</span><small>四角</small></button>
+        <button data-tool="select" class="tool" title="選択・移動"><span>👆</span><small>選択</small></button>
+        <button data-tool="eraser" class="tool" title="消しゴム"><span>🧽</span><small>消す</small></button>
+        <div class="sep"></div>
+        <button id="colorBtn" class="swatchBtn" title="糸の色"><span id="colorSwatch"></span><small>色</small></button>
+        <button id="fitBtn" class="tool" title="全体表示"><span>⤢</span><small>全体</small></button>
+      </nav>
+
+      <section id="stage">
+        <div id="toolOpts"></div>
+        <canvas id="cv"></canvas>
+        <div id="player" hidden>
+          <button id="play" class="icon">▶</button>
+          <button id="prevTrim" class="mini" title="前の糸切り/色替えへ">⏮</button>
+          <input id="seek" type="range" min="0" max="0" value="0" />
+          <button id="nextTrim" class="mini" title="次の糸切り/色替えへ">⏭</button>
+          <span id="seekInfo"></span>
+          <label class="tog"><input type="checkbox" id="showJumps" checked /> 渡り・糸切り</label>
+        </div>
+        <div id="toast" hidden></div>
+      </section>
+
+      <aside id="panel">
+        <div class="tabs" id="tabs">
+          <button data-tab="layers" class="on">レイヤー</button>
+          <button data-tab="seq">縫い順</button>
+          <button data-tab="settings">設定</button>
+        </div>
+
+        <div id="selBox" hidden></div>
+
+        <div class="tab" id="tab-layers">
+          <p class="note">上のレイヤーほど上に重なり、<b>下のレイヤーから順に縫います</b>。</p>
+          <ul id="layerList"></ul>
+          <div class="row">
+            <button id="addLayer">＋ レイヤー</button>
+            <button id="layerUp" class="mini">↑</button>
+            <button id="layerDown" class="mini">↓</button>
+            <button id="delLayer" class="mini danger">削除</button>
+          </div>
+        </div>
+
+        <div class="tab" id="tab-seq" hidden>
+          <p class="note">実際に縫う順番です。↑↓で同じレイヤー内の順番を変えられます。</p>
+          <ol id="seqList"></ol>
+        </div>
+
+        <div class="tab" id="tab-settings" hidden>
+          <label>デザイン名 (英数字)
+            <input id="setName" type="text" maxlength="8" />
+          </label>
+          <label>糸切り
+            <select id="setTrim">
+              <option value="auto">おまかせ (隠れる渡りはつなぐ)</option>
+              <option value="fewer">少なく (渡り糸を残す)</option>
+              <option value="always">渡り糸を残さない</option>
+            </select>
+          </label>
+          <label>糸切りする距離 (mm)
+            <input id="setTrimDist" type="number" min="3" max="60" step="1" />
+          </label>
+          <label>密度
+            <select id="setDensity">
+              <option value="dense">しっかり</option>
+              <option value="normal">標準</option>
+              <option value="light">軽め (針数少)</option>
+            </select>
+          </label>
+          <label>面の縫い角度 (°)
+            <input id="setAngle" type="number" min="0" max="179" step="5" />
+          </label>
+          <label class="tog"><input id="setUnderlay" type="checkbox" /> 下縫いを入れる</label>
+          <label class="tog"><input id="setPenOnly" type="checkbox" /> Apple Pencil だけで描く (指は移動・拡大)</label>
+          <h4>下絵 (なぞり用・刺繍されません)</h4>
+          <div class="row">
+            <button id="underlayLoad">画像を読み込む</button>
+            <button id="underlayClear" class="mini danger">外す</button>
+          </div>
+          <label class="tog"><input id="underlayShow" type="checkbox" /> 下絵を表示</label>
+          <label>濃さ <input id="underlayOpacity" type="range" min="0.05" max="0.9" step="0.05" /></label>
+          <input id="underlayFile" type="file" accept="image/*" hidden />
+        </div>
+      </aside>
+    </div>
+
+    <div id="palette" class="pop" hidden>
+      <div class="popHead">糸の色 (Brother)<button id="paletteClose" class="mini">閉じる</button></div>
+      <div id="recent" class="grid"></div>
+      <div id="paletteGrid" class="grid"></div>
+    </div>
+
+    <div id="menu" class="pop" hidden>
+      <button id="mExportPes">PES を保存</button>
+      <button id="mExportDst">DST を保存</button>
+      <button id="mSave">作品を保存 (.json)</button>
+      <button id="mOpen">作品を開く</button>
+      <button id="mNew" class="danger">新しく描く</button>
+      <input id="openFile" type="file" accept=".json,application/json" hidden />
+    </div>
+
+    <script type="module" src="./src/sketch/main.ts"></script>
+  </body>
+</html>
