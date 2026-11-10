@@ -49,6 +49,7 @@
         <div class="sep"></div>
         <button id="colorBtn" class="swatchBtn" title="糸の色"><span id="colorSwatch"></span><small>色</small></button>
         <button id="fitBtn" class="tool" title="全体表示"><span>⤢</span><small>全体</small></button>
+        <button id="imgBtn" class="tool" title="画像を下敷きに入れる (なぞって描く)"><span>🖼️</span><small>下絵</small></button>
       </nav>
 
       <section id="stage">
@@ -78,6 +79,9 @@
         <div class="tab" id="tab-layers">
           <p class="note">上のレイヤーほど上に重なり、<b>下のレイヤーから順に縫います</b>。</p>
           <ul id="layerList"></ul>
+          <div class="row">
+            <button id="imgLoad">🖼 画像を下敷きに入れる</button>
+          </div>
           <div class="row">
             <button id="addLayer">＋ レイヤー</button>
             <button id="layerUp" class="mini">↑</button>
@@ -117,14 +121,13 @@
           </label>
           <label class="tog"><input id="setUnderlay" type="checkbox" /> 下縫いを入れる</label>
           <label class="tog"><input id="setPenOnly" type="checkbox" /> Apple Pencil だけで描く (指は移動・拡大)</label>
-          <h4>下絵 (なぞり用・刺繍されません)</h4>
+          <h4>キャンバス</h4>
           <div class="row">
-            <button id="underlayLoad">画像を読み込む</button>
-            <button id="underlayClear" class="mini danger">外す</button>
+            <span id="canvasInfo" class="canvasInfo"></span>
+            <button id="canvasBtn" class="mini">サイズを変える</button>
           </div>
-          <label class="tog"><input id="underlayShow" type="checkbox" /> 下絵を表示</label>
-          <label>濃さ <input id="underlayOpacity" type="range" min="0.05" max="0.9" step="0.05" /></label>
-          <input id="underlayFile" type="file" accept="image/*" hidden />
+          <h4>下敷きの画像 (なぞり用・刺繍されません)</h4>
+          <div class="row"><button id="imgLoad2">🖼 画像をレイヤーに入れる</button></div>
         </div>
       </aside>
     </div>
@@ -138,10 +141,30 @@
     <div id="menu" class="pop" hidden>
       <button id="mExportPes">PES を保存</button>
       <button id="mExportDst">DST を保存</button>
+      <button id="mImage">画像を下敷きに入れる</button>
+      <button id="mCanvas">キャンバスのサイズ</button>
       <button id="mSave">作品を保存 (.json)</button>
       <button id="mOpen">作品を開く</button>
       <button id="mNew" class="danger">新しく描く</button>
       <input id="openFile" type="file" accept=".json,application/json" hidden />
+    </div>
+    <input id="imgFile" type="file" accept="image/*" hidden />
+
+    <div id="canvasDlg" class="pop" hidden>
+      <div class="popHead"><span id="canvasTitle">キャンバスのサイズ</span><button id="canvasClose" class="mini">閉じる</button></div>
+      <p class="note">刺繍する範囲です。PP1 の刺繍枠は最大 100×100mm です。</p>
+      <div class="cvGroup"><small>正方形</small><div id="cvSquare" class="cvPresets"></div></div>
+      <div class="cvGroup"><small>横長</small><div id="cvWide" class="cvPresets"></div></div>
+      <div class="cvGroup"><small>縦長</small><div id="cvTall" class="cvPresets"></div></div>
+      <div class="cvCustom">
+        <label>幅 <input id="cvW" type="number" min="10" max="300" step="1" /> mm</label>
+        <label>高さ <input id="cvH" type="number" min="10" max="300" step="1" /> mm</label>
+      </div>
+      <p id="cvWarn" class="cvWarn" hidden></p>
+      <label class="tog" id="cvScaleRow"><input id="cvScale" type="checkbox" /> 描いた絵も合わせて拡大縮小する</label>
+      <div class="row">
+        <button id="cvOk" class="primary">このサイズにする</button>
+      </div>
     </div>
 
     <script type="module" src="./src/sketch/main.ts"></script>

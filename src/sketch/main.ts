@@ -38,11 +38,18 @@ import {
   type Box,
   type NodeRef,
 } from "./edit";
+import { getBitmap, getImageData, loadStoredImages, putImage, readImageFile, removeUnusedImages } from "./images";
 import {
   cloneDoc,
+  imageCorners,
+  isStitchEl,
   newDoc,
   newLayer,
   parseDoc,
+  parseDocWithImages,
+  PP1_HOOP_MM,
+  type ImageEl,
+  type StitchEl,
   resolveStrokeStyle,
   uid,
   type Element,
@@ -55,7 +62,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.1.0";
+const SKETCH_VERSION = "1.2.0";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -273,8 +280,9 @@ function pruneSelection(): void {
 function setSelection(ids: string[]): void {
   selection = [...new Set(ids)];
   seqSelected = selection.length === 1 ? selection[0] : null;
+  // 選んだ部品のレイヤーを「描くレイヤー」にする (画像だけのレイヤーは除く: 下敷きに描き込まないため)
   const first = selection.length ? findElement(selection[selection.length - 1]) : null;
-  if (first) activeLayerId = first.layer.id;
+  if (first && first.el.kind !== "image") activeLayerId = first.layer.id;
   renderToolOpts();
   renderPanels();
   requestDraw();
@@ -329,14 +337,17 @@ function fit(): void {
   const w = Math.max(50, cv.clientWidth - panelW);
   const h = Math.max(50, cv.clientHeight - bottom - 6);
   const landscape = cv.clientWidth > cv.clientHeight;
-  const base = Math.min(w, h);
-  let side = base;
+  const cw = doc.settings.canvasW + 2;
+  const ch = doc.settings.canvasH + 2;
+  const base = Math.min(w / cw, h / ch);
+  let scale = base;
   if (mode === "draw") {
-    // 余白が少し足りないだけなら枠を優先する (ツール設定が枠の角に少しかかってもよい)
-    if (landscape && (w - side) / 2 < 180) side = Math.max(Math.min(h, w - 2 * 180), base * 0.94);
-    if (!landscape && (h - side) / 2 < 64) side = Math.max(Math.min(w, h - 2 * 64), base * 0.9);
+    // ツール設定 (横長なら左、縦長なら上) の分の余白を空ける。
+    // 余白が少し足りないだけならキャンバスを優先する (ツール設定が角に少しかかってもよい)
+    if (landscape && (w - cw * scale) / 2 < 180) scale = Math.max(Math.min(h / ch, (w - 360) / cw), base * 0.94);
+    if (!landscape && (h - ch * scale) / 2 < 64) scale = Math.max(Math.min(w / cw, (h - 128) / ch), base * 0.9);
   }
-  view.scale = Math.max(1, side / 102);
+  view.scale = Math.max(0.5, scale);
   view.ox = w / 2;
   view.oy = 6 + h / 2;
   viewTouched = false;
@@ -380,20 +391,6 @@ function requestDraw(): void {
 const rgb = (c: { r: number; g: number; b: number }, a = 1) =>
   a === 1 ? `rgb(${c.r},${c.g},${c.b})` : `rgba(${c.r},${c.g},${c.b},${a})`;
 
-let underlayImg: HTMLImageElement | null = null;
-let underlaySrc: string | null = null;
-function underlayImage(): HTMLImageElement | null {
-  const src = doc.settings.underlayImage;
-  if (!src) return null;
-  if (src !== underlaySrc) {
-    underlaySrc = src;
-    underlayImg = new Image();
-    underlayImg.onload = () => requestDraw();
-    underlayImg.src = src;
-  }
-  return underlayImg && underlayImg.complete ? underlayImg : null;
-}
-
 function draw(): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#e9ebef";
@@ -402,33 +399,35 @@ function draw(): void {
   ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.ox, dpr * view.oy);
   const px = 1 / view.scale; // 1 画面px の mm
 
-  // 刺繍枠 (100×100mm)
+  // キャンバス (刺繍する範囲)。中心が原点、10mm ごとの方眼
+  const { canvasW: W, canvasH: H } = doc.settings;
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(-50, -50, 100, 100);
+  ctx.fillRect(-W / 2, -H / 2, W, H);
   ctx.strokeStyle = "#eef0f3";
   ctx.lineWidth = px;
-  for (let v = -40; v <= 40; v += 10) {
-    ctx.beginPath();
-    ctx.moveTo(v, -50);
-    ctx.lineTo(v, 50);
-    ctx.moveTo(-50, v);
-    ctx.lineTo(50, v);
-    ctx.stroke();
+  ctx.beginPath();
+  for (let v = Math.ceil(-W / 2 / 10 + 1e-9) * 10; v < W / 2; v += 10) {
+    ctx.moveTo(v, -H / 2);
+    ctx.lineTo(v, H / 2);
   }
+  for (let v = Math.ceil(-H / 2 / 10 + 1e-9) * 10; v < H / 2; v += 10) {
+    ctx.moveTo(-W / 2, v);
+    ctx.lineTo(W / 2, v);
+  }
+  ctx.stroke();
   ctx.strokeStyle = "#d9a3ad";
   ctx.lineWidth = 2 * px;
-  ctx.strokeRect(-50, -50, 100, 100);
-
-  // 下絵
-  const s = doc.settings;
-  const img = underlayImage();
-  if (img && s.underlayVisible) {
-    const k = 100 / Math.max(img.width, img.height);
-    const w = img.width * k;
-    const h = img.height * k;
-    ctx.globalAlpha = s.underlayOpacity;
-    ctx.drawImage(img, -w / 2, -h / 2, w, h);
-    ctx.globalAlpha = 1;
+  ctx.strokeRect(-W / 2, -H / 2, W, H);
+  // キャンバスが PP1 の枠より大きいときは、枠の範囲を点線で示す
+  if (W > PP1_HOOP_MM || H > PP1_HOOP_MM) {
+    const hw = Math.min(W, PP1_HOOP_MM) / 2;
+    const hh = Math.min(H, PP1_HOOP_MM) / 2;
+    ctx.save();
+    ctx.setLineDash([6 * px, 4 * px]);
+    ctx.strokeStyle = "#e8506a";
+    ctx.lineWidth = 1.5 * px;
+    ctx.strokeRect(-hw, -hh, hw * 2, hh * 2);
+    ctx.restore();
   }
 
   if (mode === "stitch") {
@@ -443,7 +442,7 @@ function draw(): void {
   }
 }
 
-function elementPath(el: Element): Path2D {
+function elementPath(el: StitchEl): Path2D {
   const p = new Path2D();
   if (el.kind === "fill") {
     for (const ring of [el.outer, ...el.holes]) {
@@ -457,7 +456,35 @@ function elementPath(el: Element): Path2D {
   return p;
 }
 
+/** 画像を3つの角 (p0 左上, p1 右上, p2 左下) に合わせて描く */
+function drawImageEl(el: ImageEl, px: number): void {
+  const img = getBitmap(el.imageId, requestDraw);
+  const c = imageCorners(el);
+  ctx.save();
+  if (!img) {
+    // 画像データがまだ無い (読み込み中・別の端末で作った作品など)
+    ctx.beginPath();
+    c.forEach((v, i) => (i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y)));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(120,130,150,0.12)";
+    ctx.fill();
+    ctx.setLineDash([4 * px, 4 * px]);
+    ctx.strokeStyle = "#9aa3b2";
+    ctx.lineWidth = px;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  ctx.transform((el.p1.x - el.p0.x) / w, (el.p1.y - el.p0.y) / w, (el.p2.x - el.p0.x) / h, (el.p2.y - el.p0.y) / h, el.p0.x, el.p0.y);
+  ctx.globalAlpha = Math.max(0.05, Math.min(1, el.opacity));
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
 function drawElement(el: Element, alpha: number, px: number, offset?: Vec): void {
+  if (el.kind === "image") return drawImageEl(el, px);
   ctx.save();
   if (offset) ctx.translate(offset.x, offset.y);
   const path = elementPath(el);
@@ -1092,7 +1119,10 @@ function finishTool(g: Extract<Gesture, { kind: "draw" }>): void {
       if (!l.visible) continue;
       for (const el of l.elements) if (el.kind === "stroke") strokes.push(el);
     }
-    const r = bucketFill(strokes, g.cur, { gapCloseMm: gapClose });
+    // 塗れる範囲: キャンバス (と描いた線) が収まる正方形
+    const sb = selectionBox(strokes);
+    const reach = Math.max(doc.settings.canvasW, doc.settings.canvasH, sb ? 2 * Math.max(-sb.minX, sb.maxX, -sb.minY, sb.maxY) : 0);
+    const r = bucketFill(strokes, g.cur, { gapCloseMm: gapClose, areaMm: Math.min(320, reach + 4) });
     if (!r.ok) {
       toast(
         r.reason === "on-line"
@@ -1133,7 +1163,7 @@ function shapeRing(t: "ellipse" | "rect", a: Vec, b: Vec): Vec[] {
   return out;
 }
 
-function addElement(layer: Layer, el: Element): void {
+function addElement(layer: Layer, el: StitchEl): void {
   beginChange();
   layer.elements.push(el);
   pushRecent(el.color);
@@ -1149,6 +1179,8 @@ function hitTest(m: Vec, anyLayer: boolean): { el: Element; layer: Layer } | nul
       const el = layer.elements[i];
       if (el.kind === "stroke") {
         if (distToPolyline(m, el.points, el.closed) <= el.width / 2 + tol) return { el, layer };
+      } else if (el.kind === "image") {
+        if (pointInShape(m, imageCorners(el), [])) return { el, layer };
       } else if (pointInShape(m, el.outer, el.holes) || distToPolyline(m, el.outer, true) <= tol) {
         return { el, layer };
       }
@@ -1330,7 +1362,8 @@ function finishMarquee(g: Extract<Gesture, { kind: "marquee" }>): void {
     for (const el of layer.elements) {
       const e = elementBox(el);
       const inside = e.minX >= r.minX && e.maxX <= r.maxX && e.minY >= r.minY && e.maxY <= r.maxY;
-      const touches = paths(el).some((p) => p.pts.some((v) => inBox(v, r)));
+      const touches =
+        el.kind === "image" ? imageCorners(el).some((v) => inBox(v, r)) : paths(el).some((p) => p.pts.some((v) => inBox(v, r)));
       const covers = el.kind === "fill" && pointInShape({ x: (r.minX + r.maxX) / 2, y: (r.minY + r.maxY) / 2 }, el.outer, el.holes);
       if (inside || touches || covers) ids.push(el.id);
     }
@@ -1538,7 +1571,10 @@ function startNode(id: number, m: Vec, add: boolean): void {
   }
   // 3. 別の部品をタップ → その部品を編集する
   const hit = hitTest(m, true);
-  if (hit && hit.el.id !== nodeTarget) {
+  if (hit && hit.el.kind === "image") {
+    if (!f) toast("画像には編集点がありません。選択ツールで拡大縮小・回転できます");
+  }
+  if (hit && hit.el.kind !== "image" && hit.el.id !== nodeTarget) {
     setNodeTarget(hit.el.id);
     toast(`${hit.el.kind === "fill" ? "面" : "線"}の編集点: 点をドラッグで変形、線の上をタップで点を追加`);
     return;
@@ -1631,7 +1667,7 @@ function setTool(t: Tool): void {
   if (gesture) cancelGesture();
   if (t === "node") {
     // 選択中の部品が1つなら、そのまま編集点を出す
-    if (selection.length === 1) nodeTarget = selection[0];
+    if (selection.length === 1 && findElement(selection[0])?.el.kind !== "image") nodeTarget = selection[0];
     else if (!nodeTarget || !findElement(nodeTarget)) nodeTarget = null;
     nodeSel = [];
     if (!nodeTarget) toast("編集する線・面をタップしてください");
@@ -1851,10 +1887,10 @@ function pushRecent(c: ThreadRef): void {
 function setColor(c: ThreadRef): void {
   color = { ...c };
   $("colorSwatch").style.background = rgb(color);
-  const els = selectedEls().filter((f) => !f.layer.locked);
+  const els = selectedEls().filter((f) => !f.layer.locked && isStitchEl(f.el));
   if (els.length && (tool === "select" || tool === "node")) {
     beginChange();
-    for (const f of els) f.el.color = { ...color };
+    for (const f of els) if (isStitchEl(f.el)) f.el.color = { ...color };
     changed();
   }
   renderPalette();
@@ -1970,16 +2006,24 @@ function renderLayers(): void {
   const counts = layerStitchCounts();
   const items: HTMLElement[] = [];
   const n = doc.layers.length;
-  // 一番上のレイヤーを一番上に表示。番号は縫う順
+  // 縫う順番の番号 (画像だけのレイヤーは縫わないので番号を振らない)
+  const sewNo = new Map<string, number>();
+  let k = 0;
+  for (const l of doc.layers) if (!isImageLayer(l)) sewNo.set(l.id, ++k);
+  // 一番上のレイヤーを一番上に表示
   for (let i = n - 1; i >= 0; i--) {
     const layer = doc.layers[i];
     const li = document.createElement("li");
     if (layer.id === activeLayerId) li.classList.add("active");
     if (!layer.visible) li.classList.add("hiddenL");
     const lines = layer.elements.filter((e) => e.kind === "stroke").length;
-    const fills = layer.elements.length - lines;
+    const fills = layer.elements.filter((e) => e.kind === "fill").length;
+    const imgs = layer.elements.length - lines - fills;
     const st = counts.get(layer.id);
-    li.innerHTML = `<span class="ord" title="縫う順番">${i + 1}</span>`;
+    const imgOnly = isImageLayer(layer);
+    li.innerHTML = imgOnly
+      ? `<span class="ord img" title="下敷きの画像 (縫いません)">🖼</span>`
+      : `<span class="ord" title="縫う順番">${sewNo.get(layer.id)}</span>`;
     const eye = document.createElement("button");
     eye.textContent = layer.visible ? "👁" : "⦸";
     eye.title = "表示/非表示 (非表示は縫いません)";
@@ -1991,7 +2035,9 @@ function renderLayers(): void {
     });
     const nm = document.createElement("span");
     nm.className = "nm";
-    nm.innerHTML = `${escapeHtml(layer.name)}<small>線${lines}・面${fills}${st !== undefined ? `・${st.toLocaleString()}針` : ""}</small>`;
+    nm.innerHTML = imgOnly
+      ? `${escapeHtml(layer.name)}<small>画像${imgs}・縫いません</small>`
+      : `${escapeHtml(layer.name)}<small>線${lines}・面${fills}${imgs ? `・画像${imgs}` : ""}${st !== undefined ? `・${st.toLocaleString()}針` : ""}</small>`;
     nm.addEventListener("dblclick", () => renameLayer(layer));
     const ord = document.createElement("button");
     ord.className = "ordBtn";
@@ -2012,7 +2058,8 @@ function renderLayers(): void {
       layer.locked = !layer.locked;
       changed();
     });
-    li.append(eye, nm, ord, lock);
+    if (imgOnly) li.append(eye, nm, lock);
+    else li.append(eye, nm, ord, lock);
     li.addEventListener("click", () => {
       activeLayerId = layer.id;
       renderLayers();
@@ -2165,9 +2212,13 @@ function renderSelBox(): void {
     doc.layers
       .map((l) => `<option value="${l.id}" ${sameLayer && l.id === els[0].layer.id ? "selected" : ""}>${escapeHtml(l.name)}</option>`)
       .join("");
-  const title = one
-    ? `${one.el.kind === "fill" ? "面" : "線"} <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(one.el.color)}"></span>`
-    : `${els.length}個 (線${strokes.length}・面${fills.length})`;
+  const images = els.filter((f) => f.el.kind === "image").map((f) => f.el as ImageEl);
+  const title =
+    one && one.el.kind === "image"
+      ? "画像 (下敷き・縫いません)"
+      : one && isStitchEl(one.el)
+        ? `${one.el.kind === "fill" ? "面" : "線"} <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(one.el.color)}"></span>`
+        : `${els.length}個 (線${strokes.length}・面${fills.length}${images.length ? `・画像${images.length}` : ""})`;
   let body = `<h4>選択中: ${title}</h4>`;
   body += `<label>大きさ (mm) <span class="sizeRow"><input id="selSW" type="number" min="0.5" max="200" step="0.5" value="${W.toFixed(1)}">×<input id="selSH" type="number" min="0.5" max="200" step="0.5" value="${H.toFixed(1)}"></span></label>`;
   body += `<label class="tog"><input id="selKeep" type="checkbox" checked> 縦横比を保つ</label>`;
@@ -2197,8 +2248,12 @@ function renderSelBox(): void {
       .map(([v, l]) => `<option value="${v}" ${sameA && a0 === v ? "selected" : ""}>${l}</option>`)
       .join("")}</select></label>`;
   }
+  if (images.length) {
+    body += `<label>画像の濃さ <input id="selOpacity" type="range" min="0.05" max="1" step="0.05" value="${images[0].opacity}"></label>`;
+  }
   body += `<label>レイヤー <select id="selLayer">${layerOpts}</select></label>`;
-  body += `<div class="row"><button id="selColor">いまの色に変える</button><button id="selDel" class="mini danger">削除</button></div>`;
+  body += `<div class="row">${strokes.length + fills.length ? `<button id="selColor">いまの色に変える</button>` : ""}<button id="selDel" class="mini danger">削除</button></div>`;
+  if (images.length) body += `<p class="note">位置と大きさを決めたら、レイヤーの 🔒 でロックすると上から描いても動きません。</p>`;
   box.innerHTML = body;
 
   const edit = (fn: () => void) => {
@@ -2255,7 +2310,23 @@ function renderSelBox(): void {
       activeLayerId = to.id;
     });
   });
-  box.querySelector("#selColor")?.addEventListener("click", () => edit(() => els.forEach((f) => (f.el.color = { ...color }))));
+  box.querySelector("#selColor")?.addEventListener("click", () =>
+    edit(() => els.forEach((f) => isStitchEl(f.el) && (f.el.color = { ...color }))),
+  );
+  // 濃さはドラッグ中は描き直すだけ、離したときに1回だけ取り消し履歴に積む
+  const op = box.querySelector<HTMLInputElement>("#selOpacity");
+  if (op) {
+    let before: string | null = null;
+    op.addEventListener("input", () => {
+      if (!before) before = snapshot();
+      for (const im of images) im.opacity = Number(op.value);
+      requestDraw();
+    });
+    op.addEventListener("change", () => {
+      if (before) commitFrom(before);
+      before = null;
+    });
+  }
   box.querySelector("#selDel")?.addEventListener("click", deleteSelected);
 }
 
@@ -2269,7 +2340,7 @@ function renderChips(): void {
   }
   const s = compiled.stats;
   const over = s.stitches > STITCH_LIMIT;
-  const tooBig = s.widthMm > 100 || s.heightMm > 100;
+  const tooBig = s.widthMm > PP1_HOOP_MM + 0.5 || s.heightMm > PP1_HOOP_MM + 0.5;
   c.innerHTML =
     `<span class="${over ? "bad" : ""}">針数 <b>${s.stitches.toLocaleString()}</b>${over ? " (上限超過)" : ""}</span>` +
     `<span>色 <b>${s.colors}</b></span>` +
@@ -2295,8 +2366,7 @@ function syncSettings(): void {
   $<HTMLInputElement>("setAngle").value = String(s.fillAngle);
   $<HTMLInputElement>("setUnderlay").checked = s.underlay;
   $<HTMLInputElement>("setPenOnly").checked = penOnly;
-  $<HTMLInputElement>("underlayShow").checked = s.underlayVisible;
-  $<HTMLInputElement>("underlayOpacity").value = String(s.underlayOpacity);
+  $("canvasInfo").textContent = `${s.canvasW}×${s.canvasH}mm${s.canvasW > PP1_HOOP_MM || s.canvasH > PP1_HOOP_MM ? " (PP1 の枠より大きい)" : ""}`;
   const dens = s.fillSpacing <= 0.36 ? "dense" : s.fillSpacing >= 0.48 ? "light" : "normal";
   $<HTMLSelectElement>("setDensity").value = dens;
 }
@@ -2318,49 +2388,191 @@ bindSetting("setDensity", (el) => {
   doc.settings.fillSpacing = d.fill;
   doc.settings.satinSpacing = d.satin;
 });
-bindSetting("underlayShow", (el) => (doc.settings.underlayVisible = el.checked));
-$("underlayOpacity").addEventListener("input", (e) => {
-  doc.settings.underlayOpacity = Number((e.target as HTMLInputElement).value);
-  scheduleSave();
-  requestDraw();
-});
 $("setPenOnly").addEventListener("change", (e) => {
   penOnly = (e.target as HTMLInputElement).checked;
   prefs.penOnlyDecided = true;
   savePrefs();
 });
 
-$("underlayLoad").addEventListener("click", () => $<HTMLInputElement>("underlayFile").click());
-$("underlayFile").addEventListener("change", () => {
-  const file = $<HTMLInputElement>("underlayFile").files?.[0];
+// ------------------------------------------------------------------ 下敷きの画像
+
+function openImagePicker(): void {
+  $("menu").hidden = true;
+  $<HTMLInputElement>("imgFile").click();
+}
+for (const id of ["imgBtn", "imgLoad", "imgLoad2", "mImage"]) $(id).addEventListener("click", openImagePicker);
+
+/** キャンバスに収まる大きさ (scale=0.9 なら 9割) で中央に置いた画像 */
+function makeImageEl(imageId: string, wPx: number, hPx: number, opacity: number, fitMm?: number): ImageEl {
+  const { canvasW: W, canvasH: H } = doc.settings;
+  const k = fitMm ? fitMm / Math.max(wPx, hPx) : Math.min((W * 0.9) / wPx, (H * 0.9) / hPx);
+  const iw = wPx * k;
+  const ih = hPx * k;
+  return {
+    kind: "image",
+    id: uid(),
+    imageId,
+    p0: { x: -iw / 2, y: -ih / 2 },
+    p1: { x: iw / 2, y: -ih / 2 },
+    p2: { x: -iw / 2, y: ih / 2 },
+    opacity,
+  };
+}
+
+function isImageLayer(l: Layer): boolean {
+  return l.elements.length > 0 && l.elements.every((e) => e.kind === "image");
+}
+
+$("imgFile").addEventListener("change", async () => {
+  const input = $<HTMLInputElement>("imgFile");
+  const file = input.files?.[0];
+  input.value = "";
   if (!file) return;
-  const img = new Image();
-  const url = URL.createObjectURL(file);
-  img.onload = () => {
-    // 保存容量を抑えるため縮小して JPEG に
-    const k = Math.min(1, 1600 / Math.max(img.width, img.height));
-    const c = document.createElement("canvas");
-    c.width = Math.round(img.width * k);
-    c.height = Math.round(img.height * k);
-    const g = c.getContext("2d")!;
-    g.fillStyle = "#fff";
-    g.fillRect(0, 0, c.width, c.height);
-    g.drawImage(img, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url);
+  try {
+    const { url, w, h } = await readImageFile(file);
+    const imageId = putImage(url, undefined, (ok) => {
+      if (!ok) toast("画像をこの端末に保存できませんでした。「作品を保存」で書き出しておいてください");
+    });
+    const el = makeImageEl(imageId, w, h, 0.5);
     beginChange();
-    doc.settings.underlayImage = c.toDataURL("image/jpeg", 0.85);
-    doc.settings.underlayVisible = true;
-    syncSettings();
+    const n = doc.layers.filter(isImageLayer).length;
+    const layer = newLayer(n ? `下絵${n + 1}` : "下絵");
+    layer.elements.push(el);
+    // 一番下のレイヤーに入れる (上のレイヤーに描いた線が画像の上に重なる)
+    doc.layers.unshift(layer);
     changed();
-    toast("下絵を読み込みました。なぞって描いてください (下絵は刺繍されません)");
+    if (mode === "stitch") setMode("draw");
+    setTool("select");
+    setSelection([el.id]);
+    toast("画像を一番下のレイヤーに入れました。角で大きさ・○で回転。決まったらレイヤーの 🔒 でロック");
+  } catch (err) {
+    toast(String((err as Error).message ?? err));
+  }
+});
+
+/** 旧版の「下絵」設定を画像レイヤーに移す */
+function migrateUnderlay(): void {
+  const url = doc.settings.underlayImage;
+  if (!url) return;
+  const img = new Image();
+  img.onload = () => {
+    if (doc.settings.underlayImage !== url) return;
+    const imageId = putImage(url);
+    // 旧版は 100mm 角に収めて中央に表示していた
+    const el = makeImageEl(imageId, img.naturalWidth, img.naturalHeight, doc.settings.underlayOpacity, 100);
+    const layer = newLayer("下絵");
+    layer.visible = doc.settings.underlayVisible;
+    layer.locked = true;
+    layer.elements.push(el);
+    doc.layers.unshift(layer);
+    doc.settings.underlayImage = null;
+    changed();
   };
   img.src = url;
-  $<HTMLInputElement>("underlayFile").value = "";
-});
-$("underlayClear").addEventListener("click", () => {
+}
+
+function usedImageIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const l of doc.layers) for (const e of l.elements) if (e.kind === "image") ids.add(e.imageId);
+  for (const e of clipboard) if (e.kind === "image") ids.add(e.imageId);
+  return ids;
+}
+
+/** 作品ファイル用: 使っている画像のデータを埋め込んだ JSON */
+function docJsonWithImages(): string {
+  const images: Record<string, string> = {};
+  for (const l of doc.layers)
+    for (const e of l.elements)
+      if (e.kind === "image") {
+        const d = getImageData(e.imageId);
+        if (d) images[e.imageId] = d;
+      }
+  return JSON.stringify({ ...doc, images });
+}
+
+// ------------------------------------------------------------------ キャンバスのサイズ
+
+const CV_PRESETS: Record<string, [number, number, string?][]> = {
+  cvSquare: [[100, 100, "PP1 最大"], [90, 90], [80, 80], [70, 70], [60, 60], [50, 50], [40, 40], [30, 30]],
+  cvWide: [[100, 80], [100, 70], [100, 50], [100, 30], [80, 50], [60, 40]],
+  cvTall: [[80, 100], [70, 100], [50, 100], [30, 100], [50, 80], [40, 60]],
+};
+let cvMode: "resize" | "new" = "resize";
+
+function openCanvasDlg(m: "resize" | "new"): void {
+  cvMode = m;
+  $("menu").hidden = true;
+  $("canvasTitle").textContent = m === "new" ? "新しく描く — キャンバスのサイズ" : "キャンバスのサイズ";
+  $("cvOk").textContent = m === "new" ? "新しく描く (いまの絵は消えます)" : "このサイズにする";
+  $("cvScaleRow").hidden = m === "new";
+  $<HTMLInputElement>("cvW").value = String(doc.settings.canvasW);
+  $<HTMLInputElement>("cvH").value = String(doc.settings.canvasH);
+  $<HTMLInputElement>("cvScale").checked = false;
+  renderCanvasDlg();
+  $("canvasDlg").hidden = false;
+}
+
+function cvValues(): { w: number; h: number } {
+  const clamp = (v: number) => Math.round(Math.min(300, Math.max(10, v || 100)) * 10) / 10;
+  return { w: clamp(Number($<HTMLInputElement>("cvW").value)), h: clamp(Number($<HTMLInputElement>("cvH").value)) };
+}
+
+function renderCanvasDlg(): void {
+  const { w, h } = cvValues();
+  for (const [boxId, list] of Object.entries(CV_PRESETS)) {
+    $(boxId).replaceChildren(
+      ...list.map(([pw, ph, note]) => {
+        const b = document.createElement("button");
+        b.textContent = `${pw}×${ph}${note ? ` (${note})` : ""}`;
+        b.classList.toggle("on", pw === w && ph === h);
+        b.addEventListener("click", () => {
+          $<HTMLInputElement>("cvW").value = String(pw);
+          $<HTMLInputElement>("cvH").value = String(ph);
+          renderCanvasDlg();
+        });
+        return b;
+      }),
+    );
+  }
+  const warn: string[] = [];
+  if (w > PP1_HOOP_MM || h > PP1_HOOP_MM) warn.push(`PP1 の刺繍枠 (100×100mm) より大きいサイズです。枠の外の部分は PP1 では縫えません。`);
+  if (cvMode === "resize" && !$<HTMLInputElement>("cvScale").checked) {
+    const b = selectionBox(doc.layers.flatMap((l) => l.elements));
+    if (b && (b.minX < -w / 2 - 0.5 || b.maxX > w / 2 + 0.5 || b.minY < -h / 2 - 0.5 || b.maxY > h / 2 + 0.5)) {
+      warn.push("描いた絵の一部がキャンバスの外に出ます (「絵も合わせて拡大縮小」で収められます)。");
+    }
+  }
+  $("cvWarn").textContent = warn.join(" ");
+  $("cvWarn").hidden = warn.length === 0;
+}
+for (const id of ["cvW", "cvH"]) $(id).addEventListener("input", renderCanvasDlg);
+$("cvScale").addEventListener("change", renderCanvasDlg);
+$("canvasClose").addEventListener("click", () => ($("canvasDlg").hidden = true));
+$("canvasBtn").addEventListener("click", () => openCanvasDlg("resize"));
+$("mCanvas").addEventListener("click", () => openCanvasDlg("resize"));
+
+$("cvOk").addEventListener("click", () => {
+  const { w, h } = cvValues();
+  $("canvasDlg").hidden = true;
   beginChange();
-  doc.settings.underlayImage = null;
+  if (cvMode === "new") {
+    doc = newDoc(w, h);
+    activeLayerId = doc.layers[doc.layers.length - 1].id;
+    selection = [];
+    nodeTarget = null;
+  } else {
+    if ($<HTMLInputElement>("cvScale").checked) {
+      // 絵の大きさの比率を保ったまま、新しいキャンバスに合わせる (線の太さはそのまま)
+      const k = Math.min(w / doc.settings.canvasW, h / doc.settings.canvasH);
+      for (const l of doc.layers) l.elements = l.elements.map((e) => mapElement(e, scaleFn(0, 0, k, k)));
+    }
+    doc.settings.canvasW = w;
+    doc.settings.canvasH = h;
+  }
+  syncSettings();
   changed();
+  fit();
+  toast(cvMode === "new" ? `${w}×${h}mm のキャンバスで新しく描きます` : `キャンバスを ${w}×${h}mm にしました`);
 });
 
 // ------------------------------------------------------------------ 書き出し
@@ -2401,6 +2613,9 @@ function checkBeforeExport(): CompileResult | null {
   }
   const v = validatePlan(res.plan);
   const problems = v.issues.filter((i) => i.severity === "error").map((i) => `・${i.message}`);
+  if (res.stats.widthMm > PP1_HOOP_MM + 0.5 || res.stats.heightMm > PP1_HOOP_MM + 0.5) {
+    problems.push(`・大きさ ${res.stats.widthMm.toFixed(0)}×${res.stats.heightMm.toFixed(0)}mm が PP1 の刺繍枠 (100×100mm) を超えています`);
+  }
   if (res.stats.stitches > STITCH_LIMIT) problems.push(`・針数 ${res.stats.stitches.toLocaleString()} が PP1 の目安 ${STITCH_LIMIT.toLocaleString()} を超えています`);
   if (problems.length > 0 && !confirm(`次の問題があります:\n${[...new Set(problems)].join("\n")}\n\nこのまま保存しますか？`)) return null;
   return res;
@@ -2428,7 +2643,7 @@ $("mExportDst").addEventListener("click", () => {
 $("menuBtn").addEventListener("click", () => ($("menu").hidden = !$("menu").hidden));
 $("mSave").addEventListener("click", () => {
   $("menu").hidden = true;
-  void shareOrDownload(JSON.stringify(doc), `${doc.settings.name || "SKETCH"}.pp1sketch.json`, "application/json");
+  void shareOrDownload(docJsonWithImages(), `${doc.settings.name || "SKETCH"}.pp1sketch.json`, "application/json");
 });
 $("mOpen").addEventListener("click", () => {
   $("menu").hidden = true;
@@ -2439,7 +2654,8 @@ $("openFile").addEventListener("change", () => {
   if (!file) return;
   file.text().then((t) => {
     try {
-      const d = parseDoc(t);
+      const { doc: d, images } = parseDocWithImages(t);
+      for (const [id, url] of Object.entries(images)) if (typeof url === "string") putImage(url, id);
       beginChange();
       doc = d;
       activeLayerId = doc.layers[doc.layers.length - 1].id;
@@ -2447,6 +2663,8 @@ $("openFile").addEventListener("change", () => {
       nodeTarget = null;
       syncSettings();
       changed();
+      migrateUnderlay();
+      fit();
       toast("作品を開きました");
     } catch (err) {
       toast(String((err as Error).message ?? err));
@@ -2454,23 +2672,14 @@ $("openFile").addEventListener("change", () => {
   });
   $<HTMLInputElement>("openFile").value = "";
 });
-$("mNew").addEventListener("click", () => {
-  $("menu").hidden = true;
-  if (!confirm("いまの絵を消して新しく描きますか？ (取り消しで戻せます)")) return;
-  beginChange();
-  doc = newDoc();
-  activeLayerId = doc.layers[doc.layers.length - 1].id;
-  selection = [];
-  nodeTarget = null;
-  syncSettings();
-  changed();
-});
+$("mNew").addEventListener("click", () => openCanvasDlg("new"));
 
 // ポップオーバーの外をタップしたら閉じる
 document.addEventListener("pointerdown", (e) => {
   const t = e.target as HTMLElement;
   if (!$("menu").hidden && !t.closest("#menu") && !t.closest("#menuBtn")) $("menu").hidden = true;
   if (!$("palette").hidden && !t.closest("#palette") && !t.closest("#colorBtn")) $("palette").hidden = true;
+  if (!$("canvasDlg").hidden && !t.closest("#canvasDlg") && !t.closest("#canvasBtn") && !t.closest("#menu")) $("canvasDlg").hidden = true;
 });
 
 // ------------------------------------------------------------------ その他
@@ -2550,6 +2759,11 @@ document.addEventListener("webkitfullscreenchange", syncFs);
 if (isStandalone) $("fsBtn").hidden = true;
 
 // 初期化
+void loadStoredImages().then(() => {
+  migrateUnderlay();
+  if (undoStack.length === 0) void removeUnusedImages(usedImageIds());
+  requestDraw();
+});
 $("colorSwatch").style.background = rgb(color);
 $("panel").classList.toggle("closed", !panelOpen);
 $("panelBtn").classList.toggle("on", panelOpen);

@@ -18,7 +18,17 @@ import {
   softMoveNodes,
   subdivide,
 } from "../src/sketch/edit";
-import { uid, type FillEl, type StrokeEl, type ThreadRef } from "../src/sketch/model";
+import { compileSketch } from "../src/sketch/compile";
+import {
+  imageCorners,
+  newDoc,
+  parseDocWithImages,
+  uid,
+  type FillEl,
+  type ImageEl,
+  type StrokeEl,
+  type ThreadRef,
+} from "../src/sketch/model";
 
 const BLACK: ThreadRef = { r: 0, g: 0, b: 0, pecIndex: 20 };
 
@@ -178,5 +188,56 @@ describe("編集点", () => {
     expect(f.outer[7]).toEqual({ x: -10, y: 0 }); // 閉じる辺の中点
     expect(nodeCount(f)).toBe(16);
     expect((subdivide(line(4)) as StrokeEl).points.length).toBe(9);
+  });
+});
+
+describe("下敷きの画像とキャンバス", () => {
+  const img = (): ImageEl => ({
+    kind: "image",
+    id: uid(),
+    imageId: "img1",
+    p0: { x: -10, y: -5 },
+    p1: { x: 10, y: -5 },
+    p2: { x: -10, y: 5 },
+    opacity: 0.5,
+  });
+
+  it("画像は縫わない (コンパイル結果に出てこない)", () => {
+    const doc = newDoc();
+    doc.layers[0].elements.push(img());
+    doc.layers[1].elements.push(line());
+    const res = compileSketch(doc);
+    expect(res.seq.length).toBe(1);
+    expect(res.seq[0].kind).toBe("stroke");
+    const only = newDoc();
+    only.layers[0].elements.push(img());
+    expect(compileSketch(only).stats.stitches).toBe(0);
+  });
+
+  it("画像も拡大縮小・回転・反転できる (3つの角で表す)", () => {
+    expect(elementBox(img())).toEqual({ minX: -10, minY: -5, maxX: 10, maxY: 5 });
+    const s = mapElement(img(), scaleFn(0, 0, 2, 2)) as ImageEl;
+    expect(imageCorners(s)[2]).toEqual({ x: 20, y: 10 });
+    const r = rotateElement(img(), 0, 0, Math.PI / 2) as ImageEl;
+    close(r.p0.x, 5);
+    close(r.p0.y, -10);
+    const f = flipElement(img(), 0, 0, true) as ImageEl;
+    expect(f.p0).toEqual({ x: 10, y: -5 });
+    expect(f.p1).toEqual({ x: -10, y: -5 });
+    expect(nodeCount(img())).toBe(0);
+    const [d] = duplicateElements([img()], 3, 0) as ImageEl[];
+    expect(d.imageId).toBe("img1");
+    expect(d.p0).toEqual({ x: -7, y: -5 });
+  });
+
+  it("キャンバスのサイズは作品に保存され、古いファイルは 100×100 になる", () => {
+    const d = newDoc(80, 50);
+    expect([d.settings.canvasW, d.settings.canvasH]).toEqual([80, 50]);
+    const old = JSON.stringify({ app: "pp1-sketch", version: 1, layers: [], settings: { name: "OLD" } });
+    const p = parseDocWithImages(old);
+    expect([p.doc.settings.canvasW, p.doc.settings.canvasH]).toEqual([100, 100]);
+    expect(p.images).toEqual({});
+    const withImg = JSON.stringify({ ...d, images: { img1: "data:image/png;base64,AAAA" } });
+    expect(parseDocWithImages(withImg).images.img1).toContain("data:image/png");
   });
 });

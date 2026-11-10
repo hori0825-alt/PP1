@@ -7,7 +7,7 @@
 // どちらも「パス (輪) の配列」として同じように扱う。
 
 import { dist, simplify } from "./geom";
-import { uid, type Element, type FillEl, type StrokeEl, type Vec } from "./model";
+import { imageCorners, uid, type Element, type FillEl, type StrokeEl, type Vec } from "./model";
 
 export interface Box {
   minX: number;
@@ -18,7 +18,7 @@ export interface Box {
 
 /** 部品の外接矩形 (線は太さぶん広げる) */
 export function elementBox(el: Element): Box {
-  const pts = el.kind === "stroke" ? el.points : el.outer;
+  const pts = el.kind === "stroke" ? el.points : el.kind === "fill" ? el.outer : imageCorners(el);
   const pad = el.kind === "stroke" ? el.width / 2 : 0;
   let minX = Infinity;
   let minY = Infinity;
@@ -59,6 +59,7 @@ export function cloneElement<T extends Element>(el: T): T {
 /** すべての点を f で写した新しい部品を返す (id はそのまま) */
 export function mapElement(el: Element, f: (v: Vec) => Vec): Element {
   if (el.kind === "stroke") return { ...el, points: el.points.map(f) };
+  if (el.kind === "image") return { ...el, p0: f(el.p0), p1: f(el.p1), p2: f(el.p2) };
   return { ...el, outer: el.outer.map(f), holes: el.holes.map((h) => h.map(f)) };
 }
 
@@ -115,15 +116,17 @@ export interface NodeRef {
   index: number;
 }
 
-/** 部品のパス (輪) を列挙する */
+/** 部品のパス (輪) を列挙する。画像には編集点がない */
 export function paths(el: Element): PathRef[] {
   if (el.kind === "stroke") return [{ pts: el.points, closed: el.closed }];
+  if (el.kind === "image") return [];
   return [{ pts: el.outer, closed: true }, ...el.holes.map((h) => ({ pts: h, closed: true }))];
 }
 
 /** ring 番目のパスを差し替えた新しい部品 */
 export function withPath(el: Element, ring: number, pts: Vec[]): Element {
   if (el.kind === "stroke") return { ...el, points: pts };
+  if (el.kind === "image") return el;
   if (ring === 0) return { ...el, outer: pts };
   const holes = el.holes.slice();
   holes[ring - 1] = pts;

@@ -32,7 +32,8 @@ import {
 import {
   colorKey,
   resolveStrokeStyle,
-  type Element,
+  isStitchEl,
+  type StitchEl as Element,
   type FillEl,
   type Layer,
   type SketchDoc,
@@ -136,7 +137,7 @@ export function planOrder(layers: Layer[]): Unit[] {
 
   for (const layer of layers) {
     if (!layer.visible) continue;
-    const els = layer.elements.filter(hasContent);
+    const els = layer.elements.filter(isStitchEl).filter(hasContent);
     if (els.length === 0) continue;
 
     if (layer.order === "manual") {

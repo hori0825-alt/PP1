@@ -47,7 +47,28 @@ export interface FillEl {
   color: ThreadRef;
 }
 
-export type Element = StrokeEl | FillEl;
+/**
+ * 画像 (下敷き・なぞり用)。刺繍には含まれない。
+ * 画像の左上 p0・右上 p1・左下 p2 の3つの角 (mm) で位置・大きさ・回転・反転を表す。
+ * 画像データ本体は images.ts のストアにあり、ここには imageId だけを持つ (保存・取り消しを軽くするため)。
+ */
+export interface ImageEl {
+  kind: "image";
+  id: string;
+  imageId: string;
+  p0: Vec;
+  p1: Vec;
+  p2: Vec;
+  /** 不透明度 0〜1 */
+  opacity: number;
+}
+
+/** 縫う部品 */
+export type StitchEl = StrokeEl | FillEl;
+/** レイヤーに入るもの (縫う部品 + 画像) */
+export type Element = StitchEl | ImageEl;
+
+export const isStitchEl = (el: Element): el is StitchEl => el.kind !== "image";
 
 export interface Layer {
   id: string;
@@ -88,7 +109,10 @@ export interface SketchSettings {
   trimPolicy: TrimPolicy;
   /** auto のとき、この距離 (mm) 以上は糸切り */
   trimDistance: number;
-  /** 下絵 (dataURL)。トレース用。刺繍には含まれない */
+  /** キャンバス (刺繍する範囲) の幅・高さ (mm)。PP1 の枠は最大 100×100 */
+  canvasW: number;
+  canvasH: number;
+  /** (旧形式) 下絵 (dataURL)。読み込み時に画像レイヤーへ移す */
   underlayImage: string | null;
   underlayOpacity: number;
   underlayVisible: boolean;
@@ -117,6 +141,8 @@ export const DEFAULT_SETTINGS: SketchSettings = {
   underlay: true,
   trimPolicy: "auto",
   trimDistance: 10,
+  canvasW: 100,
+  canvasH: 100,
   underlayImage: null,
   underlayOpacity: 0.35,
   underlayVisible: true,
@@ -126,14 +152,23 @@ export function newLayer(name: string): Layer {
   return { id: uid("L"), name, visible: true, locked: false, order: "auto", elements: [] };
 }
 
-export function newDoc(): SketchDoc {
+export function newDoc(canvasW = 100, canvasH = 100): SketchDoc {
   // 刺繍の定石: 塗りを先に、線画を後 (上) に縫う
   return {
     app: "pp1-sketch",
     version: 1,
     layers: [newLayer("塗り"), newLayer("線画")],
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, canvasW, canvasH },
   };
+}
+
+/** PP1 の刺繍枠 (mm) */
+export const PP1_HOOP_MM = 100;
+
+/** 画像の4つ目の角 (右下) */
+export function imageCorners(el: ImageEl): Vec[] {
+  const p3 = { x: el.p1.x + el.p2.x - el.p0.x, y: el.p1.y + el.p2.y - el.p0.y };
+  return [el.p0, el.p1, p3, el.p2];
 }
 
 /** 太さから実際の縫い方を決める */
@@ -154,7 +189,17 @@ export function cloneDoc(doc: SketchDoc): SketchDoc {
 
 /** 読み込んだ JSON を検証し、欠けている設定を補う */
 export function parseDoc(text: string): SketchDoc {
-  const raw = JSON.parse(text) as Partial<SketchDoc>;
+  return parseDocWithImages(text).doc;
+}
+
+/** 作品ファイル (画像データ入り) を読む。images は imageId → dataURL */
+export function parseDocWithImages(text: string): { doc: SketchDoc; images: Record<string, string> } {
+  const raw = JSON.parse(text) as Partial<SketchDoc> & { images?: Record<string, string> };
+  const images = raw.images && typeof raw.images === "object" ? raw.images : {};
+  return { doc: parseDocObject(raw), images };
+}
+
+function parseDocObject(raw: Partial<SketchDoc>): SketchDoc {
   if (raw.app !== "pp1-sketch" || !Array.isArray(raw.layers)) {
     throw new Error("PP1 Sketch のファイルではありません");
   }
