@@ -36,6 +36,8 @@
       <button id="menuBtn" class="icon" title="メニュー">⋯</button>
     </header>
 
+    <div id="errBar" hidden><span></span><button id="errClose" class="mini">閉じる</button></div>
+
     <div id="main">
       <nav id="tools">
         <button data-tool="pen" class="tool on" title="ペン (線)"><span>✏️</span><small>ペン</small></button>
@@ -48,6 +50,7 @@
         <button data-tool="eraser" class="tool" title="消しゴム"><span>🧽</span><small>消す</small></button>
         <div class="sep"></div>
         <button id="colorBtn" class="swatchBtn" title="糸の色"><span id="colorSwatch"></span><small>色</small></button>
+        <button id="layersBtn" class="tool" title="レイヤー (重ね順・縫い順)"><span>📚</span><small>レイヤー</small></button>
         <button id="fitBtn" class="tool" title="全体表示"><span>⤢</span><small>全体</small></button>
         <button id="imgBtn" class="tool" title="画像を下敷きに入れる (なぞって描く)"><span>🖼️</span><small>下絵</small></button>
       </nav>
@@ -77,7 +80,7 @@
         <div id="selBox" hidden></div>
 
         <div class="tab" id="tab-layers">
-          <p class="note">上のレイヤーほど上に重なり、<b>下のレイヤーから順に縫います</b>。</p>
+          <p class="note">上のレイヤーほど上に重なり、<b>下のレイヤーから順に縫います</b>。タップで描くレイヤーを選び、選んだレイヤーの名前をもう一度タップすると名前を変えられます。</p>
           <ul id="layerList"></ul>
           <div class="row">
             <button id="imgLoad">🖼 画像を下敷きに入れる</button>

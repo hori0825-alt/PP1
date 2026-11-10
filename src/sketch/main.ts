@@ -62,7 +62,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.2.0";
+const SKETCH_VERSION = "1.2.1";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -70,6 +70,16 @@ const PREF_KEY = "pp1-sketch:prefs";
 const CLIP_KEY = "pp1-sketch:clipboard";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+// 予期しないエラーは画面に出す (iPad では開発者ツールが見られないため、内容を伝えてもらえるように)
+function showError(msg: string): void {
+  const bar = document.getElementById("errBar");
+  if (!bar) return;
+  bar.querySelector("span")!.textContent = `エラー: ${msg}`;
+  bar.hidden = false;
+}
+window.addEventListener("error", (e) => showError(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("unhandledrejection", (e) => showError(String((e.reason as Error)?.message ?? e.reason)));
 $("ver").textContent = `v${SKETCH_VERSION}`;
 
 type Tool = "pen" | "bucket" | "lasso" | "ellipse" | "rect" | "select" | "node" | "eraser";
@@ -1982,6 +1992,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#tabs button[data-
   b.addEventListener("click", () => {
     for (const x of document.querySelectorAll<HTMLButtonElement>("#tabs button[data-tab]")) x.classList.toggle("on", x === b);
     for (const t of ["layers", "seq", "settings"]) $(`tab-${t}`).hidden = t !== b.dataset.tab;
+    $("layersBtn").classList.toggle("on", panelOpen && b.dataset.tab === "layers");
     renderPanels();
   });
 }
@@ -2038,7 +2049,12 @@ function renderLayers(): void {
     nm.innerHTML = imgOnly
       ? `${escapeHtml(layer.name)}<small>画像${imgs}・縫いません</small>`
       : `${escapeHtml(layer.name)}<small>線${lines}・面${fills}${imgs ? `・画像${imgs}` : ""}${st !== undefined ? `・${st.toLocaleString()}針` : ""}</small>`;
-    nm.addEventListener("dblclick", () => renameLayer(layer));
+    // 名前の変更: 選んでいるレイヤーの名前をもう一度タップ (iPad ではダブルタップが届かないため)
+    nm.addEventListener("click", (ev) => {
+      if (layer.id !== activeLayerId) return;
+      ev.stopPropagation();
+      renameLayer(layer);
+    });
     const ord = document.createElement("button");
     ord.className = "ordBtn";
     ord.textContent = layer.order === "auto" ? "自動順" : "描いた順";
@@ -2706,11 +2722,19 @@ function setPanelOpen(open: boolean): void {
   panelOpen = open;
   $("panel").classList.toggle("closed", !open);
   $("panelBtn").classList.toggle("on", open);
+  $("layersBtn").classList.toggle("on", open && !$("tab-layers").hidden);
   savePrefs();
   if (!viewTouched) fit();
   if (open) renderPanels();
 }
 $("panelBtn").addEventListener("click", () => setPanelOpen(!panelOpen));
+$("layersBtn").addEventListener("click", () => {
+  // レイヤーのタブを開く (すでに開いていれば閉じる)
+  const onLayers = !$("tab-layers").hidden;
+  if (panelOpen && onLayers) return setPanelOpen(false);
+  ($("tabs").querySelector('[data-tab="layers"]') as HTMLButtonElement).click();
+  setPanelOpen(true);
+});
 $("panelClose").addEventListener("click", () => setPanelOpen(false));
 
 type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void };
@@ -2767,6 +2791,8 @@ void loadStoredImages().then(() => {
 $("colorSwatch").style.background = rgb(color);
 $("panel").classList.toggle("closed", !panelOpen);
 $("panelBtn").classList.toggle("on", panelOpen);
+$("layersBtn").classList.toggle("on", panelOpen);
+$("errClose").addEventListener("click", () => ($("errBar").hidden = true));
 syncSettings();
 renderToolOpts();
 renderPanels();

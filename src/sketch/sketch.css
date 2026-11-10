@@ -13,6 +13,14 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+button, #layerList li, #seqList li { cursor: pointer; touch-action: manipulation; }
+input, select, textarea { -webkit-user-select: text; user-select: text; }
+#errBar {
+  display: flex; gap: 10px; align-items: center; background: #fdeaea; color: var(--bad);
+  border-bottom: 1px solid #f5c2c2; padding: 6px 12px; font-size: 13px; flex-shrink: 0;
+}
+#errBar span { flex: 1; word-break: break-all; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
@@ -77,11 +85,11 @@ input, select { font: inherit; }
 #main { flex: 1; display: flex; min-height: 0; position: relative; }
 #tools {
   width: 64px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px;
   overflow-y: auto; padding-bottom: calc(6px + env(safe-area-inset-bottom));
 }
 .tool, .swatchBtn {
-  width: 54px; min-height: 52px; display: flex; flex-direction: column; align-items: center;
+  width: 54px; min-height: 50px; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 2px; padding: 3px; flex-shrink: 0;
 }
 .tool span { font-size: 21px; line-height: 1; }
@@ -152,9 +160,9 @@ input, select { font: inherit; }
   display: flex; flex-direction: column; min-height: 0;
   padding-bottom: env(safe-area-inset-bottom);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
-  transition: transform 0.18s ease-out;
 }
-#panel.closed { transform: translateX(105%); pointer-events: none; box-shadow: none; }
+/* 閉じたパネルは表示ごと消す (変形 + pointer-events で隠すと iPad で触れなくなることがあるため) */
+#panel.closed { display: none; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
 .tabs .closeX { flex: 0 0 44px; color: var(--muted); font-size: 16px; }
 .tabs button { flex: 1; border: none; border-radius: 0; min-height: 44px; color: var(--muted); }
@@ -173,8 +181,8 @@ input, select { font: inherit; }
 
 #layerList, #seqList { list-style: none; margin: 0; padding: 0; }
 #layerList li {
-  display: flex; align-items: center; gap: 6px; padding: 8px; border-radius: 10px;
-  border: 1px solid var(--line); margin-bottom: 6px; background: #fff;
+  display: flex; align-items: center; gap: 6px; padding: 9px 8px; border-radius: 10px;
+  border: 1px solid var(--line); margin-bottom: 6px; background: #fff; min-height: 54px;
 }
 #layerList li.active { border-color: var(--accent); background: var(--accent-soft); }
 #layerList .ord {
@@ -184,7 +192,7 @@ input, select { font: inherit; }
 #layerList .ord.img { background: #eef2ff; font-size: 12px; }
 #layerList .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #layerList .nm small { display: block; color: var(--muted); font-size: 11px; }
-#layerList button { min-height: 34px; width: 36px; padding: 0; font-size: 15px; }
+#layerList button { min-height: 40px; width: 40px; padding: 0; font-size: 15px; }
 #layerList .ordBtn { width: auto; padding: 0 6px; font-size: 11px; }
 #layerList li.hiddenL .nm { opacity: 0.4; }
 
