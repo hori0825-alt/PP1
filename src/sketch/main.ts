@@ -15,6 +15,30 @@ import { bucketFill } from "./bucket";
 import { compileSketch, flattenPlan, type CompileResult, type FlatStitch, type SeqItem } from "./compile";
 import { cleanRing, cleanStroke, dist, distToPolyline, pointInShape, polylineLength, signedAreaMm } from "./geom";
 import {
+  cloneElement,
+  decimate,
+  deleteNodes,
+  duplicateElements,
+  elementBox,
+  flipElement,
+  getNode,
+  insertNode,
+  mapElement,
+  nearestNode,
+  nearestSegment,
+  nodeCount,
+  nodeKey,
+  paths,
+  rotateElement,
+  scaleFn,
+  selectionBox,
+  softMoveNodes,
+  subdivide,
+  translateFn,
+  type Box,
+  type NodeRef,
+} from "./edit";
+import {
   cloneDoc,
   newDoc,
   newLayer,
@@ -31,16 +55,17 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.0.0";
+const SKETCH_VERSION = "1.1.0";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
 const PREF_KEY = "pp1-sketch:prefs";
+const CLIP_KEY = "pp1-sketch:clipboard";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 $("ver").textContent = `v${SKETCH_VERSION}`;
 
-type Tool = "pen" | "bucket" | "lasso" | "ellipse" | "rect" | "select" | "eraser";
+type Tool = "pen" | "bucket" | "lasso" | "ellipse" | "rect" | "select" | "node" | "eraser";
 type Mode = "draw" | "stitch";
 
 // ------------------------------------------------------------------ 状態
@@ -63,11 +88,24 @@ let recent: ThreadRef[] = [byPec(20), byPec(5), byPec(13), byPec(29)];
 let penWidth = 1.0;
 let shapeFill = true;
 let gapClose = 1.0;
-let selectedId: string | null = null;
+/** 選択中の部品 (id) */
+let selection: string[] = [];
 let seqSelected: string | null = null;
+/** 追加選択モード (タップで選択に足す/外す) */
+let additive = false;
+/** 拡大縮小で線の太さも変える */
+let scaleWidth = false;
+/** 編集点ツール: 対象の部品と、選択中の点 */
+let nodeTarget: string | null = null;
+let nodeSel: NodeRef[] = [];
+/** やわらか変形の範囲 (mm, 0 = 選んだ点だけ) */
+let softRadius = 6;
+let clipboard: Element[] = loadClipboard();
+let pasteCount = 0;
 
 const prefs = loadPrefs();
 let penOnly = prefs.penOnly ?? false;
+let panelOpen = prefs.panelOpen ?? window.innerWidth >= 1400;
 
 const undoStack: string[] = [];
 const redoStack: string[] = [];
@@ -97,7 +135,16 @@ function loadDoc(): SketchDoc {
   return newDoc();
 }
 
-function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean } {
+function loadClipboard(): Element[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CLIP_KEY) ?? "[]");
+    return Array.isArray(v) ? (v as Element[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean; panelOpen?: boolean } {
   try {
     return JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}");
   } catch {
@@ -106,7 +153,7 @@ function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean } {
 }
 function savePrefs(): void {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ penOnly, penOnlyDecided: prefs.penOnlyDecided }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ penOnly, penOnlyDecided: prefs.penOnlyDecided, panelOpen }));
   } catch {
     /* noop */
   }
@@ -142,6 +189,7 @@ function beginChange(): void {
 
 /** 変更の後に呼ぶ */
 function changed(): void {
+  pruneSelection();
   docVersion++;
   scheduleSave();
   scheduleCompile();
@@ -155,7 +203,7 @@ function undo(): void {
   redoStack.push(snapshot());
   doc = parseDoc(s);
   ensureActiveLayer();
-  selectedId = null;
+  pruneSelection();
   changed();
   toast("取り消しました");
 }
@@ -165,6 +213,7 @@ function redo(): void {
   undoStack.push(snapshot());
   doc = parseDoc(s);
   ensureActiveLayer();
+  pruneSelection();
   changed();
   toast("やり直しました");
 }
@@ -183,6 +232,52 @@ function findElement(id: string): { el: Element; layer: Layer } | null {
     if (el) return { el, layer };
   }
   return null;
+}
+
+/** 部品を同じ id の新しい部品に差し替える */
+function replaceElement(el: Element): void {
+  for (const layer of doc.layers) {
+    const i = layer.elements.findIndex((e) => e.id === el.id);
+    if (i >= 0) {
+      layer.elements[i] = el;
+      return;
+    }
+  }
+}
+
+/** 選択中の部品 (レイヤーの順・描いた順に並べる) */
+function selectedEls(): { el: Element; layer: Layer }[] {
+  const set = new Set(selection);
+  const out: { el: Element; layer: Layer }[] = [];
+  for (const layer of doc.layers) for (const el of layer.elements) if (set.has(el.id)) out.push({ el, layer });
+  return out;
+}
+
+/** 消えた部品やロックされた部品を選択から外す */
+function pruneSelection(): void {
+  selection = selection.filter((id) => {
+    const f = findElement(id);
+    return f && f.layer.visible && !f.layer.locked;
+  });
+  if (nodeTarget && !findElement(nodeTarget)) {
+    nodeTarget = null;
+    nodeSel = [];
+  }
+  if (nodeTarget) {
+    const el = findElement(nodeTarget)!.el;
+    const ps = paths(el);
+    nodeSel = nodeSel.filter((r) => r.index < (ps[r.ring]?.pts.length ?? 0));
+  }
+}
+
+function setSelection(ids: string[]): void {
+  selection = [...new Set(ids)];
+  seqSelected = selection.length === 1 ? selection[0] : null;
+  const first = selection.length ? findElement(selection[selection.length - 1]) : null;
+  if (first) activeLayerId = first.layer.id;
+  renderToolOpts();
+  renderPanels();
+  requestDraw();
 }
 
 // ------------------------------------------------------------------ コンパイル
@@ -219,25 +314,45 @@ const ctx = cv.getContext("2d")!;
 let dpr = window.devicePixelRatio || 1;
 const view = { scale: 6, ox: 0, oy: 0 };
 let viewInit = false;
+/** ユーザーが拡大・移動したら、画面サイズが変わっても勝手に全体表示し直さない */
+let viewTouched = false;
 
+/**
+ * 刺繍枠 (100mm) を画面いっぱいに表示する。
+ * ツール設定は枠の外の余白 (横長なら左、縦長なら上) に置くので、余白が足りるときは場所を取らない。
+ */
 function fit(): void {
-  // 上はツール設定パネル、下 (プレビュー時) はプレイヤーの分だけ空ける
-  const top = mode === "draw" ? 56 : 8;
-  const bottom = mode === "stitch" ? 72 : 8;
-  const w = cv.clientWidth;
-  const h = cv.clientHeight - top - bottom;
-  view.scale = Math.max(1, Math.min(w, h) / 106);
+  // パネルを開いているときは、その分よける (狭い画面では重ねて表示し、枠は小さくしない)
+  const pw = panelOpen ? $("panel").getBoundingClientRect().width : 0;
+  const panelW = cv.clientWidth - pw >= 700 ? pw : 0;
+  const bottom = mode === "stitch" ? 68 : 6;
+  const w = Math.max(50, cv.clientWidth - panelW);
+  const h = Math.max(50, cv.clientHeight - bottom - 6);
+  const landscape = cv.clientWidth > cv.clientHeight;
+  const base = Math.min(w, h);
+  let side = base;
+  if (mode === "draw") {
+    // 余白が少し足りないだけなら枠を優先する (ツール設定が枠の角に少しかかってもよい)
+    if (landscape && (w - side) / 2 < 180) side = Math.max(Math.min(h, w - 2 * 180), base * 0.94);
+    if (!landscape && (h - side) / 2 < 64) side = Math.max(Math.min(w, h - 2 * 64), base * 0.9);
+  }
+  view.scale = Math.max(1, side / 102);
   view.ox = w / 2;
-  view.oy = top + h / 2;
+  view.oy = 6 + h / 2;
+  viewTouched = false;
   requestDraw();
 }
 
+let lastStage = { w: 0, h: 0 };
 function resize(): void {
   dpr = window.devicePixelRatio || 1;
   const r = stage.getBoundingClientRect();
   cv.width = Math.max(1, Math.round(r.width * dpr));
   cv.height = Math.max(1, Math.round(r.height * dpr));
-  if (!viewInit) {
+  const big = Math.abs(r.width - lastStage.w) > 40 || Math.abs(r.height - lastStage.h) > 40;
+  lastStage = { w: r.width, h: r.height };
+  // 初回、または回転・全画面切り替えで大きさが変わったら、全体表示し直す
+  if (!viewInit || (big && !viewTouched)) {
     fit();
     viewInit = true;
   }
@@ -367,29 +482,151 @@ function drawElement(el: Element, alpha: number, px: number, offset?: Vec): void
   ctx.restore();
 }
 
+type HandleName = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "rot";
+
+/** 選択枠のハンドル位置 (mm)。小さすぎる辺のハンドルは出さない */
+function handlePositions(b: Box): { name: HandleName; p: Vec }[] {
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  const wPx = (b.maxX - b.minX) * view.scale;
+  const hPx = (b.maxY - b.minY) * view.scale;
+  const out: { name: HandleName; p: Vec }[] = [
+    { name: "rot", p: { x: cx, y: b.minY - 34 / view.scale } },
+    { name: "nw", p: { x: b.minX, y: b.minY } },
+    { name: "ne", p: { x: b.maxX, y: b.minY } },
+    { name: "se", p: { x: b.maxX, y: b.maxY } },
+    { name: "sw", p: { x: b.minX, y: b.maxY } },
+  ];
+  if (wPx > 56) out.push({ name: "n", p: { x: cx, y: b.minY } }, { name: "s", p: { x: cx, y: b.maxY } });
+  if (hPx > 56) out.push({ name: "e", p: { x: b.maxX, y: cy } }, { name: "w", p: { x: b.minX, y: cy } });
+  return out;
+}
+
+/** 選択枠 (線の太さぶん+少し余白) */
+function selBoxPadded(): Box | null {
+  const b = selectionBox(selectedEls().map((f) => f.el));
+  if (!b) return null;
+  const pad = 4 / view.scale;
+  return { minX: b.minX - pad, minY: b.minY - pad, maxX: b.maxX + pad, maxY: b.maxY + pad };
+}
+
 function drawSelection(px: number): void {
-  if (!selectedId) return;
-  const f = findElement(selectedId);
-  if (!f) return;
   ctx.save();
-  if (move.active) ctx.translate(move.dx, move.dy);
-  ctx.strokeStyle = "#2f6fec";
-  ctx.lineWidth = 2 * px;
-  ctx.setLineDash([6 * px, 4 * px]);
-  const pts = f.el.kind === "fill" ? f.el.outer : f.el.points;
-  const pad = f.el.kind === "stroke" ? f.el.width / 2 + 2 * px : 2 * px;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of pts) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
+  if (tool === "node") drawNodes(px);
+  else if (selection.length > 0) {
+    const els = selectedEls();
+    // 複数選択なら、それぞれの部品も薄く囲む
+    if (els.length > 1) {
+      ctx.strokeStyle = "rgba(47,111,236,0.45)";
+      ctx.lineWidth = px;
+      ctx.setLineDash([3 * px, 3 * px]);
+      for (const f of els) {
+        const e = elementBox(f.el);
+        ctx.strokeRect(e.minX, e.minY, e.maxX - e.minX, e.maxY - e.minY);
+      }
+    }
+    const b = selBoxPadded();
+    if (b) {
+      ctx.strokeStyle = "#2f6fec";
+      ctx.lineWidth = 1.5 * px;
+      ctx.setLineDash([6 * px, 4 * px]);
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      ctx.setLineDash([]);
+      if (tool === "select") {
+        const hs = handlePositions(b);
+        const rot = hs.find((h) => h.name === "rot")!;
+        ctx.beginPath();
+        ctx.moveTo(rot.p.x, rot.p.y);
+        ctx.lineTo(rot.p.x, b.minY);
+        ctx.stroke();
+        for (const h of hs) {
+          ctx.fillStyle = "#fff";
+          ctx.lineWidth = 2 * px;
+          ctx.beginPath();
+          if (h.name === "rot") ctx.arc(h.p.x, h.p.y, 9 * px, 0, Math.PI * 2);
+          else ctx.rect(h.p.x - 6 * px, h.p.y - 6 * px, 12 * px, 12 * px);
+          ctx.fill();
+          ctx.stroke();
+        }
+        // 回転ハンドルの矢印
+        ctx.beginPath();
+        ctx.arc(rot.p.x, rot.p.y, 4.5 * px, -Math.PI * 0.9, Math.PI * 0.4);
+        ctx.stroke();
+      }
+    }
   }
-  ctx.strokeRect(minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2);
+  // 範囲選択の四角
+  if (gesture?.kind === "marquee") {
+    const g = gesture;
+    ctx.fillStyle = "rgba(47,111,236,0.08)";
+    ctx.strokeStyle = "#2f6fec";
+    ctx.lineWidth = px;
+    ctx.setLineDash([4 * px, 3 * px]);
+    const x = Math.min(g.start.x, g.cur.x);
+    const y = Math.min(g.start.y, g.cur.y);
+    ctx.fillRect(x, y, Math.abs(g.cur.x - g.start.x), Math.abs(g.cur.y - g.start.y));
+    ctx.strokeRect(x, y, Math.abs(g.cur.x - g.start.x), Math.abs(g.cur.y - g.start.y));
+  }
   ctx.restore();
+  // 変形中の寸法・角度
+  if (gesture && (gesture.kind === "xform" || gesture.kind === "node") && gesture.info) {
+    const g = gesture;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const sx = g.cur.x * view.scale + view.ox;
+    const sy = g.cur.y * view.scale + view.oy;
+    ctx.font = "600 13px -apple-system, sans-serif";
+    const w = ctx.measureText(g.info).width + 14;
+    const lx = Math.min(cv.clientWidth - w - 4, sx + 18);
+    const ly = Math.max(4, sy - 44);
+    ctx.fillStyle = "rgba(29,35,48,0.88)";
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function") ctx.roundRect(lx, ly, w, 24, 6);
+    else ctx.rect(lx, ly, w, 24);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText(g.info, lx + 7, ly + 16.5);
+    ctx.restore();
+  }
+}
+
+/** 編集点ツール: 対象の部品の輪郭と点を描く */
+function drawNodes(px: number): void {
+  const f = nodeTarget ? findElement(nodeTarget) : null;
+  if (!f) return;
+  const sel = new Set(nodeSel.map(nodeKey));
+  ctx.strokeStyle = "#2f6fec";
+  ctx.lineWidth = 1.2 * px;
+  for (const path of paths(f.el)) {
+    ctx.beginPath();
+    path.pts.forEach((v, i) => (i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y)));
+    if (path.closed) ctx.closePath();
+    ctx.stroke();
+  }
+  // やわらか変形の範囲 (ドラッグ中)
+  if (gesture?.kind === "node" && softRadius > 0 && gesture.grab) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(232,80,106,0.5)";
+    ctx.setLineDash([4 * px, 4 * px]);
+    ctx.beginPath();
+    ctx.arc(gesture.grab.x, gesture.grab.y, softRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  paths(f.el).forEach((path, ring) => {
+    path.pts.forEach((v, index) => {
+      const on = sel.has(nodeKey({ ring, index }));
+      const r = (on ? 5.5 : 4) * px;
+      ctx.fillStyle = on ? "#e8506a" : "#fff";
+      ctx.strokeStyle = on ? "#b8324a" : "#2f6fec";
+      ctx.lineWidth = 1.5 * px;
+      ctx.beginPath();
+      if (index === 0 && !path.closed) ctx.arc(v.x, v.y, r * 1.2, 0, Math.PI * 2);
+      else ctx.rect(v.x - r, v.y - r, r * 2, r * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  });
 }
 
 function drawStitches(px: number): void {
@@ -480,17 +717,52 @@ type Gesture =
   | { kind: "draw"; id: number; raw: Vec[]; smooth: Vec; start: Vec; cur: Vec }
   | { kind: "pinch"; ids: [number, number]; d0: number; scale0: number; anchor: Vec; c0: { x: number; y: number } }
   | { kind: "pan"; id: number; ox0: number; oy0: number; sx: number; sy: number }
-  | { kind: "move"; id: number; start: Vec }
+  | {
+      kind: "xform";
+      id: number;
+      op: "move" | "scale" | "rotate";
+      handle: HandleName | null;
+      start: Vec;
+      cur: Vec;
+      /** つかみ始めた時点の部品 (毎回ここから計算するので誤差がたまらない) */
+      orig: Element[];
+      box: Box;
+      before: string;
+      moved: boolean;
+      /** 動かさずに離したら、この部品だけを選択し直す */
+      tapId: string | null;
+      info: string;
+    }
+  | { kind: "marquee"; id: number; start: Vec; cur: Vec; target: "elements" | "nodes"; base: string[]; baseNodes: NodeRef[] }
+  | {
+      kind: "node";
+      id: number;
+      start: Vec;
+      cur: Vec;
+      grab: Vec | null;
+      orig: Element;
+      refs: NodeRef[];
+      before: string;
+      moved: boolean;
+      inserted: boolean;
+      info: string;
+    }
   | { kind: "erase"; id: number; changedAny: boolean };
 let gesture: Gesture | null = null;
-const move = { active: false, dx: 0, dy: 0 };
 
 // 2本指/3本指タップの検出
 let tap = { count: 0, t0: 0, moved: false };
 
+/** 途中の変形を元に戻して、ジェスチャーをやめる */
 function cancelGesture(): void {
-  if (gesture?.kind === "move") move.active = false;
+  const g = gesture;
   gesture = null;
+  if (g && (g.kind === "xform" || g.kind === "node") && g.moved) {
+    doc = parseDoc(g.before);
+    ensureActiveLayer();
+    pruneSelection();
+    renderPanels();
+  }
   requestDraw();
 }
 
@@ -516,7 +788,8 @@ cv.addEventListener("pointerdown", (e) => {
     if (tap.count === 0 || performance.now() - tap.t0 > 350) tap = { count: 0, t0: performance.now(), moved: false };
     tap.count = Math.max(tap.count, touches.length);
     if (touches.length >= 2) {
-      // 指で描きかけていた線は捨ててピンチへ
+      // 指で描きかけていた線・変形は取りやめてピンチへ
+      if (gesture && gesture.kind !== "pan" && gesture.kind !== "pinch") cancelGesture();
       const [a, b] = touches.slice(0, 2);
       const c0 = { x: (a[1].x + b[1].x) / 2, y: (a[1].y + b[1].y) / 2 };
       gesture = {
@@ -527,11 +800,11 @@ cv.addEventListener("pointerdown", (e) => {
         anchor: toMm(c0.x, c0.y),
         c0,
       };
-      move.active = false;
       requestDraw();
       return;
     }
-    if (penOnly || mode === "stitch") {
+    // Pencil モードでは指は移動・拡大専用。ただし選択・編集点ツールは指でも操作できる
+    if ((penOnly && tool !== "select" && tool !== "node") || mode === "stitch") {
       gesture = { kind: "pan", id: e.pointerId, ox0: view.ox, oy0: view.oy, sx: p.x, sy: p.y };
       return;
     }
@@ -544,7 +817,7 @@ cv.addEventListener("pointerdown", (e) => {
     gesture = { kind: "pan", id: e.pointerId, ox0: view.ox, oy0: view.oy, sx: p.x, sy: p.y };
     return;
   }
-  startTool(e.pointerId, toMm(p.x, p.y));
+  startTool(e.pointerId, toMm(p.x, p.y), e.shiftKey);
 });
 
 cv.addEventListener("pointermove", (e) => {
@@ -565,12 +838,14 @@ cv.addEventListener("pointermove", (e) => {
     view.scale = Math.min(80, Math.max(1.5, (gesture.scale0 * d) / gesture.d0));
     view.ox = c.x - gesture.anchor.x * view.scale;
     view.oy = c.y - gesture.anchor.y * view.scale;
+    viewTouched = true;
     requestDraw();
     return;
   }
   if (gesture.kind === "pan" && gesture.id === e.pointerId) {
     view.ox = gesture.ox0 + (p.x - gesture.sx);
     view.oy = gesture.oy0 + (p.y - gesture.sy);
+    if (tap.moved) viewTouched = true;
     requestDraw();
     return;
   }
@@ -592,10 +867,16 @@ cv.addEventListener("pointermove", (e) => {
     requestDraw();
     return;
   }
-  if (gesture.kind === "move" && gesture.id === e.pointerId) {
-    const m = toMm(p.x, p.y);
-    move.dx = m.x - gesture.start.x;
-    move.dy = m.y - gesture.start.y;
+  if (gesture.kind === "xform" && gesture.id === e.pointerId) {
+    updateXform(gesture, toMm(p.x, p.y), e.shiftKey);
+    return;
+  }
+  if (gesture.kind === "node" && gesture.id === e.pointerId) {
+    updateNodeDrag(gesture, toMm(p.x, p.y));
+    return;
+  }
+  if (gesture.kind === "marquee" && gesture.id === e.pointerId) {
+    gesture.cur = toMm(p.x, p.y);
     requestDraw();
     return;
   }
@@ -639,19 +920,19 @@ function endPointer(e: PointerEvent, cancelled: boolean): void {
     g.raw.push(toMm(p.x, p.y));
     g.cur = toMm(p.x, p.y);
     finishTool(g);
-  } else if (g.kind === "move") {
-    move.active = false;
-    if (selectedId && (Math.abs(move.dx) > 0.05 || Math.abs(move.dy) > 0.05)) {
-      const f = findElement(selectedId);
-      if (f) {
-        beginChange();
-        translateElement(f.el, move.dx, move.dy);
-        changed();
-      }
-    }
-    requestDraw();
+  } else if (g.kind === "xform") {
+    if (g.moved) commitFrom(g.before);
+    else if (g.tapId) setSelection([g.tapId]);
+  } else if (g.kind === "node") {
+    if (g.moved || g.inserted) commitFrom(g.before);
+    renderToolOpts();
+  } else if (g.kind === "marquee") {
+    finishMarquee(g);
   } else if (g.kind === "erase") {
-    if (g.changedAny) changed();
+    if (g.changedAny) {
+      pruneSelection();
+      changed();
+    }
   }
   requestDraw();
 }
@@ -669,6 +950,7 @@ cv.addEventListener(
     view.scale = Math.min(80, Math.max(1.5, view.scale * k));
     view.ox = p.x - anchor.x * view.scale;
     view.oy = p.y - anchor.y * view.scale;
+    viewTouched = true;
     requestDraw();
   },
   { passive: false },
@@ -677,15 +959,49 @@ document.addEventListener("gesturestart", (e) => e.preventDefault());
 
 let spaceDown = false;
 window.addEventListener("keydown", (e) => {
-  if ((e.target as HTMLElement).tagName === "INPUT") return;
+  const tag = (e.target as HTMLElement).tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (e.code === "Space") spaceDown = true;
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "z") {
+  const k = e.key.toLowerCase();
+  if (mod && k === "z") {
     e.preventDefault();
     if (e.shiftKey) redo();
     else undo();
-  } else if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
-    deleteSelected();
+  } else if (mod && k === "y") {
+    e.preventDefault();
+    redo();
+  } else if (mod && k === "c") {
+    e.preventDefault();
+    copySelection(false);
+  } else if (mod && k === "x") {
+    e.preventDefault();
+    copySelection(true);
+  } else if (mod && k === "v") {
+    e.preventDefault();
+    paste();
+  } else if (mod && k === "d") {
+    e.preventDefault();
+    duplicateSelection();
+  } else if (mod && k === "a") {
+    e.preventDefault();
+    selectAll();
+  } else if (e.key === "Delete" || e.key === "Backspace") {
+    if (tool === "node" && nodeSel.length) deleteSelectedNodes();
+    else if (selection.length) deleteSelected();
+  } else if (e.key === "Escape") {
+    if (gesture) cancelGesture();
+    else if (tool === "node" && nodeSel.length) {
+      nodeSel = [];
+      renderToolOpts();
+      requestDraw();
+    } else setSelection([]);
+  } else if (e.key.startsWith("Arrow") && (selection.length || (tool === "node" && nodeSel.length))) {
+    e.preventDefault();
+    const step = e.shiftKey ? 5 : 0.5;
+    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+    nudge(dx, dy);
   }
 });
 window.addEventListener("keyup", (e) => {
@@ -707,24 +1023,9 @@ function editableLayer(): Layer | null {
   return l;
 }
 
-function startTool(id: number, m: Vec): void {
-  if (tool === "select") {
-    const hit = hitTest(m, true);
-    selectedId = hit ? hit.el.id : null;
-    seqSelected = selectedId;
-    if (hit) {
-      activeLayerId = hit.layer.id;
-      if (!hit.layer.locked) {
-        gesture = { kind: "move", id, start: m };
-        move.active = true;
-        move.dx = 0;
-        move.dy = 0;
-      }
-    }
-    renderPanels();
-    requestDraw();
-    return;
-  }
+function startTool(id: number, m: Vec, shift = false): void {
+  if (tool === "select") return startSelect(id, m, shift || additive);
+  if (tool === "node") return startNode(id, m, shift || additive);
   if (tool === "eraser") {
     if (!editableLayer()) return;
     gesture = { kind: "erase", id, changedAny: false };
@@ -839,20 +1140,11 @@ function addElement(layer: Layer, el: Element): void {
   changed();
 }
 
-function translateElement(el: Element, dx: number, dy: number): void {
-  const mv = (v: Vec) => ({ x: v.x + dx, y: v.y + dy });
-  if (el.kind === "stroke") el.points = el.points.map(mv);
-  else {
-    el.outer = el.outer.map(mv);
-    el.holes = el.holes.map((h) => h.map(mv));
-  }
-}
-
 function hitTest(m: Vec, anyLayer: boolean): { el: Element; layer: Layer } | null {
   const tol = 10 / view.scale;
   const layers = anyLayer ? [...doc.layers].reverse() : [activeLayer()];
   for (const layer of layers) {
-    if (!layer.visible) continue;
+    if (!layer.visible || (anyLayer && layer.locked)) continue;
     for (let i = layer.elements.length - 1; i >= 0; i--) {
       const el = layer.elements[i];
       if (el.kind === "stroke") {
@@ -871,20 +1163,425 @@ function eraseAt(m: Vec, g: Extract<Gesture, { kind: "erase" }>): void {
   if (!g.changedAny) beginChange();
   g.changedAny = true;
   hit.layer.elements = hit.layer.elements.filter((e) => e !== hit.el);
-  if (selectedId === hit.el.id) selectedId = null;
+  selection = selection.filter((id) => id !== hit.el.id);
+  if (nodeTarget === hit.el.id) nodeTarget = null;
   docVersion++;
   requestDraw();
 }
 
+// ------------------------------------------------------------------ 選択・変形
+
+/** 変形の確定: つかむ前の状態を取り消し履歴に積む */
+function commitFrom(before: string): void {
+  undoStack.push(before);
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack.length = 0;
+  changed();
+}
+
+function hitHandle(m: Vec): HandleName | null {
+  const b = selBoxPadded();
+  if (!b) return null;
+  const tol = 22 / view.scale;
+  let best: HandleName | null = null;
+  let bd = tol;
+  for (const h of handlePositions(b)) {
+    const d = dist(h.p, m);
+    // 回転ハンドルと角のハンドルを優先 (辺のハンドルと重なるとき)
+    const bias = h.name === "rot" || h.name.length === 2 ? 0.8 : 1;
+    if (d * bias <= bd) {
+      bd = d * bias;
+      best = h.name;
+    }
+  }
+  return best;
+}
+
+function inBox(m: Vec, b: Box | null): boolean {
+  return !!b && m.x >= b.minX && m.x <= b.maxX && m.y >= b.minY && m.y <= b.maxY;
+}
+
+function beginXform(id: number, m: Vec, op: "move" | "scale" | "rotate", handle: HandleName | null, tapId: string | null): void {
+  const els = selectedEls().map((f) => cloneElement(f.el));
+  // 計算は実際の外接矩形で行う (表示の枠は少し余白をつけている)
+  const box = selectionBox(els);
+  if (els.length === 0 || !box) return;
+  gesture = { kind: "xform", id, op, handle, start: m, cur: m, orig: els, box, before: snapshot(), moved: false, tapId, info: "" };
+}
+
+function startSelect(id: number, m: Vec, add: boolean): void {
+  // 1. 選択枠のハンドル (拡大縮小・回転)
+  if (selection.length > 0 && !add) {
+    const h = hitHandle(m);
+    if (h) return beginXform(id, m, h === "rot" ? "rotate" : "scale", h, null);
+  }
+  const hit = hitTest(m, true);
+  if (hit) {
+    const isSel = selection.includes(hit.el.id);
+    if (add) {
+      // 追加選択: タップで足す / 外す
+      setSelection(isSel ? selection.filter((x) => x !== hit.el.id) : [...selection, hit.el.id]);
+      if (!isSel) beginXform(id, m, "move", null, null);
+      return;
+    }
+    if (!isSel) setSelection([hit.el.id]);
+    // すでに複数選択の一部をタップして動かさなかったら、その部品だけを選び直す
+    return beginXform(id, m, "move", null, isSel && selection.length > 1 ? hit.el.id : null);
+  }
+  // 2. 選択枠の内側の空いた所をつかんでも移動できる
+  if (!add && inBox(m, selBoxPadded())) return beginXform(id, m, "move", null, null);
+  // 3. 何もない所: 範囲選択
+  gesture = { kind: "marquee", id, start: m, cur: m, target: "elements", base: add ? selection.slice() : [], baseNodes: [] };
+  requestDraw();
+}
+
+function updateXform(g: Extract<Gesture, { kind: "xform" }>, m: Vec, shift: boolean): void {
+  g.cur = m;
+  const b = g.box;
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  if (!g.moved && dist(m, g.start) * view.scale < 3) return;
+  g.moved = true;
+  let out: Element[];
+  if (g.op === "move") {
+    const dx = m.x - g.start.x;
+    const dy = m.y - g.start.y;
+    out = g.orig.map((el) => mapElement(el, translateFn(dx, dy)));
+    g.info = `移動 ${dx >= 0 ? "+" : ""}${dx.toFixed(1)}, ${dy >= 0 ? "+" : ""}${dy.toFixed(1)} mm`;
+  } else if (g.op === "rotate") {
+    const a0 = Math.atan2(g.start.y - cy, g.start.x - cx);
+    const a1 = Math.atan2(m.y - cy, m.x - cx);
+    let deg = ((a1 - a0) * 180) / Math.PI;
+    deg = ((deg % 360) + 540) % 360 - 180;
+    // 15° ごとに吸い付く (Shift なら常に 15° 刻み)
+    const snap = Math.round(deg / 15) * 15;
+    if (shift || Math.abs(deg - snap) < 4) deg = snap;
+    const rad = (deg * Math.PI) / 180;
+    out = g.orig.map((el) => rotateElement(el, cx, cy, rad));
+    g.info = `回転 ${Math.round(deg)}°`;
+  } else {
+    const h = g.handle!;
+    // 反対側の角・辺を基準点にする
+    const ax = h.includes("w") ? b.maxX : h.includes("e") ? b.minX : cx;
+    const ay = h.includes("n") ? b.maxY : h.includes("s") ? b.minY : cy;
+    const hx = h.includes("w") ? b.minX : h.includes("e") ? b.maxX : cx;
+    const hy = h.includes("n") ? b.minY : h.includes("s") ? b.maxY : cy;
+    let sx = 1;
+    let sy = 1;
+    if (h.length === 2 && !shift) {
+      // 角: 縦横比を保って拡大縮小
+      const vx = hx - ax;
+      const vy = hy - ay;
+      const k = ((m.x - ax) * vx + (m.y - ay) * vy) / (vx * vx + vy * vy || 1);
+      sx = sy = Math.max(0.05, k);
+    } else {
+      if (h.includes("w") || h.includes("e")) sx = Math.max(0.05, (m.x - ax) / (hx - ax || 1));
+      if (h.includes("n") || h.includes("s")) sy = Math.max(0.05, (m.y - ay) / (hy - ay || 1));
+    }
+    const f = scaleFn(ax, ay, sx, sy);
+    const wk = Math.sqrt(sx * sy);
+    out = g.orig.map((el) => {
+      const r = mapElement(el, f);
+      if (scaleWidth && r.kind === "stroke") r.width = Math.round(Math.min(7, Math.max(0.3, r.width * wk)) * 10) / 10;
+      return r;
+    });
+    const w = (b.maxX - b.minX) * sx;
+    const hh = (b.maxY - b.minY) * sy;
+    g.info = `${Math.max(0, w).toFixed(1)} × ${Math.max(0, hh).toFixed(1)} mm (${Math.round(sx * 100)}${sx !== sy ? `×${Math.round(sy * 100)}` : ""}%)`;
+  }
+  for (const el of out) replaceElement(el);
+  requestDraw();
+}
+
+function marqueeBox(g: { start: Vec; cur: Vec }): Box {
+  return {
+    minX: Math.min(g.start.x, g.cur.x),
+    minY: Math.min(g.start.y, g.cur.y),
+    maxX: Math.max(g.start.x, g.cur.x),
+    maxY: Math.max(g.start.y, g.cur.y),
+  };
+}
+
+function finishMarquee(g: Extract<Gesture, { kind: "marquee" }>): void {
+  const r = marqueeBox(g);
+  const tiny = (r.maxX - r.minX) * view.scale < 6 && (r.maxY - r.minY) * view.scale < 6;
+  if (g.target === "nodes") {
+    const f = nodeTarget ? findElement(nodeTarget) : null;
+    if (!f) return;
+    if (tiny) nodeSel = g.baseNodes;
+    else {
+      const picked: NodeRef[] = [];
+      paths(f.el).forEach((path, ring) =>
+        path.pts.forEach((v, index) => {
+          if (inBox(v, r)) picked.push({ ring, index });
+        }),
+      );
+      const keys = new Set(g.baseNodes.map(nodeKey));
+      nodeSel = [...g.baseNodes, ...picked.filter((q) => !keys.has(nodeKey(q)))];
+    }
+    renderToolOpts();
+    requestDraw();
+    return;
+  }
+  if (tiny) return setSelection(g.base);
+  const ids: string[] = [];
+  for (const layer of doc.layers) {
+    if (!layer.visible || layer.locked) continue;
+    for (const el of layer.elements) {
+      const e = elementBox(el);
+      const inside = e.minX >= r.minX && e.maxX <= r.maxX && e.minY >= r.minY && e.maxY <= r.maxY;
+      const touches = paths(el).some((p) => p.pts.some((v) => inBox(v, r)));
+      const covers = el.kind === "fill" && pointInShape({ x: (r.minX + r.maxX) / 2, y: (r.minY + r.maxY) / 2 }, el.outer, el.holes);
+      if (inside || touches || covers) ids.push(el.id);
+    }
+  }
+  setSelection([...g.base, ...ids]);
+  if (ids.length) toast(`${selection.length}個を選択しました`);
+}
+
+/** 選択中の部品に変形をかける (ボタン・キー操作用) */
+function transformSelection(fn: (el: Element, box: Box) => Element, label?: string): void {
+  const els = selectedEls();
+  const box = selectionBox(els.map((f) => f.el));
+  if (!box || els.length === 0) return toast("先に部品を選んでください");
+  beginChange();
+  for (const f of els) replaceElement(fn(f.el, box));
+  changed();
+  if (label) toast(label);
+}
+
+const boxCenter = (b: Box): Vec => ({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
+
+function flipSelection(horizontal: boolean): void {
+  transformSelection((el, b) => flipElement(el, boxCenter(b).x, boxCenter(b).y, horizontal));
+}
+function rotateSelection(deg: number): void {
+  transformSelection((el, b) => rotateElement(el, boxCenter(b).x, boxCenter(b).y, (deg * Math.PI) / 180));
+}
+
+let nudgeTimer = 0;
+let nudgeBefore: string | null = null;
+/** 矢印キーで少しずつ動かす (連打してもまとめて1回の取り消しにする) */
+function nudge(dx: number, dy: number): void {
+  if (!nudgeBefore) nudgeBefore = snapshot();
+  if (tool === "node" && nodeTarget && nodeSel.length) {
+    const f = findElement(nodeTarget);
+    if (f) replaceElement(softMoveNodes(f.el, nodeSel, dx, dy, 0));
+  } else {
+    for (const f of selectedEls()) replaceElement(mapElement(f.el, translateFn(dx, dy)));
+  }
+  requestDraw();
+  clearTimeout(nudgeTimer);
+  nudgeTimer = window.setTimeout(() => {
+    if (nudgeBefore) commitFrom(nudgeBefore);
+    nudgeBefore = null;
+  }, 500);
+}
+
+function selectAll(): void {
+  if (tool === "node" && nodeTarget) {
+    const f = findElement(nodeTarget);
+    if (!f) return;
+    nodeSel = paths(f.el).flatMap((p, ring) => p.pts.map((_, index) => ({ ring, index })));
+    renderToolOpts();
+    requestDraw();
+    return;
+  }
+  const l = activeLayer();
+  if (l.locked || !l.visible) return toast(`レイヤー「${l.name}」はロック中か非表示です`);
+  if (tool !== "select") setTool("select");
+  setSelection(l.elements.map((e) => e.id));
+  toast(`レイヤー「${l.name}」の ${selection.length}個を選択しました`);
+}
+
 function deleteSelected(): void {
-  if (!selectedId) return;
-  const f = findElement(selectedId);
-  if (!f) return;
+  const els = selectedEls();
+  if (els.length === 0) return;
+  beginChange();
+  const ids = new Set(els.map((f) => f.el.id));
+  for (const layer of doc.layers) layer.elements = layer.elements.filter((e) => !ids.has(e.id));
+  if (nodeTarget && ids.has(nodeTarget)) nodeTarget = null;
+  selection = [];
+  seqSelected = null;
+  changed();
+  renderToolOpts();
+}
+
+// ------------------------------------------------------------------ コピー&ペースト
+
+function saveClipboard(): void {
+  try {
+    localStorage.setItem(CLIP_KEY, JSON.stringify(clipboard));
+  } catch {
+    /* 容量不足でもこのページ内では使える */
+  }
+}
+
+function copySelection(cut: boolean): void {
+  const els = selectedEls();
+  if (els.length === 0) return toast("コピーする部品を選んでください");
+  clipboard = els.map((f) => cloneElement(f.el));
+  pasteCount = 0;
+  saveClipboard();
+  if (cut) {
+    deleteSelected();
+    toast(`${clipboard.length}個を切り取りました`);
+  } else toast(`${clipboard.length}個をコピーしました`);
+  renderToolOpts();
+}
+
+function paste(): void {
+  if (clipboard.length === 0) return toast("コピーした部品がありません");
+  const layer = editableLayer();
+  if (!layer) return;
+  // 元と重ならないよう、貼るたびに少しずつずらす (切り取りの後は同じ位置)
+  pasteCount++;
+  const off = 3 * pasteCount;
+  const els = duplicateElements(clipboard, off, off);
+  beginChange();
+  layer.elements.push(...els);
+  changed();
+  if (tool !== "select") setTool("select");
+  setSelection(els.map((e) => e.id));
+  toast(`レイヤー「${layer.name}」に ${els.length}個を貼り付けました`);
+}
+
+function duplicateSelection(): void {
+  const els = selectedEls();
+  if (els.length === 0) return toast("複製する部品を選んでください");
+  beginChange();
+  const ids: string[] = [];
+  // 元の部品のすぐ後ろ (同じレイヤー) に入れる
+  for (const f of els) {
+    const [copy] = duplicateElements([f.el], 3, 3);
+    const i = f.layer.elements.findIndex((e) => e.id === f.el.id);
+    f.layer.elements.splice(i + 1, 0, copy);
+    ids.push(copy.id);
+  }
+  changed();
+  setSelection(ids);
+  toast(`${ids.length}個を複製しました`);
+}
+
+// ------------------------------------------------------------------ 編集点
+
+function nodeTargetEl(): { el: Element; layer: Layer } | null {
+  const f = nodeTarget ? findElement(nodeTarget) : null;
+  if (!f || !f.layer.visible) return null;
+  return f;
+}
+
+function setNodeTarget(id: string | null): void {
+  nodeTarget = id;
+  nodeSel = [];
+  if (id) {
+    selection = [id];
+    seqSelected = id;
+    const f = findElement(id);
+    if (f) activeLayerId = f.layer.id;
+  }
+  renderToolOpts();
+  renderPanels();
+  requestDraw();
+}
+
+function startNode(id: number, m: Vec, add: boolean): void {
+  const f = nodeTargetEl();
+  const tol = 14 / view.scale;
+  if (f && !f.layer.locked) {
+    // 1. 点をつかむ
+    const n = nearestNode(f.el, m, tol);
+    if (n) {
+      const isSel = nodeSel.some((q) => nodeKey(q) === nodeKey(n));
+      if (add) nodeSel = isSel ? nodeSel.filter((q) => nodeKey(q) !== nodeKey(n)) : [...nodeSel, n];
+      else if (!isSel) nodeSel = [n];
+      renderToolOpts();
+      if (!nodeSel.some((q) => nodeKey(q) === nodeKey(n))) return requestDraw();
+      gesture = {
+        kind: "node",
+        id,
+        start: m,
+        cur: m,
+        grab: getNode(f.el, n) ?? null,
+        orig: cloneElement(f.el),
+        refs: nodeSel.slice(),
+        before: snapshot(),
+        moved: false,
+        inserted: false,
+        info: "",
+      };
+      return requestDraw();
+    }
+    // 2. 辺の上をタップ → 点を追加 (そのままドラッグで動かせる)
+    const seg = nearestSegment(f.el, m, 12 / view.scale);
+    if (seg) {
+      const before = snapshot();
+      const r = insertNode(f.el, seg.ring, seg.index, seg.point);
+      replaceElement(r.el);
+      nodeSel = [r.ref];
+      gesture = {
+        kind: "node",
+        id,
+        start: m,
+        cur: m,
+        grab: seg.point,
+        orig: cloneElement(r.el),
+        refs: [r.ref],
+        before,
+        moved: false,
+        inserted: true,
+        info: "点を追加",
+      };
+      renderToolOpts();
+      return requestDraw();
+    }
+  }
+  // 3. 別の部品をタップ → その部品を編集する
+  const hit = hitTest(m, true);
+  if (hit && hit.el.id !== nodeTarget) {
+    setNodeTarget(hit.el.id);
+    toast(`${hit.el.kind === "fill" ? "面" : "線"}の編集点: 点をドラッグで変形、線の上をタップで点を追加`);
+    return;
+  }
+  if (!f) {
+    if (!hit) toast("編集する線・面をタップしてください");
+    return;
+  }
+  // 4. 何もない所: 点の範囲選択
+  gesture = { kind: "marquee", id, start: m, cur: m, target: "nodes", base: [], baseNodes: add ? nodeSel.slice() : [] };
+  requestDraw();
+}
+
+function updateNodeDrag(g: Extract<Gesture, { kind: "node" }>, m: Vec): void {
+  g.cur = m;
+  if (!g.moved && dist(m, g.start) * view.scale < 2) return;
+  g.moved = true;
+  const dx = m.x - g.start.x;
+  const dy = m.y - g.start.y;
+  replaceElement(softMoveNodes(g.orig, g.refs, dx, dy, softRadius));
+  if (g.grab) g.grab = { x: (getNode(g.orig, g.refs[0]) ?? g.grab).x + dx, y: (getNode(g.orig, g.refs[0]) ?? g.grab).y + dy };
+  g.info = `${g.refs.length}点 移動 ${Math.hypot(dx, dy).toFixed(1)}mm${softRadius > 0 ? ` (やわらか ${softRadius}mm)` : ""}`;
+  requestDraw();
+}
+
+function editNodeTarget(fn: (el: Element) => Element, msg?: string): void {
+  const f = nodeTargetEl();
+  if (!f) return toast("編集する線・面をタップしてください");
   if (f.layer.locked) return toast("ロック中のレイヤーです");
   beginChange();
-  f.layer.elements = f.layer.elements.filter((e) => e.id !== selectedId);
-  selectedId = null;
+  replaceElement(fn(f.el));
+  pruneSelection();
   changed();
+  renderToolOpts();
+  if (msg) toast(msg);
+}
+
+function deleteSelectedNodes(): void {
+  if (nodeSel.length === 0) return toast("削除する点を選んでください (点をタップ)");
+  const n = nodeSel.length;
+  const refs = nodeSel;
+  nodeSel = [];
+  editNodeTarget((el) => deleteNodes(el, refs), `${n}点を削除しました`);
 }
 
 function drawGesturePreview(px: number): void {
@@ -922,10 +1619,6 @@ function drawGesturePreview(px: number): void {
     }
   }
   ctx.restore();
-  if (selectedId && move.active) {
-    const f = findElement(selectedId);
-    if (f) drawElement(f.el, 0.5, px, { x: move.dx, y: move.dy });
-  }
 }
 
 // ------------------------------------------------------------------ ツールバー
@@ -935,7 +1628,18 @@ function setTool(t: Tool): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>("#tools [data-tool]")) {
     b.classList.toggle("on", b.dataset.tool === t);
   }
-  if (t !== "select") selectedId = null;
+  if (gesture) cancelGesture();
+  if (t === "node") {
+    // 選択中の部品が1つなら、そのまま編集点を出す
+    if (selection.length === 1) nodeTarget = selection[0];
+    else if (!nodeTarget || !findElement(nodeTarget)) nodeTarget = null;
+    nodeSel = [];
+    if (!nodeTarget) toast("編集する線・面をタップしてください");
+  } else if (t !== "select") {
+    selection = [];
+    seqSelected = null;
+  }
+  if (t === "select" && nodeTarget && selection.length === 0) selection = [nodeTarget];
   if (mode === "stitch") setMode("draw");
   renderToolOpts();
   renderPanels();
@@ -957,9 +1661,7 @@ function renderToolOpts(): void {
   if (mode === "stitch") return;
   const widthCtl = () => {
     const wrap = document.createElement("div");
-    wrap.style.display = "flex";
-    wrap.style.gap = "10px";
-    wrap.style.alignItems = "center";
+    wrap.className = "widthCtl";
     wrap.innerHTML = `<label>太さ <input type="range" min="0.4" max="7" step="0.1" value="${penWidth}"><span class="val">${penWidth.toFixed(1)}mm</span></label><span class="presetRow"></span><small class="styleNm" style="color:#7b8394">${styleName(penWidth)}</small>`;
     const range = wrap.querySelector("input")!;
     const val = wrap.querySelector(".val")!;
@@ -1024,8 +1726,120 @@ function renderToolOpts(): void {
     }
     box.append(seg);
     if (!shapeFill) box.append(widthCtl());
-  } else if (tool === "select") box.append(tip("タップで選択、ドラッグで移動。右のパネルで色や太さを変えられます"));
+  } else if (tool === "select") renderSelectOpts(box, tip);
+  else if (tool === "node") renderNodeOpts(box, tip);
   else if (tool === "eraser") box.append(tip(`なぞった線・面を消します (レイヤー「${activeLayer().name}」)`));
+}
+
+function actionBtn(label: string, title: string, fn: () => void, opts: { on?: boolean; danger?: boolean; disabled?: boolean } = {}): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.className = "act";
+  b.innerHTML = label;
+  b.title = title;
+  if (opts.on) b.classList.add("on");
+  if (opts.danger) b.classList.add("danger");
+  b.disabled = !!opts.disabled;
+  b.addEventListener("click", fn);
+  return b;
+}
+
+function group(...items: HTMLElement[]): HTMLElement {
+  const g = document.createElement("div");
+  g.className = "actGroup";
+  g.append(...items);
+  return g;
+}
+
+function renderSelectOpts(box: HTMLElement, tip: (t: string) => HTMLElement): void {
+  const n = selection.length;
+  const none = n === 0;
+  box.append(
+    group(
+      actionBtn("＋選択", "タップで選択に追加・解除 (Shift でも可)", () => {
+        additive = !additive;
+        renderToolOpts();
+      }, { on: additive }),
+      actionBtn("全選択", "このレイヤーの部品をすべて選択 (⌘A)", selectAll),
+    ),
+  );
+  if (none) {
+    box.append(
+      tip("タップで選択 / 何もない所をドラッグで範囲選択"),
+      group(actionBtn("貼り付け", "⌘V", paste, { disabled: clipboard.length === 0 })),
+    );
+    return;
+  }
+  const scaleLbl = document.createElement("label");
+  scaleLbl.className = "chk";
+  scaleLbl.innerHTML = `<input type="checkbox" ${scaleWidth ? "checked" : ""}> 拡縮で線の太さも変える`;
+  scaleLbl.querySelector("input")!.addEventListener("change", (e) => (scaleWidth = (e.target as HTMLInputElement).checked));
+  box.append(
+    tip(`${n}個を選択中 — 角をドラッグで拡大縮小、○で回転`),
+    group(
+      actionBtn("コピー", "⌘C", () => copySelection(false)),
+      actionBtn("切り取り", "⌘X", () => copySelection(true)),
+      actionBtn("貼り付け", "⌘V", paste, { disabled: clipboard.length === 0 }),
+      actionBtn("複製", "⌘D", duplicateSelection),
+    ),
+    group(
+      actionBtn("⇋ 左右反転", "左右反転", () => flipSelection(true)),
+      actionBtn("⇵ 上下反転", "上下反転", () => flipSelection(false)),
+      actionBtn("↻ 90°", "右に90°回転", () => rotateSelection(90)),
+    ),
+    group(
+      actionBtn("◇ 編集点", "選んだ部品の点を編集", () => setTool("node"), { disabled: n !== 1 }),
+      actionBtn("削除", "Delete", deleteSelected, { danger: true }),
+    ),
+    scaleLbl,
+  );
+}
+
+function renderNodeOpts(box: HTMLElement, tip: (t: string) => HTMLElement): void {
+  const f = nodeTargetEl();
+  if (!f) {
+    box.append(tip("編集する線・面をタップしてください"));
+    return;
+  }
+  const soft = document.createElement("label");
+  soft.innerHTML = `やわらか <input type="range" min="0" max="20" step="1" value="${softRadius}"><span class="val">${softRadius ? `${softRadius}mm` : "点だけ"}</span>`;
+  const r = soft.querySelector("input")!;
+  r.addEventListener("input", () => {
+    softRadius = Number(r.value);
+    soft.querySelector(".val")!.textContent = softRadius ? `${softRadius}mm` : "点だけ";
+  });
+  const el = f.el;
+  box.append(
+    tip(`点 ${nodeCount(el)}個${nodeSel.length ? ` (選択 ${nodeSel.length})` : ""} — 点をドラッグで変形・線の上をタップで点を追加`),
+    soft,
+    group(
+      actionBtn("＋選択", "タップで点を選択に追加・解除", () => {
+        additive = !additive;
+        renderToolOpts();
+      }, { on: additive }),
+      actionBtn("全部の点", "⌘A", selectAll),
+    ),
+    group(
+      actionBtn("点を削除", "選んだ点を削除 (Delete)", deleteSelectedNodes, { danger: true, disabled: nodeSel.length === 0 }),
+      actionBtn("間引く", "形を保ったまま点を減らす", () => {
+        nodeSel = [];
+        editNodeTarget(decimate, "点を間引きました");
+      }),
+      actionBtn("増やす", "各辺の真ん中に点を足す", () => {
+        nodeSel = [];
+        editNodeTarget(subdivide, "点を増やしました");
+      }),
+    ),
+  );
+  if (el.kind === "stroke" && el.points.length >= 3) {
+    box.append(
+      group(
+        actionBtn(el.closed ? "線を開く" : "線を閉じる", "始点と終点をつなぐ / 切り離す", () =>
+          editNodeTarget((x) => (x.kind === "stroke" ? { ...x, closed: !x.closed } : x)),
+        ),
+      ),
+    );
+  }
+  box.append(group(actionBtn("選択に戻る", "選択ツール", () => setTool("select"))));
 }
 
 // ------------------------------------------------------------------ 色
@@ -1037,13 +1851,11 @@ function pushRecent(c: ThreadRef): void {
 function setColor(c: ThreadRef): void {
   color = { ...c };
   $("colorSwatch").style.background = rgb(color);
-  if (selectedId) {
-    const f = findElement(selectedId);
-    if (f && !f.layer.locked) {
-      beginChange();
-      f.el.color = { ...color };
-      changed();
-    }
+  const els = selectedEls().filter((f) => !f.layer.locked);
+  if (els.length && (tool === "select" || tool === "node")) {
+    beginChange();
+    for (const f of els) f.el.color = { ...color };
+    changed();
   }
   renderPalette();
 }
@@ -1130,9 +1942,9 @@ $("nextTrim").addEventListener("click", () => jumpEvent(1));
 
 // ------------------------------------------------------------------ パネル
 
-for (const b of document.querySelectorAll<HTMLButtonElement>("#tabs button")) {
+for (const b of document.querySelectorAll<HTMLButtonElement>("#tabs button[data-tab]")) {
   b.addEventListener("click", () => {
-    for (const x of document.querySelectorAll<HTMLButtonElement>("#tabs button")) x.classList.toggle("on", x === b);
+    for (const x of document.querySelectorAll<HTMLButtonElement>("#tabs button[data-tab]")) x.classList.toggle("on", x === b);
     for (const t of ["layers", "seq", "settings"]) $(`tab-${t}`).hidden = t !== b.dataset.tab;
     renderPanels();
   });
@@ -1153,6 +1965,7 @@ function layerStitchCounts(): Map<string, number> {
 }
 
 function renderLayers(): void {
+  $("panelLayerName").textContent = activeLayer().name;
   const list = $("layerList");
   const counts = layerStitchCounts();
   const items: HTMLElement[] = [];
@@ -1295,11 +2108,9 @@ function renderSeq(): void {
     });
     li.append(up, down);
     li.addEventListener("click", () => {
-      seqSelected = seqSelected === q.elementId ? null : q.elementId;
-      selectedId = seqSelected;
-      renderSeq();
-      renderSelBox();
-      requestDraw();
+      const id = seqSelected === q.elementId ? null : q.elementId;
+      if (id && tool !== "select" && tool !== "node") setTool("select");
+      setSelection(id ? [id] : []);
     });
     items.push(li);
   });
@@ -1336,20 +2147,37 @@ function reorderInLayer(q: SeqItem, delta: number): void {
 
 function renderSelBox(): void {
   const box = $("selBox");
-  const f = selectedId ? findElement(selectedId) : null;
-  if (!f) {
+  const els = selectedEls();
+  if (els.length === 0) {
     box.hidden = true;
     return;
   }
   box.hidden = false;
-  const el = f.el;
-  const layerOpts = doc.layers
-    .map((l) => `<option value="${l.id}" ${l.id === f.layer.id ? "selected" : ""}>${escapeHtml(l.name)}</option>`)
-    .join("");
-  let body = `<h4>選択中: ${el.kind === "fill" ? "面" : "線"} <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(el.color)}"></span></h4>`;
-  if (el.kind === "stroke") {
-    body += `<label>太さ (mm) <input id="selW" type="number" min="0.4" max="7" step="0.1" value="${el.width}"></label>`;
-    body += `<label>縫い方 <select id="selStyle">${(
+  const strokes = els.filter((f) => f.el.kind === "stroke").map((f) => f.el as StrokeEl);
+  const fills = els.filter((f) => f.el.kind === "fill").map((f) => f.el as FillEl);
+  const one = els.length === 1 ? els[0] : null;
+  const bb = selectionBox(els.map((f) => f.el))!;
+  const W = bb.maxX - bb.minX;
+  const H = bb.maxY - bb.minY;
+  const sameLayer = els.every((f) => f.layer === els[0].layer);
+  const layerOpts =
+    (sameLayer ? "" : `<option value="" selected>(いろいろ)</option>`) +
+    doc.layers
+      .map((l) => `<option value="${l.id}" ${sameLayer && l.id === els[0].layer.id ? "selected" : ""}>${escapeHtml(l.name)}</option>`)
+      .join("");
+  const title = one
+    ? `${one.el.kind === "fill" ? "面" : "線"} <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(one.el.color)}"></span>`
+    : `${els.length}個 (線${strokes.length}・面${fills.length})`;
+  let body = `<h4>選択中: ${title}</h4>`;
+  body += `<label>大きさ (mm) <span class="sizeRow"><input id="selSW" type="number" min="0.5" max="200" step="0.5" value="${W.toFixed(1)}">×<input id="selSH" type="number" min="0.5" max="200" step="0.5" value="${H.toFixed(1)}"></span></label>`;
+  body += `<label class="tog"><input id="selKeep" type="checkbox" checked> 縦横比を保つ</label>`;
+  if (strokes.length) {
+    const w0 = strokes[0].width;
+    const same = strokes.every((x) => x.width === w0);
+    body += `<label>線の太さ (mm) <input id="selW" type="number" min="0.4" max="7" step="0.1" value="${same ? w0 : ""}" placeholder="いろいろ"></label>`;
+    const st0 = strokes[0].style;
+    const sameSt = strokes.every((x) => x.style === st0);
+    body += `<label>線の縫い方 <select id="selStyle">${sameSt ? "" : `<option value="" selected>(いろいろ)</option>`}${(
       [
         ["auto", "自動"],
         ["running", "ランニング"],
@@ -1357,11 +2185,16 @@ function renderSelBox(): void {
         ["satin", "サテン"],
       ] as [StrokeStyle, string][]
     )
-      .map(([v, l]) => `<option value="${v}" ${el.style === v ? "selected" : ""}>${l}</option>`)
+      .map(([v, l]) => `<option value="${v}" ${sameSt && st0 === v ? "selected" : ""}>${l}</option>`)
       .join("")}</select></label>`;
-  } else {
-    body += `<label>縫い角度 <select id="selAngle">${[["", "標準"], ["0", "0°"], ["45", "45°"], ["90", "90°"], ["135", "135°"]]
-      .map(([v, l]) => `<option value="${v}" ${String(el.angleDeg ?? "") === v ? "selected" : ""}>${l}</option>`)
+  }
+  if (fills.length) {
+    const a0 = String(fills[0].angleDeg ?? "");
+    const sameA = fills.every((x) => String(x.angleDeg ?? "") === a0);
+    const opts = [["", "標準"], ["0", "0°"], ["45", "45°"], ["90", "90°"], ["135", "135°"]];
+    if (sameA && !opts.some(([v]) => v === a0)) opts.push([a0, `${a0}°`]);
+    body += `<label>面の縫い角度 <select id="selAngle">${sameA ? "" : `<option value="-" selected>(いろいろ)</option>`}${opts
+      .map(([v, l]) => `<option value="${v}" ${sameA && a0 === v ? "selected" : ""}>${l}</option>`)
       .join("")}</select></label>`;
   }
   body += `<label>レイヤー <select id="selLayer">${layerOpts}</select></label>`;
@@ -1369,32 +2202,60 @@ function renderSelBox(): void {
   box.innerHTML = body;
 
   const edit = (fn: () => void) => {
-    if (f.layer.locked) return toast("ロック中のレイヤーです");
     beginChange();
     fn();
     changed();
   };
+  const resizeTo = (w: number, h: number) => {
+    const keep = box.querySelector<HTMLInputElement>("#selKeep")!.checked;
+    let sx = W > 0.01 ? w / W : 1;
+    let sy = H > 0.01 ? h / H : 1;
+    if (keep) {
+      const k = Math.abs(w - W) > 1e-6 ? sx : sy;
+      sx = sy = k;
+    }
+    if (!(sx > 0 && sy > 0)) return;
+    const c = boxCenter(bb);
+    transformSelection((el) => {
+      const r = mapElement(el, scaleFn(c.x, c.y, sx, sy));
+      if (scaleWidth && r.kind === "stroke") r.width = Math.round(Math.min(7, Math.max(0.3, r.width * Math.sqrt(sx * sy))) * 10) / 10;
+      return r;
+    });
+  };
+  box.querySelector<HTMLInputElement>("#selSW")!.addEventListener("change", (e) => {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (v > 0) resizeTo(v, H);
+  });
+  box.querySelector<HTMLInputElement>("#selSH")!.addEventListener("change", (e) => {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (v > 0) resizeTo(W, v);
+  });
   box.querySelector<HTMLInputElement>("#selW")?.addEventListener("change", (e) => {
     const v = Math.min(7, Math.max(0.4, Number((e.target as HTMLInputElement).value) || 1));
-    edit(() => ((el as StrokeEl).width = v));
+    edit(() => strokes.forEach((x) => (x.width = v)));
   });
   box.querySelector<HTMLSelectElement>("#selStyle")?.addEventListener("change", (e) => {
-    edit(() => ((el as StrokeEl).style = (e.target as HTMLSelectElement).value as StrokeStyle));
+    const v = (e.target as HTMLSelectElement).value as StrokeStyle;
+    if (v) edit(() => strokes.forEach((x) => (x.style = v)));
   });
   box.querySelector<HTMLSelectElement>("#selAngle")?.addEventListener("change", (e) => {
     const v = (e.target as HTMLSelectElement).value;
-    edit(() => ((el as FillEl).angleDeg = v === "" ? null : Number(v)));
+    if (v !== "-") edit(() => fills.forEach((x) => (x.angleDeg = v === "" ? null : Number(v))));
   });
   box.querySelector<HTMLSelectElement>("#selLayer")?.addEventListener("change", (e) => {
     const to = doc.layers.find((l) => l.id === (e.target as HTMLSelectElement).value);
-    if (!to || to === f.layer) return;
+    if (!to) return;
+    if (to.locked) return toast("ロック中のレイヤーには移せません");
     edit(() => {
-      f.layer.elements = f.layer.elements.filter((x) => x !== el);
-      to.elements.push(el);
+      for (const f of els) {
+        if (f.layer === to) continue;
+        f.layer.elements = f.layer.elements.filter((x) => x !== f.el);
+        to.elements.push(f.el);
+      }
       activeLayerId = to.id;
     });
   });
-  box.querySelector("#selColor")?.addEventListener("click", () => edit(() => (el.color = { ...color })));
+  box.querySelector("#selColor")?.addEventListener("click", () => edit(() => els.forEach((f) => (f.el.color = { ...color }))));
   box.querySelector("#selDel")?.addEventListener("click", deleteSelected);
 }
 
@@ -1582,7 +2443,8 @@ $("openFile").addEventListener("change", () => {
       beginChange();
       doc = d;
       activeLayerId = doc.layers[doc.layers.length - 1].id;
-      selectedId = null;
+      selection = [];
+      nodeTarget = null;
       syncSettings();
       changed();
       toast("作品を開きました");
@@ -1598,7 +2460,8 @@ $("mNew").addEventListener("click", () => {
   beginChange();
   doc = newDoc();
   activeLayerId = doc.layers[doc.layers.length - 1].id;
-  selectedId = null;
+  selection = [];
+  nodeTarget = null;
   syncSettings();
   changed();
 });
@@ -1628,8 +2491,68 @@ function escapeHtml(s: string): string {
 $("undo").addEventListener("click", undo);
 $("redo").addEventListener("click", redo);
 
+// ------------------------------------------------------------------ パネル (引き出し) と全画面
+
+function setPanelOpen(open: boolean): void {
+  panelOpen = open;
+  $("panel").classList.toggle("closed", !open);
+  $("panelBtn").classList.toggle("on", open);
+  savePrefs();
+  if (!viewTouched) fit();
+  if (open) renderPanels();
+}
+$("panelBtn").addEventListener("click", () => setPanelOpen(!panelOpen));
+$("panelClose").addEventListener("click", () => setPanelOpen(false));
+
+type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void };
+type FsEl = HTMLElement & { webkitRequestFullscreen?: () => void };
+const isStandalone =
+  window.matchMedia?.("(display-mode: standalone)").matches ||
+  (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+function isFullscreen(): boolean {
+  const d = document as FsDoc;
+  return !!(d.fullscreenElement || d.webkitFullscreenElement);
+}
+
+function toggleFullscreen(): void {
+  const d = document as FsDoc;
+  const el = document.documentElement as FsEl;
+  try {
+    if (isFullscreen()) {
+      if (d.exitFullscreen) void d.exitFullscreen();
+      else d.webkitExitFullscreen?.();
+      return;
+    }
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => fullscreenFallback());
+      return;
+    }
+    if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen();
+      return;
+    }
+  } catch {
+    /* 下の案内へ */
+  }
+  fullscreenFallback();
+}
+function fullscreenFallback(): void {
+  toast("Safari の共有ボタン →「ホーム画面に追加」で開くと、いつでも全画面で使えます");
+}
+$("fsBtn").addEventListener("click", toggleFullscreen);
+const syncFs = () => {
+  $("fsBtn").textContent = isFullscreen() ? "🗗" : "⛶";
+  $("fsBtn").title = isFullscreen() ? "全画面をやめる" : "全画面表示";
+};
+document.addEventListener("fullscreenchange", syncFs);
+document.addEventListener("webkitfullscreenchange", syncFs);
+if (isStandalone) $("fsBtn").hidden = true;
+
 // 初期化
 $("colorSwatch").style.background = rgb(color);
+$("panel").classList.toggle("closed", !panelOpen);
+$("panelBtn").classList.toggle("on", panelOpen);
 syncSettings();
 renderToolOpts();
 renderPanels();
@@ -1643,4 +2566,13 @@ resize();
   },
   compile: () => ensureCompiled(),
   cloneDoc: () => cloneDoc(doc),
+  get selection() {
+    return selection.slice();
+  },
+  get view() {
+    return { ...view };
+  },
+  get nodeSel() {
+    return nodeSel.slice();
+  },
 };

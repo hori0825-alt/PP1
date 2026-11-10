@@ -31,6 +31,8 @@
       </div>
       <div id="chips" class="chips"></div>
       <button id="exportBtn" class="primary">PES を保存</button>
+      <button id="fsBtn" class="icon" title="全画面表示">⛶</button>
+      <button id="panelBtn" class="panelBtn" title="レイヤー・縫い順・設定"><span>☰</span> <b id="panelLayerName">レイヤー</b></button>
       <button id="menuBtn" class="icon" title="メニュー">⋯</button>
     </header>
 
@@ -41,7 +43,8 @@
         <button data-tool="lasso" class="tool" title="塗りペン (囲んだ所を塗る)"><span>🖌️</span><small>塗りペン</small></button>
         <button data-tool="ellipse" class="tool" title="円"><span>◯</span><small>円</small></button>
         <button data-tool="rect" class="tool" title="四角"><span>▭</span><small>四角</small></button>
-        <button data-tool="select" class="tool" title="選択・移動"><span>👆</span><small>選択</small></button>
+        <button data-tool="select" class="tool" title="選択・移動・拡大縮小・回転・コピー"><span>👆</span><small>選択</small></button>
+        <button data-tool="node" class="tool" title="編集点 (点を動かして変形・点の追加/削除)"><span class="nodeIcon">◇</span><small>編集点</small></button>
         <button data-tool="eraser" class="tool" title="消しゴム"><span>🧽</span><small>消す</small></button>
         <div class="sep"></div>
         <button id="colorBtn" class="swatchBtn" title="糸の色"><span id="colorSwatch"></span><small>色</small></button>
@@ -64,6 +67,7 @@
 
       <aside id="panel">
         <div class="tabs" id="tabs">
+          <button id="panelClose" class="closeX" title="パネルを閉じる">✕</button>
           <button data-tab="layers" class="on">レイヤー</button>
           <button data-tab="seq">縫い順</button>
           <button data-tab="settings">設定</button>

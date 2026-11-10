@@ -47,11 +47,19 @@ input, select { font: inherit; }
 
 /* ---- top bar ---- */
 #top {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px;
   background: var(--panel); border-bottom: 1px solid var(--line);
-  padding: 8px 12px; flex-shrink: 0;
+  padding: 4px 10px; flex-shrink: 0; min-height: 48px;
 }
-.brand b { font-size: 16px; }
+#top button { min-height: 38px; white-space: nowrap; }
+.chips { min-width: 0; overflow: hidden; }
+#toolOpts label { white-space: nowrap; }
+#top button.icon { width: 40px; }
+.brand { white-space: nowrap; }
+.brand b { font-size: 15px; }
+.panelBtn { display: flex; align-items: center; gap: 6px; max-width: 170px; padding: 4px 10px; }
+.panelBtn b { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panelBtn.on { background: var(--text); color: #fff; border-color: var(--text); }
 .ver { font-size: 11px; color: var(--accent); margin-left: 6px; }
 .group { display: flex; gap: 6px; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -66,17 +74,18 @@ input, select { font: inherit; }
 .chips span.bad { background: #fdeaea; } .chips span.bad b { color: var(--bad); }
 
 /* ---- layout ---- */
-#main { flex: 1; display: flex; min-height: 0; }
+#main { flex: 1; display: flex; min-height: 0; position: relative; }
 #tools {
-  width: 76px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px;
-  overflow-y: auto;
+  width: 64px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 4px;
+  overflow-y: auto; padding-bottom: calc(6px + env(safe-area-inset-bottom));
 }
 .tool, .swatchBtn {
-  width: 62px; min-height: 58px; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 2px; padding: 4px;
+  width: 54px; min-height: 52px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; padding: 3px; flex-shrink: 0;
 }
-.tool span { font-size: 22px; line-height: 1; }
+.tool span { font-size: 21px; line-height: 1; }
+.tool .nodeIcon { font-size: 22px; color: #2f6fec; font-weight: 700; }
 .tool small, .swatchBtn small { font-size: 10px; color: var(--muted); }
 .tool.on { background: var(--accent-soft); border-color: var(--accent); }
 .tool.on small { color: var(--accent); font-weight: 700; }
@@ -88,15 +97,35 @@ input, select { font: inherit; }
 
 #stage { flex: 1; position: relative; min-width: 0; }
 #cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+/* ツール設定: 横長の画面では刺繍枠の左の余白に縦に、縦長では上の余白に横に並べる */
 #toolOpts {
-  position: absolute; top: 10px; left: 10px; z-index: 2;
+  position: absolute; top: 8px; left: 8px; z-index: 2;
   background: rgba(255, 255, 255, 0.95); border: 1px solid var(--line); border-radius: 12px;
-  padding: 8px 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-  max-width: calc(100% - 20px); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  padding: 8px 10px; display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap;
+  max-width: calc(100% - 16px); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  max-height: calc(100% - 16px); overflow-y: auto;
 }
 #toolOpts:empty { display: none; }
 #toolOpts label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 #toolOpts input[type="range"] { width: 150px; }
+#toolOpts .chk { font-size: 12px; color: var(--muted); }
+.widthCtl { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; }
+.actGroup { display: flex; gap: 4px; flex-wrap: wrap; }
+.act { min-height: 36px; padding: 4px 10px; font-size: 13px; border-radius: 9px; }
+.act.on { background: #2f6fec; border-color: #2f6fec; color: #fff; font-weight: 600; }
+.act:disabled { opacity: 0.35; }
+@media (orientation: landscape) {
+  #toolOpts { flex-direction: column; align-items: stretch; width: 170px; padding: 8px; gap: 8px; }
+  #toolOpts > * { max-width: 100%; }
+  #toolOpts > span { font-size: 12px !important; line-height: 1.45; }
+  #toolOpts input[type="range"] { width: 70px; flex: 1; }
+  #toolOpts label { gap: 4px; font-size: 12px; }
+  #toolOpts .val { min-width: 40px; font-size: 12px; }
+  .presetRow { flex-wrap: wrap; }
+  .act { padding: 4px 6px; font-size: 12px; }
+  #toolOpts label { justify-content: space-between; }
+  .actGroup .act { flex: 1 0 auto; }
+}
 #toolOpts .val { min-width: 48px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .presetRow { display: flex; gap: 4px; }
 .presetRow button { min-height: 32px; padding: 2px 8px; font-size: 12px; }
@@ -116,13 +145,18 @@ input, select { font: inherit; }
   max-width: 80%; text-align: center;
 }
 
-/* ---- right panel ---- */
+/* ---- right panel (引き出し。閉じると描く場所が画面いっぱいになる) ---- */
 #panel {
-  width: 300px; flex-shrink: 0; background: var(--panel); border-left: 1px solid var(--line);
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 10;
+  width: min(310px, 86vw); background: var(--panel); border-left: 1px solid var(--line);
   display: flex; flex-direction: column; min-height: 0;
   padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  transition: transform 0.18s ease-out;
 }
+#panel.closed { transform: translateX(105%); pointer-events: none; box-shadow: none; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs .closeX { flex: 0 0 44px; color: var(--muted); font-size: 16px; }
 .tabs button { flex: 1; border: none; border-radius: 0; min-height: 44px; color: var(--muted); }
 .tabs button.on { color: var(--text); font-weight: 700; box-shadow: inset 0 -3px 0 var(--accent); }
 .tab { padding: 12px; overflow-y: auto; flex: 1; min-height: 0; }
@@ -176,6 +210,9 @@ input, select { font: inherit; }
 #selBox h4 { margin: 0 0 6px; font-size: 13px; }
 #selBox label { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; font-size: 13px; gap: 8px; }
 #selBox select, #selBox input[type="number"] { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; min-height: 34px; max-width: 140px; }
+#selBox label.tog { justify-content: flex-start; }
+.sizeRow { display: flex; align-items: center; gap: 4px; }
+#selBox .sizeRow input { width: 64px; }
 
 /* ---- popovers ---- */
 .pop {
@@ -194,13 +231,14 @@ input, select { font: inherit; }
 #menu { right: 12px; top: 60px; display: flex; flex-direction: column; gap: 6px; width: 220px; }
 #menu[hidden] { display: none; }
 
-@media (max-width: 900px) {
-  #panel { width: 250px; }
+@media (max-width: 1100px) {
   .chips span:nth-child(n + 4) { display: none; }
+  .brand .ver { display: none; }
 }
-@media (orientation: portrait) and (max-width: 900px) {
-  #main { flex-direction: column; }
-  #tools { width: 100%; flex-direction: row; border-right: none; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .sep { width: 1px; height: 40px; }
-  #panel { width: 100%; height: 34%; border-left: none; border-top: 1px solid var(--line); }
+@media (max-width: 900px) {
+  .brand { display: none; }
+  .chips span:nth-child(n + 3), .chips span:only-child { display: none; }
+  .panelBtn b { display: none; }
+  .seg button { padding: 4px 10px; }
+  #exportBtn { padding: 4px 10px; }
 }
