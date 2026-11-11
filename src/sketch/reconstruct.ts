@@ -61,17 +61,20 @@ function segment(p: Vec[]): Segment[] {
     if (j - i >= 5) for (let k = i - 1; k <= j; k++) kind[k] = "satin";
     i = Math.max(j, i + 1);
   }
-  // 3重ぬい: 3頂点のうち2つ以上が R の並びが 6頂点以上続く
-  for (let i = 1; i < n - 3; ) {
-    const dense = (k: number) => [L[k], L[k + 1], L[k + 2]].filter((x) => x === "R").length >= 2;
-    if (!dense(i) || kind[i]) {
-      i++;
-      continue;
+  // 3重ぬい: 「同じ所へ戻る (R)」が2つ続く所 (前→後→前)。短い線でも見つけられるよう、
+  // R の連続のまわりを3重の区間とし、近い区間どうしはつなげる
+  for (let k = 1; k < n - 2; k++) {
+    if (kind[k] || kind[k + 1]) continue;
+    if (L[k] === "R" && L[k + 1] === "R") {
+      for (let m = Math.max(0, k - 1); m <= Math.min(n - 1, k + 3); m++) if (!kind[m]) kind[m] = "triple";
     }
-    let j = i;
-    while (j < n - 3 && dense(j) && !kind[j]) j++;
-    if (j - i >= 2) for (let k = i - 1; k <= Math.min(n - 1, j + 2); k++) if (!kind[k]) kind[k] = "triple";
-    i = j + 1;
+  }
+  for (let k = 1; k < n - 1; k++) {
+    // 3重の区間に挟まれた 1〜2点のすき間を埋める
+    if (kind[k] === null && kind[k - 1] === "triple") {
+      const nxt = kind[k + 1] === "triple" ? k + 1 : kind[k + 2] === "triple" ? k + 2 : -1;
+      if (nxt > 0) for (let m = k; m < nxt; m++) kind[m] = "triple";
+    }
   }
 
   const segs: Segment[] = [];
@@ -85,6 +88,12 @@ function segment(p: Vec[]): Segment[] {
     }
   }
   return segs;
+}
+
+function polyLen(p: Vec[]): number {
+  let L = 0;
+  for (let i = 1; i < p.length; i++) L += dist(p[i - 1], p[i]);
+  return L;
 }
 
 function median(v: number[]): number {
@@ -159,7 +168,8 @@ function looksLikeFill(pts: Vec[]): boolean {
     maxY = Math.max(maxY, pts[i].y);
   }
   const diag = Math.max(0.5, Math.hypot(maxX - minX, maxY - minY));
-  return z >= 4 && len / diag > 5;
+  // 小さな面 (行が数本) も見つけられるように、折り返し3回以上・道のりが外寸の3倍以上
+  return z >= 3 && len / diag > 3;
 }
 
 /** 面を埋める縫い目を塗りつぶし、輪郭 (外周 + 穴) を求める */
@@ -261,7 +271,15 @@ export function reconstructRun(raw: Vec[], color: ThreadRef): StitchEl[] {
       if (s) out.push(s);
     }
   }
-  return mergeSatins(out);
+  // 3重の線・太い線の端に残る「行って戻るだけ」の切れ端 (同じ所をなぞるだけの短いランニング) を除く
+  const lines = out.filter((e): e is StrokeEl => e.kind === "stroke" && e.width >= 1);
+  const cleaned = out.filter((e) => {
+    if (e.kind !== "stroke" || e.width >= 1) return true;
+    const retrace = e.points.length <= 3 && polyLen(e.points) < 6;
+    const onOther = e.points.every((p) => lines.some((l) => distToPolyline(p, l.points, l.closed) <= Math.max(0.35, l.width / 2)));
+    return !(retrace && onOther) && !onOther;
+  });
+  return mergeSatins(cleaned);
 }
 
 /** 角で分かれたサテンの続き (端がつながり太さが近い) を1本にまとめる */

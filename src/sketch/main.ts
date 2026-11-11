@@ -66,7 +66,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.3.1";
+const SKETCH_VERSION = "1.3.2";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -2835,6 +2835,33 @@ function fullscreenFallback(): void {
   toast("Safari の共有ボタン →「ホーム画面に追加」で開くと、いつでも全画面で使えます");
 }
 $("fsBtn").addEventListener("click", toggleFullscreen);
+
+// ------------------------------------------------------------------ 新しい版のお知らせ
+// ブラウザが前の版を覚えていて古いまま動くことがあるので、公開中のページが読み込む
+// プログラムのファイル名と、いま動いているもののファイル名を比べる。
+
+let updateShown = false;
+async function checkForUpdate(): Promise<void> {
+  const mine = import.meta.url.match(/assets\/(sketch-[^/?#]+\.js)/)?.[1];
+  if (!mine || updateShown) return; // 開発中 (ビルド前) は比べない
+  try {
+    const res = await fetch(`sketch.html?v=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const latest = (await res.text()).match(/assets\/(sketch-[^"'?#]+\.js)/)?.[1];
+    if (latest && latest !== mine) {
+      updateShown = true;
+      $("updBar").hidden = false;
+    }
+  } catch {
+    /* オフラインなど */
+  }
+}
+$("updReload").addEventListener("click", () => location.reload());
+void checkForUpdate();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void checkForUpdate();
+});
+window.setInterval(() => void checkForUpdate(), 10 * 60 * 1000);
 const syncFs = () => {
   $("fsBtn").textContent = isFullscreen() ? "🗗" : "⛶";
   $("fsBtn").title = isFullscreen() ? "全画面をやめる" : "全画面表示";

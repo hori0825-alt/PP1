@@ -21,6 +21,11 @@ input, select, textarea { -webkit-user-select: text; user-select: text; }
   border-bottom: 1px solid #f5c2c2; padding: 6px 12px; font-size: 13px; flex-shrink: 0;
 }
 #errBar span { flex: 1; word-break: break-all; }
+#updBar {
+  display: flex; gap: 10px; align-items: center; background: #eef2ff; color: #3446a3;
+  border-bottom: 1px solid #c9d3fb; padding: 6px 12px; font-size: 13px; flex-shrink: 0;
+}
+#updBar span { flex: 1; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
