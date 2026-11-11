@@ -395,12 +395,14 @@ export function stripLockStitches(pts: Vec[]): Vec[] {
   let a = 0;
   let b = pts.length - 1;
   // 先頭: p[a] → p[a+1] → p[a+2] がほぼ同じ所に戻っていれば止め縫い
+  // 止め縫いは 1mm 程度の短い往復。3重ぬい (2mm 以上の往復) は消さない
+  const lock = (i: number, j: number, k: number) => dist(pts[i], pts[k]) < 0.15 && dist(pts[i], pts[j]) <= 1.2;
   for (let k = 0; k < 3 && b - a >= 3; k++) {
-    if (dist(pts[a], pts[a + 2]) < 0.15) a += 2;
+    if (lock(a, a + 1, a + 2)) a += 2;
     else break;
   }
   for (let k = 0; k < 3 && b - a >= 3; k++) {
-    if (dist(pts[b], pts[b - 2]) < 0.15) b -= 2;
+    if (lock(b, b - 1, b - 2)) b -= 2;
     else break;
   }
   return pts.slice(a, b + 1);

@@ -66,7 +66,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.3.0";
+const SKETCH_VERSION = "1.3.1";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -2733,9 +2733,9 @@ $("openFile").addEventListener("change", async () => {
         r.doc,
         r.restored
           ? `PES から作品を復元しました (描いたときの線・面・レイヤー)${missing ? "。下絵の画像は PES に入らないため枠だけ表示しています" : ""}`
-          : `PES の縫い目を読み込みました (${r.colors}色・${r.stitches.toLocaleString()}針)。色ごとのレイヤーに分けています`,
+          : `この PES には編集用データがないため、縫い目から線・面を推定して戻しました (${r.colors}色)。太さや形が描いたときと少し違うことがあります`,
       );
-      // 縫い目として取り込んだときは、色ごとのレイヤーを見せる
+      // 推定して戻したときは、色ごとのレイヤーを見せる
       if (!r.restored) {
         ($("tabs").querySelector('[data-tab="layers"]') as HTMLButtonElement).click();
         setPanelOpen(true);
@@ -2767,7 +2767,7 @@ function toast(msg: string): void {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (t.hidden = true), 2600);
+  toastTimer = window.setTimeout(() => (t.hidden = true), Math.max(2600, msg.length * 90));
 }
 
 function escapeHtml(s: string): string {

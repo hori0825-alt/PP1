@@ -105,7 +105,7 @@ export function bucketFill(strokes: StrokeEl[], at: Vec, opts: BucketOptions = {
 }
 
 /** 線分 (太さ r セル) をグリッドに描き込む */
-function stampCapsule(
+export function stampCapsule(
   grid: Uint8Array,
   N: number,
   ax: number,
@@ -139,7 +139,7 @@ function stampCapsule(
  * 円形の膨張 (半径 r セル)。allowed を渡すと、そのセルにだけ広げる。
  * 距離変換 (2パスのチャンファー) で計算するので r が大きくても速い。
  */
-function dilate(src: Uint8Array, N: number, r: number, allowed: Uint8Array | null): Uint8Array {
+export function dilate(src: Uint8Array, N: number, r: number, allowed: Uint8Array | null): Uint8Array {
   if (allowed) {
     // 許可セルの中だけを伝って広げる (BFS で測地距離)
     const out = src.slice();
@@ -209,7 +209,7 @@ function dilate(src: Uint8Array, N: number, r: number, allowed: Uint8Array | nul
  * セル境界をたどって閉路を作る。内側を右手に見る向きでたどるので、
  * 外周は符号付き面積が正、穴は負になる (+y 下の画面座標)。
  */
-function traceLoops(mask: Uint8Array, N: number): [number, number][][] {
+export function traceLoops(mask: Uint8Array, N: number): [number, number][][] {
   const W = N + 1;
   const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && mask[y * N + x] === 1;
   const edges = new Map<number, number[]>();
@@ -266,7 +266,7 @@ function traceLoops(mask: Uint8Array, N: number): [number, number][][] {
 }
 
 /** 画素の階段を消して滑らかな輪郭にする */
-function smoothRing(ring: Vec[]): Vec[] {
+export function smoothRing(ring: Vec[]): Vec[] {
   // 一直線上の頂点を除いてから平滑化
   const pruned: Vec[] = [];
   for (let i = 0; i < ring.length; i++) {

@@ -9,6 +9,7 @@
 
 import { BROTHER_PALETTE } from "../export/brotherPalette";
 import { decodePes } from "../export/decode";
+import { dropHiddenRunning, reconstructRun } from "./reconstruct";
 import {
   newLayer,
   parseDoc,
@@ -16,6 +17,7 @@ import {
   newDoc,
   uid,
   type SketchDoc,
+  type StitchEl,
   type StitchesEl,
   type ThreadRef,
   type Vec,
@@ -81,6 +83,8 @@ export interface PesImport {
   doc: SketchDoc;
   /** 埋め込みデータから完全に復元できた */
   restored: boolean;
+  /** 縫い目から線・面を推定した */
+  reconstructed: boolean;
   stitches: number;
   colors: number;
 }
@@ -91,7 +95,13 @@ function threadFor(pecIndex: number): ThreadRef {
 }
 
 /** PES を読み込む */
-export function importPes(data: Uint8Array, fallbackName = "PES"): PesImport {
+export interface PesImportOptions {
+  /** 編集用データがないとき、縫い目から線・面を推定する (false なら縫い目のまま) */
+  reconstruct?: boolean;
+}
+
+export function importPes(data: Uint8Array, fallbackName = "PES", opts: PesImportOptions = {}): PesImport {
+  const reconstruct = opts.reconstruct ?? true;
   const magic = String.fromCharCode(...data.subarray(0, 4));
   if (magic !== "#PES") throw new Error("PES ファイルではありません");
 
@@ -99,7 +109,7 @@ export function importPes(data: Uint8Array, fallbackName = "PES"): PesImport {
   if (embedded) {
     let n = 0;
     for (const l of embedded.layers) n += l.elements.length;
-    return { doc: embedded, restored: true, stitches: 0, colors: n };
+    return { doc: embedded, restored: true, reconstructed: false, stitches: 0, colors: n };
   }
 
   const dec = decodePes(data);
@@ -163,21 +173,31 @@ export function importPes(data: Uint8Array, fallbackName = "PES"): PesImport {
   const name = (dec.label || fallbackName).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 8);
   doc.settings.name = name || "PES";
   doc.layers = [];
+  // 色ブロックごとに部品を作る (縫う順のまま)
+  const perBlock: { color: ThreadRef; els: StitchEl[] }[] = [];
   blocks.forEach((runs, i) => {
     if (runs.length === 0) return;
     const color = threadFor(dec.paletteIndices[i] ?? 20);
-    const layer = newLayer(`${doc.layers.length + 1}. ${color.name ?? "色"}`);
+    const els: StitchEl[] = [];
+    for (const run of runs) {
+      const pts = run.map((p) => ({ x: p.x + ox, y: p.y + oy }));
+      if (reconstruct) els.push(...reconstructRun(pts, color));
+      else els.push({ kind: "stitches", id: uid(), points: pts, color } satisfies StitchesEl);
+    }
+    perBlock.push({ color, els });
+  });
+  // 後で縫う面・太い線の下に隠れる下縫い・つなぎ縫いを除く (全体の縫い順で判定)
+  if (reconstruct) {
+    const keep = new Set(dropHiddenRunning(perBlock.flatMap((b) => b.els)).map((e) => e.id));
+    for (const b of perBlock) b.els = b.els.filter((e) => keep.has(e.id));
+  }
+  for (const b of perBlock) {
+    if (b.els.length === 0) continue;
+    const layer = newLayer(`${doc.layers.length + 1}. ${b.color.name ?? "色"}`);
     // 元の縫い順をそのまま保つ
     layer.order = "manual";
-    layer.elements = runs.map(
-      (pts): StitchesEl => ({
-        kind: "stitches",
-        id: uid(),
-        points: pts.map((p) => ({ x: p.x + ox, y: p.y + oy })),
-        color,
-      }),
-    );
+    layer.elements = b.els;
     doc.layers.push(layer);
-  });
-  return { doc, restored: false, stitches: total, colors: doc.layers.length };
+  }
+  return { doc, restored: false, reconstructed: reconstruct, stitches: total, colors: doc.layers.length };
 }
