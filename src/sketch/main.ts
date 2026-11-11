@@ -33,11 +33,14 @@ import {
   scaleFn,
   selectionBox,
   softMoveNodes,
+  stitchesLookLikeLine,
+  stitchesToStroke,
   subdivide,
   translateFn,
   type Box,
   type NodeRef,
 } from "./edit";
+import { encodeEmbedded, importPes } from "./pesio";
 import { getBitmap, getImageData, loadStoredImages, putImage, readImageFile, removeUnusedImages } from "./images";
 import {
   cloneDoc,
@@ -50,6 +53,7 @@ import {
   PP1_HOOP_MM,
   type ImageEl,
   type StitchEl,
+  type StitchesEl,
   resolveStrokeStyle,
   uid,
   type Element,
@@ -62,7 +66,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.2.1";
+const SKETCH_VERSION = "1.3.0";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -123,6 +127,8 @@ let pasteCount = 0;
 const prefs = loadPrefs();
 let penOnly = prefs.penOnly ?? false;
 let panelOpen = prefs.panelOpen ?? window.innerWidth >= 1400;
+/** PES に編集用データを入れる (このアプリで開き直して修正できる) */
+let embedPes = prefs.embedPes ?? true;
 
 const undoStack: string[] = [];
 const redoStack: string[] = [];
@@ -161,7 +167,7 @@ function loadClipboard(): Element[] {
   }
 }
 
-function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean; panelOpen?: boolean } {
+function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean; panelOpen?: boolean; embedPes?: boolean } {
   try {
     return JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}");
   } catch {
@@ -170,7 +176,7 @@ function loadPrefs(): { penOnly?: boolean; penOnlyDecided?: boolean; panelOpen?:
 }
 function savePrefs(): void {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ penOnly, penOnlyDecided: prefs.penOnlyDecided, panelOpen }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ penOnly, penOnlyDecided: prefs.penOnlyDecided, panelOpen, embedPes }));
   } catch {
     /* noop */
   }
@@ -461,7 +467,7 @@ function elementPath(el: StitchEl): Path2D {
     }
   } else {
     el.points.forEach((v, i) => (i === 0 ? p.moveTo(v.x, v.y) : p.lineTo(v.x, v.y)));
-    if (el.closed) p.closePath();
+    if (el.kind === "stroke" && el.closed) p.closePath();
   }
   return p;
 }
@@ -501,6 +507,13 @@ function drawElement(el: Element, alpha: number, px: number, offset?: Vec): void
   if (el.kind === "fill") {
     ctx.fillStyle = rgb(el.color, alpha);
     ctx.fill(path, "evenodd");
+  } else if (el.kind === "stitches") {
+    // 縫い目は糸の太さ (約 0.4mm) で針から針へ描く
+    ctx.strokeStyle = rgb(el.color, alpha);
+    ctx.lineWidth = Math.max(0.4, 1.2 * px);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke(path);
   } else {
     ctx.strokeStyle = rgb(el.color, alpha);
     ctx.lineWidth = Math.max(el.width, 1.2 * px);
@@ -1191,6 +1204,8 @@ function hitTest(m: Vec, anyLayer: boolean): { el: Element; layer: Layer } | nul
         if (distToPolyline(m, el.points, el.closed) <= el.width / 2 + tol) return { el, layer };
       } else if (el.kind === "image") {
         if (pointInShape(m, imageCorners(el), [])) return { el, layer };
+      } else if (el.kind === "stitches") {
+        if (distToPolyline(m, el.points, false) <= 0.3 + tol) return { el, layer };
       } else if (pointInShape(m, el.outer, el.holes) || distToPolyline(m, el.outer, true) <= tol) {
         return { el, layer };
       }
@@ -2029,7 +2044,8 @@ function renderLayers(): void {
     if (!layer.visible) li.classList.add("hiddenL");
     const lines = layer.elements.filter((e) => e.kind === "stroke").length;
     const fills = layer.elements.filter((e) => e.kind === "fill").length;
-    const imgs = layer.elements.length - lines - fills;
+    const imgs = layer.elements.filter((e) => e.kind === "image").length;
+    const sts = layer.elements.filter((e) => e.kind === "stitches").length;
     const st = counts.get(layer.id);
     const imgOnly = isImageLayer(layer);
     li.innerHTML = imgOnly
@@ -2048,7 +2064,7 @@ function renderLayers(): void {
     nm.className = "nm";
     nm.innerHTML = imgOnly
       ? `${escapeHtml(layer.name)}<small>画像${imgs}・縫いません</small>`
-      : `${escapeHtml(layer.name)}<small>線${lines}・面${fills}${imgs ? `・画像${imgs}` : ""}${st !== undefined ? `・${st.toLocaleString()}針` : ""}</small>`;
+      : `${escapeHtml(layer.name)}<small>${sts ? `縫い目${sts}・` : ""}線${lines}・面${fills}${imgs ? `・画像${imgs}` : ""}${st !== undefined ? `・${st.toLocaleString()}針` : ""}</small>`;
     // 名前の変更: 選んでいるレイヤーの名前をもう一度タップ (iPad ではダブルタップが届かないため)
     nm.addEventListener("click", (ev) => {
       if (layer.id !== activeLayerId) return;
@@ -2229,12 +2245,15 @@ function renderSelBox(): void {
       .map((l) => `<option value="${l.id}" ${sameLayer && l.id === els[0].layer.id ? "selected" : ""}>${escapeHtml(l.name)}</option>`)
       .join("");
   const images = els.filter((f) => f.el.kind === "image").map((f) => f.el as ImageEl);
+  const stitchEls = els.filter((f) => f.el.kind === "stitches").map((f) => f.el as StitchesEl);
   const title =
     one && one.el.kind === "image"
       ? "画像 (下敷き・縫いません)"
+      : one && one.el.kind === "stitches"
+        ? `縫い目 ${one.el.points.length.toLocaleString()}針 <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(one.el.color)}"></span>`
       : one && isStitchEl(one.el)
         ? `${one.el.kind === "fill" ? "面" : "線"} <span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;background:${rgb(one.el.color)}"></span>`
-        : `${els.length}個 (線${strokes.length}・面${fills.length}${images.length ? `・画像${images.length}` : ""})`;
+        : `${els.length}個 (${stitchEls.length ? `縫い目${stitchEls.length}・` : ""}線${strokes.length}・面${fills.length}${images.length ? `・画像${images.length}` : ""})`;
   let body = `<h4>選択中: ${title}</h4>`;
   body += `<label>大きさ (mm) <span class="sizeRow"><input id="selSW" type="number" min="0.5" max="200" step="0.5" value="${W.toFixed(1)}">×<input id="selSH" type="number" min="0.5" max="200" step="0.5" value="${H.toFixed(1)}"></span></label>`;
   body += `<label class="tog"><input id="selKeep" type="checkbox" checked> 縦横比を保つ</label>`;
@@ -2268,7 +2287,14 @@ function renderSelBox(): void {
     body += `<label>画像の濃さ <input id="selOpacity" type="range" min="0.05" max="1" step="0.05" value="${images[0].opacity}"></label>`;
   }
   body += `<label>レイヤー <select id="selLayer">${layerOpts}</select></label>`;
-  body += `<div class="row">${strokes.length + fills.length ? `<button id="selColor">いまの色に変える</button>` : ""}<button id="selDel" class="mini danger">削除</button></div>`;
+  body += `<div class="row">${strokes.length + fills.length + stitchEls.length ? `<button id="selColor">いまの色に変える</button>` : ""}<button id="selDel" class="mini danger">削除</button></div>`;
+  if (stitchEls.length) {
+    const lineLike = stitchEls.filter((e) => stitchesLookLikeLine(e.points));
+    body += `<p class="note">PES から読み込んだ縫い目です。針の位置をそのまま縫います。拡大縮小すると針の間隔も変わるので、大きく変えるときは仕上がりを刺繍プレビューで確認してください。編集点ツールで針の位置を直せます。</p>`;
+    if (lineLike.length) {
+      body += `<div class="row"><button id="selToLine">線に変換 (${lineLike.length}個)</button></div><p class="note">ランニングの縫い目を、太さや縫い方を変えられる「線」にします。</p>`;
+    }
+  }
   if (images.length) body += `<p class="note">位置と大きさを決めたら、レイヤーの 🔒 でロックすると上から描いても動きません。</p>`;
   box.innerHTML = body;
 
@@ -2344,6 +2370,12 @@ function renderSelBox(): void {
     });
   }
   box.querySelector("#selDel")?.addEventListener("click", deleteSelected);
+  box.querySelector("#selToLine")?.addEventListener("click", () => {
+    edit(() => {
+      for (const e of stitchEls) if (stitchesLookLikeLine(e.points)) replaceElement(stitchesToStroke(e));
+    });
+    toast("線に変換しました。太さ・縫い方を変えられます");
+  });
 }
 
 // ------------------------------------------------------------------ 統計
@@ -2382,6 +2414,7 @@ function syncSettings(): void {
   $<HTMLInputElement>("setAngle").value = String(s.fillAngle);
   $<HTMLInputElement>("setUnderlay").checked = s.underlay;
   $<HTMLInputElement>("setPenOnly").checked = penOnly;
+  $<HTMLInputElement>("setEmbedPes").checked = embedPes;
   $("canvasInfo").textContent = `${s.canvasW}×${s.canvasH}mm${s.canvasW > PP1_HOOP_MM || s.canvasH > PP1_HOOP_MM ? " (PP1 の枠より大きい)" : ""}`;
   const dens = s.fillSpacing <= 0.36 ? "dense" : s.fillSpacing >= 0.48 ? "light" : "normal";
   $<HTMLSelectElement>("setDensity").value = dens;
@@ -2403,6 +2436,10 @@ bindSetting("setDensity", (el) => {
   const d = DENSITY[el.value as keyof typeof DENSITY] ?? DENSITY.normal;
   doc.settings.fillSpacing = d.fill;
   doc.settings.satinSpacing = d.satin;
+});
+$("setEmbedPes").addEventListener("change", (e) => {
+  embedPes = (e.target as HTMLInputElement).checked;
+  savePrefs();
 });
 $("setPenOnly").addEventListener("change", (e) => {
   penOnly = (e.target as HTMLInputElement).checked;
@@ -2640,7 +2677,8 @@ function checkBeforeExport(): CompileResult | null {
 function exportPes(): void {
   const res = checkBeforeExport();
   if (!res) return;
-  void shareOrDownload(writePes(res.plan).data, `${doc.settings.name || "SKETCH"}.pes`, "application/octet-stream");
+  const extra = embedPes ? encodeEmbedded(doc) : undefined;
+  void shareOrDownload(writePes(res.plan, { extra }).data, `${doc.settings.name || "SKETCH"}.pes`, "application/octet-stream");
 }
 function exportDst(): void {
   const res = checkBeforeExport();
@@ -2665,28 +2703,51 @@ $("mOpen").addEventListener("click", () => {
   $("menu").hidden = true;
   $<HTMLInputElement>("openFile").click();
 });
-$("openFile").addEventListener("change", () => {
-  const file = $<HTMLInputElement>("openFile").files?.[0];
+/** 開いた作品を今の作品と入れ替える (取り消しで戻せる) */
+function replaceDoc(d: SketchDoc, msg: string): void {
+  beginChange();
+  doc = d;
+  if (doc.layers.length === 0) doc.layers.push(newLayer("レイヤー1"));
+  activeLayerId = doc.layers[doc.layers.length - 1].id;
+  selection = [];
+  nodeTarget = null;
+  syncSettings();
+  changed();
+  migrateUnderlay();
+  fit();
+  toast(msg);
+}
+
+$("openFile").addEventListener("change", async () => {
+  const input = $<HTMLInputElement>("openFile");
+  const file = input.files?.[0];
+  input.value = "";
   if (!file) return;
-  file.text().then((t) => {
-    try {
-      const { doc: d, images } = parseDocWithImages(t);
-      for (const [id, url] of Object.entries(images)) if (typeof url === "string") putImage(url, id);
-      beginChange();
-      doc = d;
-      activeLayerId = doc.layers[doc.layers.length - 1].id;
-      selection = [];
-      nodeTarget = null;
-      syncSettings();
-      changed();
-      migrateUnderlay();
-      fit();
-      toast("作品を開きました");
-    } catch (err) {
-      toast(String((err as Error).message ?? err));
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const head = String.fromCharCode(...bytes.subarray(0, 4));
+    if (head === "#PES") {
+      const r = importPes(bytes, file.name.replace(/\.[^.]*$/, ""));
+      const missing = r.doc.layers.some((l) => l.elements.some((e) => e.kind === "image" && !getImageData(e.imageId)));
+      replaceDoc(
+        r.doc,
+        r.restored
+          ? `PES から作品を復元しました (描いたときの線・面・レイヤー)${missing ? "。下絵の画像は PES に入らないため枠だけ表示しています" : ""}`
+          : `PES の縫い目を読み込みました (${r.colors}色・${r.stitches.toLocaleString()}針)。色ごとのレイヤーに分けています`,
+      );
+      // 縫い目として取り込んだときは、色ごとのレイヤーを見せる
+      if (!r.restored) {
+        ($("tabs").querySelector('[data-tab="layers"]') as HTMLButtonElement).click();
+        setPanelOpen(true);
+      }
+      return;
     }
-  });
-  $<HTMLInputElement>("openFile").value = "";
+    const { doc: d, images } = parseDocWithImages(new TextDecoder().decode(bytes));
+    for (const [id, url] of Object.entries(images)) if (typeof url === "string") putImage(url, id);
+    replaceDoc(d, "作品を開きました");
+  } catch (err) {
+    toast(`開けませんでした: ${String((err as Error).message ?? err)}`);
+  }
 });
 $("mNew").addEventListener("click", () => openCanvasDlg("new"));
 

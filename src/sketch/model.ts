@@ -63,8 +63,20 @@ export interface ImageEl {
   opacity: number;
 }
 
+/**
+ * 縫い目 (PES などから読み込んだ針の位置の列)。形の情報はないので、針の位置をそのまま縫う。
+ * 移動・拡大縮小・回転・色・縫い順・個々の針の位置は編集できる。
+ */
+export interface StitchesEl {
+  kind: "stitches";
+  id: string;
+  /** 針を落とす位置 (mm)。この順に縫う */
+  points: Vec[];
+  color: ThreadRef;
+}
+
 /** 縫う部品 */
-export type StitchEl = StrokeEl | FillEl;
+export type StitchEl = StrokeEl | FillEl | StitchesEl;
 /** レイヤーに入るもの (縫う部品 + 画像) */
 export type Element = StitchEl | ImageEl;
 

@@ -123,6 +123,7 @@
             <input id="setAngle" type="number" min="0" max="179" step="5" />
           </label>
           <label class="tog"><input id="setUnderlay" type="checkbox" /> 下縫いを入れる</label>
+          <label class="tog"><input id="setEmbedPes" type="checkbox" /> PES に編集用データを入れる (このアプリで開き直して修正できる)</label>
           <label class="tog"><input id="setPenOnly" type="checkbox" /> Apple Pencil だけで描く (指は移動・拡大)</label>
           <h4>キャンバス</h4>
           <div class="row">
@@ -147,9 +148,9 @@
       <button id="mImage">画像を下敷きに入れる</button>
       <button id="mCanvas">キャンバスのサイズ</button>
       <button id="mSave">作品を保存 (.json)</button>
-      <button id="mOpen">作品を開く</button>
+      <button id="mOpen">作品・PES を開く</button>
       <button id="mNew" class="danger">新しく描く</button>
-      <input id="openFile" type="file" accept=".json,application/json" hidden />
+      <input id="openFile" type="file" hidden />
     </div>
     <input id="imgFile" type="file" accept="image/*" hidden />
 

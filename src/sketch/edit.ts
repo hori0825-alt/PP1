@@ -18,8 +18,8 @@ export interface Box {
 
 /** 部品の外接矩形 (線は太さぶん広げる) */
 export function elementBox(el: Element): Box {
-  const pts = el.kind === "stroke" ? el.points : el.kind === "fill" ? el.outer : imageCorners(el);
-  const pad = el.kind === "stroke" ? el.width / 2 : 0;
+  const pts = el.kind === "stroke" || el.kind === "stitches" ? el.points : el.kind === "fill" ? el.outer : imageCorners(el);
+  const pad = el.kind === "stroke" ? el.width / 2 : el.kind === "stitches" ? 0.2 : 0;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -58,7 +58,7 @@ export function cloneElement<T extends Element>(el: T): T {
 
 /** すべての点を f で写した新しい部品を返す (id はそのまま) */
 export function mapElement(el: Element, f: (v: Vec) => Vec): Element {
-  if (el.kind === "stroke") return { ...el, points: el.points.map(f) };
+  if (el.kind === "stroke" || el.kind === "stitches") return { ...el, points: el.points.map(f) };
   if (el.kind === "image") return { ...el, p0: f(el.p0), p1: f(el.p1), p2: f(el.p2) };
   return { ...el, outer: el.outer.map(f), holes: el.holes.map((h) => h.map(f)) };
 }
@@ -119,13 +119,14 @@ export interface NodeRef {
 /** 部品のパス (輪) を列挙する。画像には編集点がない */
 export function paths(el: Element): PathRef[] {
   if (el.kind === "stroke") return [{ pts: el.points, closed: el.closed }];
+  if (el.kind === "stitches") return [{ pts: el.points, closed: false }];
   if (el.kind === "image") return [];
   return [{ pts: el.outer, closed: true }, ...el.holes.map((h) => ({ pts: h, closed: true }))];
 }
 
 /** ring 番目のパスを差し替えた新しい部品 */
 export function withPath(el: Element, ring: number, pts: Vec[]): Element {
-  if (el.kind === "stroke") return { ...el, points: pts };
+  if (el.kind === "stroke" || el.kind === "stitches") return { ...el, points: pts };
   if (el.kind === "image") return el;
   if (ring === 0) return { ...el, outer: pts };
   const holes = el.holes.slice();
@@ -134,6 +135,7 @@ export function withPath(el: Element, ring: number, pts: Vec[]): Element {
 }
 
 function minPoints(el: Element): number {
+  if (el.kind === "stitches") return 2;
   return el.kind === "stroke" ? (el.closed ? 3 : 2) : 3;
 }
 
@@ -332,3 +334,74 @@ export function nodeCount(el: Element): number {
 }
 
 export type { FillEl, StrokeEl };
+
+/**
+ * 縫い目が「線」(ランニングのように一方向に進む) かどうか。
+ * サテン・タタミ・3重ぬいは折り返しが多いので線とは見なさない。
+ */
+export function stitchesLookLikeLine(raw: Vec[]): boolean {
+  // 始めと終わりの止め縫い (数針の往復) は判定に入れない
+  const pts = stripLockStitches(raw);
+  if (pts.length < 2) return false;
+  let rev = 0;
+  let turns = 0;
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    len += dist(pts[i - 1], pts[i]);
+    if (i < pts.length - 1) {
+      const ax = pts[i].x - pts[i - 1].x;
+      const ay = pts[i].y - pts[i - 1].y;
+      const bx = pts[i + 1].x - pts[i].x;
+      const by = pts[i + 1].y - pts[i].y;
+      const la = Math.hypot(ax, ay);
+      const lb = Math.hypot(bx, by);
+      if (la < 1e-6 || lb < 1e-6) continue;
+      turns++;
+      // 120° 以上の折り返し
+      if ((ax * bx + ay * by) / (la * lb) < -0.5) rev++;
+    }
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const diag = Math.max(1, Math.hypot(maxX - minX, maxY - minY));
+  return (turns === 0 || rev / turns < 0.15) && len / diag < 8;
+}
+
+/** 線のような縫い目を、編集しやすい「線 (ランニング)」に変換する */
+export function stitchesToStroke(el: Extract<Element, { kind: "stitches" }>): StrokeEl {
+  const pts = simplify(stripLockStitches(el.points), 0.05);
+  const closed = pts.length > 3 && dist(pts[0], pts[pts.length - 1]) < 0.3;
+  return {
+    kind: "stroke",
+    id: el.id,
+    points: closed ? pts.slice(0, -1) : pts,
+    closed,
+    width: 0.5,
+    style: "running",
+    color: el.color,
+  };
+}
+
+/** 縫い目の始めと終わりの止め縫い (行って戻る数針) を取り除く */
+export function stripLockStitches(pts: Vec[]): Vec[] {
+  let a = 0;
+  let b = pts.length - 1;
+  // 先頭: p[a] → p[a+1] → p[a+2] がほぼ同じ所に戻っていれば止め縫い
+  for (let k = 0; k < 3 && b - a >= 3; k++) {
+    if (dist(pts[a], pts[a + 2]) < 0.15) a += 2;
+    else break;
+  }
+  for (let k = 0; k < 3 && b - a >= 3; k++) {
+    if (dist(pts[b], pts[b - 2]) < 0.15) b -= 2;
+    else break;
+  }
+  return pts.slice(a, b + 1);
+}

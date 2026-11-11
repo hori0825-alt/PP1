@@ -102,7 +102,8 @@ function readU32le(data: Uint8Array, pos: number): number {
 
 export function decodePes(data: Uint8Array): DecodedPes {
   const magic = new TextDecoder("ascii").decode(data.slice(0, 8));
-  if (magic !== "#PES0001") throw new Error(`bad magic: ${magic}`);
+  // PES のバージョン (#PES0001, #PES0060 など) によらず、PEC の位置は 0x08 にある
+  if (!magic.startsWith("#PES")) throw new Error(`bad magic: ${magic}`);
   const pecOffset = readU32le(data, 8);
 
   const la = new TextDecoder("ascii").decode(data.slice(pecOffset, pecOffset + 3));

@@ -9,7 +9,8 @@
 //   0x0E: u16le 0x00 (フープ: 0 = 100×100mm, 1 = 130×180mm)
 //   0x10: u16le 0x00 (セグメントブロック数 = 0)
 //   0x12: u16le 0xFFFF / u16le 0x0000 (CEmbOne なし)
-//   0x16: PEC ブロック
+//   0x16: (任意) アプリ独自のデータ。PES ラッパーにはセクションがないので、どの読み手も参照しない
+//   ....: PEC ブロック (位置は 0x08 のオフセットで示す)
 
 import type { StitchPlan } from "../core/types";
 import { BinWriter } from "./binWriter";
@@ -22,7 +23,15 @@ export interface PesResult {
   threads: BrotherThread[];
 }
 
-export function writePes(plan: StitchPlan): PesResult {
+export interface PesOptions {
+  /**
+   * PES ラッパーと PEC ブロックの間に入れる追加データ (編集用データなど)。
+   * PEC の位置はオフセットで示すので、刺繍機・Artspira が読むステッチには影響しない。
+   */
+  extra?: Uint8Array;
+}
+
+export function writePes(plan: StitchPlan, options: PesOptions = {}): PesResult {
   const threads = assignBrotherThreads(plan);
   const w = new BinWriter();
 
@@ -34,6 +43,8 @@ export function writePes(plan: StitchPlan): PesResult {
   w.u16le(0x00); // セグメントブロックなし
   w.u16le(0xffff);
   w.u16le(0x0000);
+
+  if (options.extra && options.extra.length > 0) w.bytes(options.extra);
 
   w.patchU32le(pecOffsetPos, w.length);
   writePecBlock(w, plan, threads);

@@ -49,7 +49,7 @@ export interface SeqItem {
   elementId: string;
   layerId: string;
   layerName: string;
-  kind: "stroke" | "fill";
+  kind: "stroke" | "fill" | "stitches";
   /** 表示用の縫い方 (ランニング / 3重 / サテン / タタミ) */
   styleLabel: string;
   color: ThreadRef;
@@ -98,11 +98,16 @@ interface Unit {
 }
 
 function hasContent(el: Element): boolean {
+  if (el.kind === "stitches") return el.points.length >= 2;
   return el.kind === "stroke" ? el.points.length >= 1 : el.outer.length >= 3;
 }
 
 /** 現在位置 p から見た、部品の最良の入り口と出口 */
 function bestEntry(el: Element, p: Vec | null, layer: Layer): Unit {
+  // 縫い目は元の順番どおりに縫う (向きは変えない)
+  if (el.kind === "stitches") {
+    return { el, layer, entry: el.points[0], exit: el.points[el.points.length - 1], reversed: false, rotate: 0 };
+  }
   if (el.kind === "stroke") {
     const pts = el.points;
     if (el.closed && pts.length >= 3) {
@@ -121,6 +126,7 @@ function bestEntry(el: Element, p: Vec | null, layer: Layer): Unit {
 }
 
 function entryDistance(el: Element, p: Vec): number {
+  if (el.kind === "stitches") return dist(p, el.points[0]);
   if (el.kind === "stroke") {
     const pts = el.points;
     if (el.closed) return distToPolyline(p, pts, true);
@@ -152,7 +158,7 @@ export function planOrder(layers: Layer[]): Unit[] {
 
     // 同じレイヤー内では「面」を先、「線」を後に縫う (線が面に埋もれないように)。
     // それぞれの中で色ごとにまとめる (初出順。直前の色があれば先頭へ)
-    for (const kind of ["fill", "stroke"] as const) {
+    for (const kind of ["fill", "stitches", "stroke"] as const) {
       const group = els.filter((e) => e.kind === kind);
       if (group.length === 0) continue;
       const colorOrder: string[] = [];
@@ -315,7 +321,7 @@ interface Cover {
 function buildCovers(units: Unit[]): Cover[] {
   return units.map((u, index) => {
     const el = u.el;
-    const pts = el.kind === "stroke" ? el.points : el.outer;
+    const pts = el.kind === "fill" ? el.outer : el.points;
     const b = bbox(pts);
     const pad = el.kind === "stroke" ? el.width / 2 : 0;
     return {
@@ -334,7 +340,10 @@ function pointHidden(p: Vec, index: number, color: string, covers: Cover[]): boo
     const later = c.index > index;
     const sameColor = colorKey(c.el.color) === color;
     if (!later && !sameColor) continue;
-    if (c.el.kind === "fill") {
+    if (c.el.kind === "stitches") {
+      // 縫い目は形が分からないので、隠れる場所としては扱わない
+      continue;
+    } else if (c.el.kind === "fill") {
       if (pointInShape(p, c.el.outer, c.el.holes)) return true;
     } else {
       const style = resolveStrokeStyle(c.el);
@@ -381,9 +390,11 @@ export function compileSketch(doc: SketchDoc): CompileResult {
     const exitNear = next ? toU(next.entry) : null;
 
     let runs =
-      el.kind === "stroke"
-        ? stitchStroke(u, s, warnings)
-        : stitchFill(u, s, needle, exitNear, warnings);
+      el.kind === "stitches"
+        ? [{ stitches: el.points.map(toU), connection: "trim" as const }]
+        : el.kind === "stroke"
+          ? stitchStroke(u, s, warnings)
+          : stitchFill(u, s, needle, exitNear, warnings);
     runs = runs.filter((r) => r.stitches.length >= 1);
     if (runs.length === 0) return;
 
@@ -394,8 +405,7 @@ export function compileSketch(doc: SketchDoc): CompileResult {
       const head = runs[i].stitches[0];
       const d = Math.hypot(head.x - prevLast.x, head.y - prevLast.y);
       const inside =
-        el.kind === "stroke" ||
-        segmentInsideShape(toMm(prevLast), toMm(head), el.outer, el.holes);
+        el.kind !== "fill" || segmentInsideShape(toMm(prevLast), toMm(head), el.outer, el.holes);
       if (d < mm(2)) {
         runs[i] = { ...runs[i], connection: "continuous" };
       } else if (inside) {
@@ -442,14 +452,19 @@ export function compileSketch(doc: SketchDoc): CompileResult {
     const block = blocks[blocks.length - 1];
     for (const r of runs) {
       block.runs.push(
-        postprocessRun({ ...r, objectId, stitchType: el.kind === "fill" ? "tatami" : "satin" }),
+        postprocessRun({
+          ...r,
+          objectId,
+          stitchType: el.kind === "fill" ? "tatami" : el.kind === "stitches" ? "manual" : "satin",
+        }),
       );
     }
     const lastRun = block.runs[block.runs.length - 1];
     needle = lastRun.stitches[lastRun.stitches.length - 1];
     curColor = ck;
 
-    const style = el.kind === "fill" ? "タタミ" : styleLabel(resolveStrokeStyle(el));
+    const style =
+      el.kind === "fill" ? "タタミ" : el.kind === "stitches" ? "縫い目" : styleLabel(resolveStrokeStyle(el));
     seqMeta.push({
       objectId,
       elementId: el.id,
