@@ -27,6 +27,8 @@ import {
   polylineLength,
   rotateRing,
   signedAreaMm,
+  resampleAdaptive,
+  smoothCurve,
   splitAtCorners,
 } from "./geom";
 import {
@@ -205,11 +207,12 @@ const toMm = (p: Point): Vec => ({ x: p.x / 10, y: p.y / 10 });
 function stitchStroke(u: Unit, s: SketchSettings, warnings: string[]): StitchRun[] {
   const el = u.el as StrokeEl;
   let pts = el.points;
+  // 描いた点を通る滑らかな曲線にしてから縫う (はっきり曲げた角は角のまま)
   if (el.closed && pts.length >= 3) {
-    const r = rotateRing(pts, u.rotate);
-    pts = [...r, r[0]];
-  } else if (u.reversed) {
-    pts = [...pts].reverse();
+    const ring = smoothCurve(rotateRing(pts, u.rotate), true);
+    pts = [...ring, ring[0]];
+  } else {
+    pts = smoothCurve(u.reversed ? [...pts].reverse() : pts, false);
   }
   // 点 (タップ) は小さな線分として扱う
   if (pts.length === 1 || polylineLength(pts) < 0.3) {
@@ -223,16 +226,21 @@ function stitchStroke(u: Unit, s: SketchSettings, warnings: string[]): StitchRun
   const path = pts.map(toU);
   const style = resolveStrokeStyle(el);
 
+  // 針の位置: 曲線からのずれが 0.05mm 以内になるよう、急なカーブほど針目を短く (最短〜設定の長さ)。
+  // 3重ぬいは同じ所を3回通るので、短すぎると糸が詰まる。最短 1.2mm (止め縫いの 1mm とも区別できる)
+  const needles = (minLen: number): Point[] =>
+    resampleAdaptive(pts, s.runLen, Math.min(minLen, s.runLen), 0.05).map((p) => ({
+      x: Math.round(mm(p.x)),
+      y: Math.round(mm(p.y)),
+    }));
+
   if (style === "running") {
-    return runningStitch(path, { stitchLength: mm(s.runLen) }).runs;
+    return [{ stitches: needles(0.8), connection: "trim" }];
   }
 
   if (style === "triple") {
     // ビーン縫い: 1針ごとに 前→戻り→前 と3回通す (出口は終点のまま)
-    const res = resamplePolyline(path, mm(s.runLen)).map((p) => ({
-      x: Math.round(p.x),
-      y: Math.round(p.y),
-    }));
+    const res = needles(1.2);
     const out: Point[] = [res[0]];
     for (let i = 1; i < res.length; i++) out.push(res[i], res[i - 1], res[i]);
     return [{ stitches: out, connection: "trim" }];

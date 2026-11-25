@@ -13,7 +13,16 @@ import { writePes } from "../export/pes";
 import { validatePlan } from "../export/validate";
 import { bucketFill } from "./bucket";
 import { compileSketch, flattenPlan, type CompileResult, type FlatStitch, type SeqItem } from "./compile";
-import { cleanRing, cleanStroke, dist, distToPolyline, pointInShape, polylineLength, signedAreaMm } from "./geom";
+import {
+  cleanRing,
+  cleanStroke,
+  dist,
+  distToPolyline,
+  pointInShape,
+  polylineLength,
+  signedAreaMm,
+  smoothCurve,
+} from "./geom";
 import {
   cloneElement,
   decimate,
@@ -66,7 +75,7 @@ import {
   type Vec,
 } from "./model";
 
-const SKETCH_VERSION = "1.3.2";
+const SKETCH_VERSION = "1.4.0";
 const STITCH_LIMIT = 12000;
 const SAVE_KEY = "pp1-sketch:doc";
 const UNDERLAY_KEY = "pp1-sketch:underlay";
@@ -458,6 +467,17 @@ function draw(): void {
   }
 }
 
+// 線は「描いた点を通る滑らかな曲線」として表示する (縫うときと同じ曲線)。
+// 点の配列ごとに計算結果を覚えておく (編集すると配列が新しくなるので自然に計算し直される)
+const curveCache = new WeakMap<Vec[], { closed: boolean; pts: Vec[] }>();
+function strokeCurve(el: StrokeEl): Vec[] {
+  const c = curveCache.get(el.points);
+  if (c && c.closed === el.closed) return c.pts;
+  const pts = smoothCurve(el.points, el.closed);
+  curveCache.set(el.points, { closed: el.closed, pts });
+  return pts;
+}
+
 function elementPath(el: StitchEl): Path2D {
   const p = new Path2D();
   if (el.kind === "fill") {
@@ -466,7 +486,8 @@ function elementPath(el: StitchEl): Path2D {
       p.closePath();
     }
   } else {
-    el.points.forEach((v, i) => (i === 0 ? p.moveTo(v.x, v.y) : p.lineTo(v.x, v.y)));
+    const pts = el.kind === "stroke" ? strokeCurve(el) : el.points;
+    pts.forEach((v, i) => (i === 0 ? p.moveTo(v.x, v.y) : p.lineTo(v.x, v.y)));
     if (el.kind === "stroke" && el.closed) p.closePath();
   }
   return p;
@@ -648,8 +669,10 @@ function drawNodes(px: number): void {
   ctx.strokeStyle = "#2f6fec";
   ctx.lineWidth = 1.2 * px;
   for (const path of paths(f.el)) {
+    // 線は実際の (滑らかな) 曲線を、点はその上の編集点として描く
+    const line = f.el.kind === "stroke" ? strokeCurve(f.el) : path.pts;
     ctx.beginPath();
-    path.pts.forEach((v, i) => (i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y)));
+    line.forEach((v, i) => (i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y)));
     if (path.closed) ctx.closePath();
     ctx.stroke();
   }
@@ -906,10 +929,12 @@ cv.addEventListener("pointermove", (e) => {
       const m = toMm(q.x, q.y);
       gesture.cur = m;
       if (tool === "pen" || tool === "lasso") {
-        // 手ぶれ補正 (lazy brush)
+        // 手ぶれ補正 (lazy brush)。細かい動き (ぶれ) は強くならし、大きく動いたとき
+        // (速く描いて点がまばらなとき) は遅れずについていき、カーブの形を崩さない
+        const k = Math.min(1, 0.45 + dist(m, gesture.smooth) / 3);
         gesture.smooth = {
-          x: gesture.smooth.x + (m.x - gesture.smooth.x) * 0.45,
-          y: gesture.smooth.y + (m.y - gesture.smooth.y) * 0.45,
+          x: gesture.smooth.x + (m.x - gesture.smooth.x) * k,
+          y: gesture.smooth.y + (m.y - gesture.smooth.y) * k,
         };
         gesture.raw.push(gesture.smooth);
       }
@@ -1140,7 +1165,8 @@ function finishTool(g: Extract<Gesture, { kind: "draw" }>): void {
     const strokes: StrokeEl[] = [];
     for (const l of doc.layers) {
       if (!l.visible) continue;
-      for (const el of l.elements) if (el.kind === "stroke") strokes.push(el);
+      // 壁は表示と同じ滑らかな曲線で作る
+      for (const el of l.elements) if (el.kind === "stroke") strokes.push({ ...el, points: strokeCurve(el) });
     }
     // 塗れる範囲: キャンバス (と描いた線) が収まる正方形
     const sb = selectionBox(strokes);
@@ -1201,7 +1227,7 @@ function hitTest(m: Vec, anyLayer: boolean): { el: Element; layer: Layer } | nul
     for (let i = layer.elements.length - 1; i >= 0; i--) {
       const el = layer.elements[i];
       if (el.kind === "stroke") {
-        if (distToPolyline(m, el.points, el.closed) <= el.width / 2 + tol) return { el, layer };
+        if (distToPolyline(m, strokeCurve(el), el.closed) <= el.width / 2 + tol) return { el, layer };
       } else if (el.kind === "image") {
         if (pointInShape(m, imageCorners(el), [])) return { el, layer };
       } else if (el.kind === "stitches") {

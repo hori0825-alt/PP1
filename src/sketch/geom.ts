@@ -227,3 +227,190 @@ export function centroid(pts: Vec[]): Vec {
   }
   return { x: x / pts.length, y: y / pts.length };
 }
+
+// ------------------------------------------------------------------ 滑らかな曲線
+
+/** 頂点 i での曲がる角度 (度) */
+function turnDeg(a: Vec, b: Vec, c: Vec): number {
+  const a1 = Math.atan2(b.y - a.y, b.x - a.x);
+  const a2 = Math.atan2(c.y - b.y, c.x - b.x);
+  let t = Math.abs(a2 - a1);
+  if (t > Math.PI) t = 2 * Math.PI - t;
+  return (t * 180) / Math.PI;
+}
+
+/** はっきり曲げた角 (cornerDeg 以上曲がる頂点) の番号 */
+export function cornerIndices(pts: Vec[], closed: boolean, cornerDeg = 65): number[] {
+  const n = pts.length;
+  const out: number[] = [];
+  if (n < 3) return out;
+  for (let i = 0; i < n; i++) {
+    if (!closed && (i === 0 || i === n - 1)) continue;
+    const a = pts[(i - 1 + n) % n];
+    const c = pts[(i + 1) % n];
+    if (turnDeg(a, pts[i], c) >= cornerDeg) out.push(i);
+  }
+  return out;
+}
+
+/** Catmull-Rom (centripetal) で p1→p2 の区間を補間する */
+function catmullRom(p0: Vec, p1: Vec, p2: Vec, p3: Vec, steps: number, out: Vec[]): void {
+  const tj = (ti: number, a: Vec, b: Vec) => ti + Math.max(1e-4, Math.sqrt(dist(a, b)));
+  const t0 = 0;
+  const t1 = tj(t0, p0, p1);
+  const t2 = tj(t1, p1, p2);
+  const t3 = tj(t2, p2, p3);
+  const lerp = (a: Vec, b: Vec, ta: number, tb: number, t: number): Vec => {
+    const u = tb - ta < 1e-9 ? 0 : (t - ta) / (tb - ta);
+    return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+  };
+  for (let s = 1; s <= steps; s++) {
+    const t = t1 + ((t2 - t1) * s) / steps;
+    const a1 = lerp(p0, p1, t0, t1, t);
+    const a2 = lerp(p1, p2, t1, t2, t);
+    const a3 = lerp(p2, p3, t2, t3, t);
+    const b1 = lerp(a1, a2, t0, t2, t);
+    const b2 = lerp(a2, a3, t1, t3, t);
+    out.push(lerp(b1, b2, t1, t2, t));
+  }
+}
+
+/** 角で区切った1区間を、点を通る滑らかな曲線にする */
+function smoothPiece(p: Vec[], step: number): Vec[] {
+  if (p.length < 3) return p.slice();
+  const out: Vec[] = [p[0]];
+  // 端は延長した仮の点を使い、区間の向きをそのまま保つ
+  const first = { x: 2 * p[0].x - p[1].x, y: 2 * p[0].y - p[1].y };
+  const last = { x: 2 * p[p.length - 1].x - p[p.length - 2].x, y: 2 * p[p.length - 1].y - p[p.length - 2].y };
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = i === 0 ? first : p[i - 1];
+    const p3 = i + 2 < p.length ? p[i + 2] : last;
+    const steps = Math.max(1, Math.ceil(dist(p[i], p[i + 1]) / step));
+    catmullRom(p0, p[i], p[i + 1], p3, steps, out);
+  }
+  return out;
+}
+
+/**
+ * 描いた線の点を通る滑らかな曲線 (step mm おきの点列) にする。
+ * はっきり曲げた角 (cornerDeg 以上) は角のまま残す。閉じた線は始点に戻らない点列を返す。
+ */
+export function smoothCurve(pts: Vec[], closed: boolean, step = 0.25, cornerDeg = 65): Vec[] {
+  if (pts.length < 3) return pts.slice();
+  const corners = cornerIndices(pts, closed, cornerDeg);
+  if (!closed) {
+    const cuts = [0, ...corners, pts.length - 1];
+    const out: Vec[] = [];
+    for (let k = 0; k < cuts.length - 1; k++) {
+      const piece = smoothPiece(pts.slice(cuts[k], cuts[k + 1] + 1), step);
+      out.push(...(k === 0 ? piece : piece.slice(1)));
+    }
+    return out;
+  }
+  const n = pts.length;
+  if (corners.length === 0) {
+    // 角のない閉じた線: 前後の点を回り込んで使う
+    const out: Vec[] = [];
+    for (let i = 0; i < n; i++) {
+      const steps = Math.max(1, Math.ceil(dist(pts[i], pts[(i + 1) % n]) / step));
+      out.push(pts[i]);
+      const seg: Vec[] = [];
+      catmullRom(pts[(i - 1 + n) % n], pts[i], pts[(i + 1) % n], pts[(i + 2) % n], steps, seg);
+      seg.pop(); // 次の頂点は次の区間で入れる
+      out.push(...seg);
+    }
+    return out;
+  }
+  // 角のある閉じた線: 角から角へ区切って滑らかにする (始点は元の始点のまま)
+  const out: Vec[] = [];
+  const cs = corners;
+  for (let k = 0; k < cs.length; k++) {
+    const a = cs[k];
+    const b = cs[(k + 1) % cs.length];
+    const piece: Vec[] = [];
+    for (let i = a; ; i = (i + 1) % n) {
+      piece.push(pts[i]);
+      if (i === b && piece.length > 1) break;
+      if (piece.length > n + 1) break;
+    }
+    const sm = smoothPiece(piece, step);
+    out.push(...sm.slice(0, -1));
+  }
+  // 元の始点 (pts[0]) から始まるように回す
+  let best = 0;
+  let bd = Infinity;
+  out.forEach((q, i) => {
+    const d = dist(q, pts[0]);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  });
+  return [...out.slice(best), ...out.slice(0, best)];
+}
+
+/**
+ * 曲線に沿って針の位置を決める。曲線からのずれ (弦の膨らみ) が sag mm 以内に収まるよう、
+ * 急なカーブほど針目を短くする (minLen 〜 maxLen)。path は密な点列 (smoothCurve の結果)。
+ */
+export function resampleAdaptive(path: Vec[], maxLen: number, minLen = 1.0, sag = 0.1): Vec[] {
+  if (path.length < 2) return path.slice();
+  const cum: number[] = [0];
+  for (let i = 1; i < path.length; i++) cum.push(cum[i - 1] + dist(path[i - 1], path[i]));
+  const total = cum[cum.length - 1];
+  if (total < 1e-6) return [path[0]];
+  const at = (s: number): Vec => {
+    let lo = 0;
+    let hi = cum.length - 1;
+    while (hi - lo > 1) {
+      const m = (lo + hi) >> 1;
+      if (cum[m] <= s) lo = m;
+      else hi = m;
+    }
+    const L = cum[hi] - cum[lo];
+    const u = L < 1e-9 ? 0 : (s - cum[lo]) / L;
+    return { x: path[lo].x + (path[hi].x - path[lo].x) * u, y: path[lo].y + (path[hi].y - path[lo].y) * u };
+  };
+  // s0 から s1 までの弦から、間の点がどれだけ離れるか
+  const deviation = (s0: number, s1: number): number => {
+    const a = at(s0);
+    const b = at(s1);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const L = Math.hypot(dx, dy);
+    let worst = 0;
+    // s0 より後ろの最初の点から調べる (二分探索)
+    let lo = 0;
+    let hi = cum.length - 1;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (cum[m] <= s0) lo = m + 1;
+      else hi = m;
+    }
+    for (let i = lo; i < path.length && cum[i] < s1; i++) {
+      const p = path[i];
+      const d = L < 1e-9 ? dist(p, a) : Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / L;
+      if (d > worst) worst = d;
+    }
+    return worst;
+  };
+  const out: Vec[] = [path[0]];
+  let s = 0;
+  while (total - s > 1e-6) {
+    const rest = total - s;
+    if (rest <= maxLen && deviation(s, total) <= sag) {
+      // 残りが1針で縫えるなら終点へ
+      out.push(path[path.length - 1]);
+      break;
+    }
+    let len = Math.min(maxLen, rest);
+    while (len > minLen && deviation(s, s + len) > sag) len -= 0.1;
+    len = Math.max(Math.min(minLen, rest), len);
+    // 残りが半端 (最短より短い針目) にならないよう、最後の2針は均等に。
+    // 2つに分けると最短を下回るなら、少し長めの1針にする
+    if (rest - len < minLen && rest > len) len = rest < 2 * minLen ? rest : rest / 2;
+    s += len;
+    out.push(at(s));
+  }
+  return out;
+}
